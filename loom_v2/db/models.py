@@ -25,6 +25,18 @@ class RunRow(Base):
     dynamic_nodes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
 
+class WorkspaceCapabilityPackageRow(Base):
+    """Package and activation state not owned by a Run."""
+
+    __tablename__ = "workspace_capability_packages"
+
+    workspace_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    package_ref: Mapped[str] = mapped_column(String(512), primary_key=True)
+    package: Mapped[dict] = mapped_column(JSON, nullable=False)
+    capability_activations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+
 class IdempotencyRow(Base):
     __tablename__ = "idempotency"
 

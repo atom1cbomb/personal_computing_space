@@ -100,6 +100,18 @@ Package digest 只覆盖 `package_type`、`execution`、规范化后的 `capabil
 
 Export 按完整 descriptor identity 排序，permissions 按集合语义排序；`ResourceRef.access_binding` 和 provenance 不参与 digest。因此 export 顺序或部署位置变化不会改变同一 manifest 的 digest。
 
+## 4.1 不绑定 Run 的工作空间上传
+
+已知能力包可以直接注册到当前 Observer workspace，不需要创建 Run：
+
+```http
+POST /api/v1/capability-packages
+```
+
+请求只提交 package manifest 和已经上传到 `ContentStore` 的 `ResourceRef`，不接受调用方指定 `scope`、`publication_state` 或 `source_run_ref`。Observer 完成 contract/export/IoContract 校验后，创建 `workspace_reusable`、`published` 版本并保存到 workspace package registry。注册不自动激活；需要时仍通过现有 provision/deprovision 流程按 Slave 激活。
+
+Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并通过 `promote` 派生 reusable 版本。两条路径共享同一 package digest 和 runtime contract，不共享伪造的 Run 来源。
+
 ## 5. Phase 1 HTTP service contract
 
 `service + container:http/1` 的 body 为：

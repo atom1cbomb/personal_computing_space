@@ -19,6 +19,7 @@ from loom_v2.contracts.api import (
     AgentLeaseRequest,
     CapabilityActivationRequest,
     CapabilityHealthRequest,
+    CapabilityPackageUploadRequest,
     CommitRequest,
     ContentPutRequest,
     IdempotencyRequest,
@@ -573,6 +574,23 @@ def create_app(
             result: list[dict[str, Any]] = []
             for agent in registered:
                 caps = agent.get("capabilities") or {}
+                active_activations = [
+                    activation.model_dump(mode="json")
+                    for record in records
+                    for activation in record.capability_activations
+                    if activation.target_slave == agent["agent_id"]
+                    and activation.activation_state == "ready"
+                ]
+                for package in await app.state.repo.list_capability_packages(
+                    workspace_id=settings.workspace_id,
+                    include_abandoned=True,
+                ):
+                    active_activations.extend(
+                        activation.model_dump(mode="json")
+                        for activation in await app.state.repo.list_package_activations(package)
+                        if activation.target_slave == agent["agent_id"]
+                        and activation.activation_state == "ready"
+                    )
                 result.append(
                     {
                         "slave_id": agent["agent_id"],
@@ -580,7 +598,7 @@ def create_app(
                         "replica": "ready" if agent.get("lease_state") == "active" else "unavailable",
                         "operations": sorted(app.state.repo.slave_capabilities.get(str(agent["agent_id"]), {}).get("operations", set())),
                         "term_support": caps.get("term_support", []),
-                        "activations": [activation.model_dump(mode="json") for record in records for activation in record.capability_activations if activation.target_slave == agent["agent_id"] and activation.activation_state == "ready"],
+                        "activations": active_activations,
                         "executor_descriptors": caps.get("executor_descriptors", []),
                         "runtime_plugin_descriptors": caps.get("runtime_plugin_descriptors", caps.get("runtime_plugins", [])),
                     }
@@ -602,6 +620,16 @@ def create_app(
                             (activation.package_version_ref, activation.target_slave),
                             activation,
                         )
+            for package in await app.state.repo.list_capability_packages(
+                workspace_id=settings.workspace_id,
+                include_abandoned=True,
+            ):
+                for activation in await app.state.repo.list_package_activations(package):
+                    if activation.target_slave == slave_id and activation.activation_state == "ready":
+                        activation_map.setdefault(
+                            (activation.package_version_ref, activation.target_slave),
+                            activation,
+                        )
             result.append(
                 {
                     "slave_id": slave_id,
@@ -616,14 +644,24 @@ def create_app(
             )
         return result
 
+    @app.post("/api/v1/capability-packages")
+    async def upload_capability_package(payload: CapabilityPackageUploadRequest) -> dict[str, Any]:
+        try:
+            package = await app.state.repo.register_workspace_package(
+                settings.workspace_id,
+                payload.model_dump(mode="json"),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409 if "conflict" in str(exc) or "digest" in str(exc) else 422, detail=str(exc)) from exc
+        return package.model_dump(mode="json")
+
     @app.get("/api/v1/capability-packages")
     async def capability_packages(run_id: str | None = None, include_abandoned: bool = False) -> list[dict[str, Any]]:
-        packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=include_abandoned)
+        packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=include_abandoned, workspace_id=settings.workspace_id)
         result = []
-        records = await app.state.repo._all_records()
         for package in packages:
             item = package.model_dump(mode="json")
-            item["activations"] = [activation.model_dump(mode="json") for record in records for activation in record.capability_activations if activation.package_version_ref == package.version_ref]
+            item["activations"] = [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]
             result.append(item)
         return result
 
@@ -634,12 +672,13 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
         record = await app.state.repo.get_run(run_id)
-        return [{**package.model_dump(mode="json"), "activations": [activation.model_dump(mode="json") for activation in record.capability_activations if activation.package_version_ref == package.version_ref]} for package in packages]
+        return [{**package.model_dump(mode="json"), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]} for package in packages]
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/promote")
     async def promote_capability_package(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
         payload = payload or CapabilityActivationRequest()
         try:
+            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
             package = await app.state.repo.promote_capability_package(package_ref, idempotency_key=payload.idempotency_key, approved_digest=payload.approved_digest)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
@@ -685,7 +724,7 @@ def create_app(
     async def deactivate_capability_package(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
         payload = payload or CapabilityActivationRequest()
         try:
-            package = await app.state.repo.get_capability_package(package_ref)
+            package = await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
             approved_digest = payload.approved_digest
             if not approved_digest:
                 raise ValueError("approved_digest_required")
@@ -735,6 +774,7 @@ def create_app(
     @app.post("/api/v1/capability-packages/{package_ref:path}/abandon")
     async def abandon_capability_package(package_ref: str, payload: IdempotencyRequest | None = None) -> dict[str, Any]:
         try:
+            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
             package = await app.state.repo.abandon_capability_package(package_ref, idempotency_key=payload.idempotency_key if payload else None)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc

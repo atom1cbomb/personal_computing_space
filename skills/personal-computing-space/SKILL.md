@@ -23,6 +23,11 @@ tools, orchestrate work, and dispatch nodes to Slaves.
 - Treat `ResourceRef` and digest fields as server-owned facts. Do not calculate,
   invent, or overwrite content/package/draft digests; obtain immutable refs from
   the Observer data plane or persisted Run outcome.
+- A user-owned capability package may be registered through
+  `POST /api/v1/capability-packages` after its referenced contents are uploaded
+  with `POST /api/v1/content`; omit lifecycle fields and package digest. This
+  creates a workspace-reusable package without a Run and does not activate a
+  Slave. Run-bound packages remain the Driver agent's responsibility.
 
 ## Workflow
 

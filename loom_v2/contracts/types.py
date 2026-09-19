@@ -210,9 +210,10 @@ class CapabilityPackageVersion(ContractModel):
     package_type: str = "function"
     package_id: str
     package_version: str
-    package_closure_version_ref: str
-    source_run_ref: str
-    source_closure_version_ref: str
+    package_closure_version_ref: str | None = None
+    source_run_ref: str | None = None
+    source_closure_version_ref: str | None = None
+    workspace_id: str | None = None
     scope: Literal["run_bound", "workspace_reusable"] = "run_bound"
     publication_state: Literal["candidate", "published", "abandoned"] = "candidate"
     provenance: list[dict[str, Any]] = Field(default_factory=list)

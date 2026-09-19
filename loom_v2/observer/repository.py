@@ -37,7 +37,15 @@ from loom_v2.contracts.types import (
     NodeInputBinding,
     ValidationEvidence,
 )
-from loom_v2.db.models import DriverRequestRow, DriverThreadRow, IdempotencyRow, MessageReceiptRow, RunRow, RuntimeAgentRow
+from loom_v2.db.models import (
+    DriverRequestRow,
+    DriverThreadRow,
+    IdempotencyRow,
+    MessageReceiptRow,
+    RunRow,
+    RuntimeAgentRow,
+    WorkspaceCapabilityPackageRow,
+)
 from loom_v2.db.migrations import apply_migrations
 from loom_v2.contracts.agents import DRIVER_COMMANDS, DRIVER_RUN_SCOPED_COMMANDS, AgentLease, AgentRegistration, DriverCommand, DriverThreadBinding
 from loom_v2.contracts.messages import MessageReceipt, MessageReceiptState
@@ -197,6 +205,9 @@ class ObserverRepository:
         self.slave_agents: dict[str, dict[str, Any]] = {}
         self.slave_instances: dict[tuple[str, str], dict[str, Any]] = {}
         self.slave_capabilities: dict[str, dict[str, Any]] = {}
+        self.workspace_packages: dict[tuple[str, str], CapabilityPackageVersion] = {}
+        self.workspace_package_activations: dict[tuple[str, str], list[CapabilityPackageActivation]] = {}
+        self.workspace_package_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self.engine = engine
         self.sessions = make_session_factory(engine) if engine is not None else None
         self.settings = settings or Settings()
@@ -1070,6 +1081,26 @@ class ObserverRepository:
                         operation_name(export.capability_descriptor_ref.resource_id)
                         for export in package.capability_exports
                     )
+            for activation_list in self.workspace_package_activations.values():
+                for activation in activation_list:
+                    if (
+                        activation.target_slave != target
+                        or activation.desired_state != "running"
+                        or activation.activation_state != "ready"
+                    ):
+                        continue
+                    package = self._find_package(
+                        ResourceRef(
+                            resource_id=activation.package_version_ref,
+                            version_or_digest=activation.package_digest,
+                        )
+                    )
+                    if package is None or package.package_digest != activation.package_digest:
+                        continue
+                    projected.update(
+                        operation_name(export.capability_descriptor_ref.resource_id)
+                        for export in package.capability_exports
+                    )
             details["operations"] = projected
 
     async def refresh_slaves(self, workspace_id: str | None = None) -> list[dict[str, Any]]:
@@ -1165,9 +1196,14 @@ class ObserverRepository:
         if run_id is not None:
             await self._assert_run_workspace(run_id, workspace_id)
         package = await self.get_capability_package(package_ref, run_id=run_id)
-        source = await self._load(package.source_run_ref)
-        source_workspace = source.closure_contract.workspace_id if source.closure_contract is not None else "workspace-default"
-        if source_workspace != workspace_id:
+        if package.workspace_id is not None:
+            package_workspace = package.workspace_id
+        elif package.source_run_ref is not None:
+            source = await self._load(package.source_run_ref)
+            package_workspace = source.closure_contract.workspace_id if source.closure_contract is not None else "workspace-default"
+        else:
+            raise ValueError("workspace_binding_mismatch")
+        if package_workspace != workspace_id:
             raise ValueError("workspace_binding_mismatch")
         return package
 
@@ -1348,7 +1384,7 @@ class ObserverRepository:
             ]
             result = {
                 "capabilities": capabilities,
-                "packages": [item.model_dump(mode="json") for item in await self.list_capability_packages(run_id=args.get("run_id"), include_abandoned=bool(args.get("include_abandoned", False)))],
+                "packages": [item.model_dump(mode="json") for item in await self.list_capability_packages(run_id=args.get("run_id"), include_abandoned=bool(args.get("include_abandoned", False)), workspace_id=workspace_id)],
             }
         elif command.command == "capability.get":
             result = (await self.get_capability_package(args["package_ref"], run_id=args.get("run_id"))).model_dump(mode="json")
@@ -1549,6 +1585,85 @@ class ObserverRepository:
             capability_activations=[CapabilityPackageActivation.model_validate(item) for item in (getattr(row, "capability_activations", None) or [])],
             dynamic_nodes=dynamic_nodes,
         )
+
+    @staticmethod
+    def _workspace_package_key(package: CapabilityPackageVersion) -> tuple[str, str]:
+        if not package.workspace_id:
+            raise ValueError("workspace_package_workspace_required")
+        return package.workspace_id, package.version_ref
+
+    async def _load_workspace_packages(self) -> None:
+        if self.sessions is None:
+            return
+        async with self.sessions() as session:
+            rows = (await session.scalars(select(WorkspaceCapabilityPackageRow))).all()
+        for row in rows:
+            package = CapabilityPackageVersion.model_validate(row.package)
+            key = (row.workspace_id, row.package_ref)
+            self.workspace_packages[key] = package
+            self.workspace_package_activations[key] = [
+                CapabilityPackageActivation.model_validate(item)
+                for item in (row.capability_activations or [])
+            ]
+            self.workspace_package_events[key] = list(row.events or [])
+
+    async def _persist_workspace_package(self, package: CapabilityPackageVersion) -> None:
+        key = self._workspace_package_key(package)
+        self.workspace_packages[key] = package
+        if self.sessions is None:
+            return
+        async with self.sessions() as session:
+            row = await session.get(WorkspaceCapabilityPackageRow, key)
+            values = {
+                "workspace_id": key[0],
+                "package_ref": key[1],
+                "package": package.model_dump(mode="json"),
+                "capability_activations": [
+                    item.model_dump(mode="json")
+                    for item in self.workspace_package_activations.get(key, [])
+                ],
+                "events": self.workspace_package_events.get(key, []),
+            }
+            if row is None:
+                session.add(WorkspaceCapabilityPackageRow(**values))
+            else:
+                for field_name, value in values.items():
+                    setattr(row, field_name, value)
+            await session.commit()
+
+    async def register_workspace_package(
+        self, workspace_id: str, manifest: dict[str, Any]
+    ) -> CapabilityPackageVersion:
+        """Validate and publish a package supplied without a Run."""
+        package = CapabilityPackageVersion(
+            package_type=str(manifest.get("package_type") or "function"),
+            package_id=str(manifest["package_id"]),
+            package_version=str(manifest["package_version"]),
+            package_closure_version_ref=f"workspace-package-{uuid4().hex[:12]}",
+            source_run_ref=None,
+            source_closure_version_ref=None,
+            workspace_id=workspace_id,
+            scope="workspace_reusable",
+            publication_state="published",
+            provenance=[{"source": "user_upload", "workspace_id": workspace_id}],
+            execution=ExecutionContract.model_validate(manifest.get("execution") or {}),
+            capability_exports=[
+                CapabilityExport.model_validate(item)
+                for item in manifest["capability_exports"]
+            ],
+            body=dict(manifest["body"]),
+            package_digest=str(manifest.get("package_digest") or ""),
+        )
+        await self._validate_package_exports(package)
+        await self._load_workspace_packages()
+        key = self._workspace_package_key(package)
+        existing = self.workspace_packages.get(key)
+        if existing is not None:
+            if existing.package_digest != package.package_digest:
+                raise ValueError("capability_package_identity_conflict")
+            return existing
+        await self._persist_workspace_package(package)
+        return package
 
     @staticmethod
     def _dynamic_nodes_from_events(events: list[dict[str, Any]]) -> list[DynamicNode]:
@@ -1779,6 +1894,13 @@ class ObserverRepository:
             return package.source_run_ref == run_id
         if package.scope != "workspace_reusable" or package.publication_state != "published":
             return False
+        if package.workspace_id is not None:
+            return (
+                run.closure_contract is not None
+                and package.workspace_id == run.closure_contract.workspace_id
+            )
+        if package.source_run_ref is None:
+            return False
         source = self.runs.get(package.source_run_ref)
         if source is None or source.closure_contract is None or run.closure_contract is None:
             return False
@@ -1797,6 +1919,14 @@ class ObserverRepository:
                 if digest is not None and digest != package.package_digest.lower():
                     continue
                 candidates.append(package)
+        for package in self.workspace_packages.values():
+            if not self._package_visible_to_run(package, run_id):
+                continue
+            if resource_id != package.version_ref:
+                continue
+            if digest is not None and digest != package.package_digest.lower():
+                continue
+            candidates.append(package)
         if not candidates:
             return None
         # Prefer a published reusable version when resolving without a run
@@ -1806,14 +1936,34 @@ class ObserverRepository:
                 item.scope != "workspace_reusable",
                 item.package_id,
                 item.package_version,
-                item.source_run_ref,
+                item.source_run_ref or "",
             )
         )
         return candidates[0]
 
-    async def list_capability_packages(self, *, run_id: str | None = None, include_abandoned: bool = False) -> list[CapabilityPackageVersion]:
+    async def list_capability_packages(self, *, run_id: str | None = None, include_abandoned: bool = False, workspace_id: str | None = None) -> list[CapabilityPackageVersion]:
+        await self._load_workspace_packages()
         records = [await self._load(run_id)] if run_id else await self._all_records()
         packages = [package for record in records for package in record.capability_packages]
+        if run_id is not None:
+            run = records[0]
+            resolved_workspace = (
+                run.closure_contract.workspace_id
+                if run.closure_contract is not None
+                else workspace_id
+            )
+            packages.extend(
+                package
+                for package in self.workspace_packages.values()
+                if (resolved_workspace is None or package.workspace_id == resolved_workspace)
+                and self._package_visible_to_run(package, run_id)
+            )
+        else:
+            packages.extend(
+                package
+                for package in self.workspace_packages.values()
+                if workspace_id is None or package.workspace_id == workspace_id
+            )
         if not include_abandoned:
             packages = [package for package in packages if package.publication_state != "abandoned"]
         return packages
@@ -1821,6 +1971,7 @@ class ObserverRepository:
     async def get_capability_package(self, package_ref: str | ResourceRef, *, run_id: str | None = None) -> CapabilityPackageVersion:
         if self.sessions is not None:
             await self._all_records()
+        await self._load_workspace_packages()
         package = self._find_package(package_ref, run_id=run_id)
         if package is None:
             raise KeyError(package_ref)
@@ -1829,15 +1980,52 @@ class ObserverRepository:
     async def get_capability_package_aggregate(self, package_ref: str) -> CapabilityPackage:
         version = await self.get_capability_package(package_ref)
         records = await self._all_records()
+        key = (version.workspace_id, version.version_ref) if version.workspace_id else None
         activations = [activation for record in records for activation in record.capability_activations if activation.package_version_ref == version.version_ref]
+        if key is not None:
+            activations.extend(self.workspace_package_activations.get(key, []))
         versions = [item for record in records for item in record.capability_packages if item.package_id == version.package_id]
+        versions.extend(
+            item
+            for item in self.workspace_packages.values()
+            if item.package_id == version.package_id
+        )
         return CapabilityPackage(package_id=version.package_id, versions=versions, activations=activations)
+
+    async def list_package_activations(
+        self, package: CapabilityPackageVersion
+    ) -> list[CapabilityPackageActivation]:
+        await self._load_workspace_packages()
+        if package.workspace_id is not None:
+            return list(
+                self.workspace_package_activations.get(
+                    self._workspace_package_key(package), []
+                )
+            )
+        return [
+            activation
+            for record in await self._all_records()
+            for activation in record.capability_activations
+            if activation.package_version_ref == package.version_ref
+        ]
 
     async def abandon_capability_package(self, package_ref: str, *, idempotency_key: str | None = None) -> CapabilityPackageVersion:
         package = await self.get_capability_package(package_ref)
         if package.publication_state == "abandoned":
             return package
         package.publication_state = "abandoned"
+        if package.workspace_id is not None:
+            key = self._workspace_package_key(package)
+            self.workspace_package_events.setdefault(key, []).append(
+                {
+                    "phase": "capability_package_abandoned",
+                    "package_ref": self._package_ref(package),
+                    "idempotency_key": idempotency_key,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            await self._persist_workspace_package(package)
+            return package
         for record in self.runs.values():
             if any(item.package_id == package.package_id and item.package_version == package.package_version for item in record.capability_packages):
                 record.events.append({"phase": "capability_package_abandoned", "package_ref": self._package_ref(package), "idempotency_key": idempotency_key, "created_at": datetime.now(timezone.utc).isoformat()})
@@ -1970,22 +2158,38 @@ class ObserverRepository:
         package = await self.get_capability_package(package_ref, run_id=run_id)
         if package.publication_state == "abandoned":
             raise ValueError("capability_package_abandoned")
-        record = await self._activation_record(package)
-        record_workspace = (
-            record.closure_contract.workspace_id
-            if record.closure_contract is not None
-            else "workspace-default"
-        )
+        record: RunRecord | None = None
+        if package.workspace_id is not None:
+            package_key = self._workspace_package_key(package)
+            activation_list = self.workspace_package_activations.setdefault(package_key, [])
+            event_list = self.workspace_package_events.setdefault(package_key, [])
+            record_workspace = package.workspace_id
+        else:
+            record = await self._activation_record(package)
+            activation_list = record.capability_activations
+            event_list = record.events
+            record_workspace = (
+                record.closure_contract.workspace_id
+                if record.closure_contract is not None
+                else "workspace-default"
+            )
         if workspace_id is not None and workspace_id != record_workspace:
             raise ValueError("workspace_binding_mismatch")
         lock_key = (record_workspace, package.version_ref, target_slave)
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
-            record = await self._activation_record(package)
+            if record is None:
+                await self._load_workspace_packages()
+                activation_list = self.workspace_package_activations.setdefault(package_key, [])
+                event_list = self.workspace_package_events.setdefault(package_key, [])
+            else:
+                record = await self._activation_record(package)
+                activation_list = record.capability_activations
+                event_list = record.events
             current = next(
                 (
                     item
-                    for item in record.capability_activations
+                    for item in activation_list
                     if item.package_version_ref == package.version_ref
                     and item.target_slave == target_slave
                 ),
@@ -2029,16 +2233,16 @@ class ObserverRepository:
                 activation_state=actual_state,
                 runtime_profile=dict(current.runtime_profile) if current is not None else {},
             )
-            record.capability_activations = [
+            activation_list[:] = [
                 item
-                for item in record.capability_activations
+                for item in activation_list
                 if not (
                     item.package_version_ref == package.version_ref
                     and item.target_slave == target_slave
                 )
             ]
-            record.capability_activations.append(activation)
-            record.events.append(
+            activation_list.append(activation)
+            event_list.append(
                 {
                     "phase": "capability_desired_state_changed",
                     "package_ref": package.version_ref,
@@ -2050,7 +2254,10 @@ class ObserverRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist(record)
+            if record is not None:
+                await self._persist(record)
+            else:
+                await self._persist_workspace_package(package)
             self._project_ready_capabilities(target_slave)
             return activation
 
@@ -2062,12 +2269,15 @@ class ObserverRepository:
         package = await self.get_capability_package(
             report.package_version_ref, run_id=run_id
         )
-        record = await self._activation_record(package)
-        workspace = (
-            record.closure_contract.workspace_id
-            if record.closure_contract is not None
-            else "workspace-default"
-        )
+        if package.workspace_id is not None:
+            workspace = package.workspace_id
+        else:
+            record = await self._activation_record(package)
+            workspace = (
+                record.closure_contract.workspace_id
+                if record.closure_contract is not None
+                else "workspace-default"
+            )
         lock = self._activation_locks.setdefault(
             (workspace, package.version_ref, report.target_slave), asyncio.Lock()
         )
@@ -2085,11 +2295,20 @@ class ObserverRepository:
         )
         if package.package_digest != report.package_digest:
             raise ValueError("capability_package_digest_mismatch")
-        record = await self._activation_record(package)
+        record: RunRecord | None = None
+        if package.workspace_id is not None:
+            package_key = self._workspace_package_key(package)
+            await self._load_workspace_packages()
+            activation_list = self.workspace_package_activations.setdefault(package_key, [])
+            event_list = self.workspace_package_events.setdefault(package_key, [])
+        else:
+            record = await self._activation_record(package)
+            activation_list = record.capability_activations
+            event_list = record.events
         current = next(
             (
                 item
-                for item in record.capability_activations
+                for item in activation_list
                 if item.package_version_ref == package.version_ref
                 and item.target_slave == report.target_slave
             ),
@@ -2105,7 +2324,7 @@ class ObserverRepository:
         previous_report = next(
             (
                 event
-                for event in record.events
+                for event in event_list
                 if event.get("phase") == "capability_health_report"
                 and event.get("report_id") == report.report_id
             ),
@@ -2154,16 +2373,16 @@ class ObserverRepository:
                     "runtime_profile": runtime_profile or current.runtime_profile,
                 }
             )
-            record.capability_activations = [
+            activation_list[:] = [
                 item
-                for item in record.capability_activations
+                for item in activation_list
                 if not (
                     item.package_version_ref == package.version_ref
                     and item.target_slave == report.target_slave
                 )
             ]
-            record.capability_activations.append(activation)
-        record.events.append(
+            activation_list.append(activation)
+        event_list.append(
             {
                 "phase": "capability_health_report",
                 "report_id": report.report_id,
@@ -2178,7 +2397,10 @@ class ObserverRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        if record is not None:
+            await self._persist(record)
+        else:
+            await self._persist_workspace_package(package)
         self._project_ready_capabilities(report.target_slave)
         return activation
 
@@ -2422,6 +2644,7 @@ class ObserverRepository:
         return blockers
 
     async def _evaluate_readiness(self, snapshot: TaskClosure, *, run_id: str | None = None) -> dict[str, Any]:
+        await self._load_workspace_packages()
         if run_id is not None:
             record = self.runs.get(run_id)
             if record is not None:
@@ -2906,6 +3129,11 @@ class ObserverRepository:
                         package_closure_version_ref=f"package-closure-{uuid4().hex[:12]}",
                         source_run_ref=record.run_id,
                         source_closure_version_ref=record.draft.version_id,
+                        workspace_id=(
+                            record.closure_contract.workspace_id
+                            if record.closure_contract is not None
+                            else "workspace-default"
+                        ),
                         execution=ExecutionContract.model_validate(header["execution"]),
                         capability_exports=[
                             CapabilityExport.model_validate(item)

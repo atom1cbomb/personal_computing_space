@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .types import (
+    CapabilityExport,
     CapabilityDeprovisionCommand,
     CapabilityHealthReport,
     CapabilityPackageVersion,
@@ -19,6 +20,7 @@ from .types import (
     ComputeBinding,
     ContractModel,
     ClosureContract,
+    ExecutionContract,
     ResourceRef,
     TaskClosure,
 )
@@ -62,6 +64,18 @@ class PublicSlaveList(BaseModel):
 class ContentPutRequest(PublicRequest):
     content: Any | None = None
     media_type: Any = ""
+
+
+class CapabilityPackageUploadRequest(PublicRequest):
+    """Manifest for a package supplied directly to a workspace."""
+
+    package_id: str = Field(min_length=1)
+    package_version: str = Field(min_length=1)
+    package_type: str = Field(default="function", min_length=1)
+    execution: ExecutionContract = Field(default_factory=ExecutionContract)
+    capability_exports: list[CapabilityExport] = Field(min_length=1)
+    body: dict[str, Any]
+    package_digest: str | None = None
 
 
 class OpenRunRequest(PublicRequest):
@@ -196,6 +210,7 @@ __all__ = [
     "CapabilityHealthRequest",
     "CapabilityTargetRequest",
     "CapabilityActivationRequest",
+    "CapabilityPackageUploadRequest",
     "CommitRequest",
     "ContentPutRequest",
     "DriverMessageRequest",

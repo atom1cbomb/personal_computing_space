@@ -1,10 +1,12 @@
 import asyncio
 
 import pytest
+from fastapi.testclient import TestClient
 
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
 from loom_v2.contracts.types import ClosureContract, ComputeBinding, ResourceRef, TaskClosure
 from loom_v2.observer.repository import ObserverRepository
+from loom_v2.testing.observer import create_embedded_app
 from loom_v2.testing.observer import seed_embedded_slaves
 from tests.support.package_fixture import process_package_value, register_test_descriptor, capability_export
 
@@ -24,6 +26,68 @@ async def _empty_io_contract_ref(repo: ObserverRepository):
 
 async def _program_ref(repo: ObserverRepository):
     return await repo.put_content("print(1)", media_type="text/x-python")
+
+
+@pytest.mark.asyncio
+async def test_user_upload_registers_workspace_package_without_run() -> None:
+    repo = ObserverRepository()
+    program_ref = await _program_ref(repo)
+    io_contract_ref = await _empty_io_contract_ref(repo)
+    manifest = process_package_value(
+        repo,
+        package_id="uploaded-package",
+        operation_ref="loom://uploaded",
+        program_content_ref=program_ref,
+        io_contract_ref=io_contract_ref,
+    )
+
+    with TestClient(create_embedded_app(repo)) as client:
+        response = client.post("/api/v1/capability-packages", json=manifest)
+        assert response.status_code == 200, response.text
+        package = response.json()
+        assert package["scope"] == "workspace_reusable"
+        assert package["publication_state"] == "published"
+        assert package["source_run_ref"] is None
+        assert package["workspace_id"] == "workspace-default"
+
+        listed = client.get("/api/v1/capability-packages").json()
+        assert [item["package_id"] for item in listed].count("uploaded-package") == 1
+
+    run = await repo.open_run("run-after-upload", "conversation", "use package")
+    visible = await repo.list_capability_packages(run_id=run.run_id)
+    assert any(item.package_id == "uploaded-package" for item in visible)
+
+
+@pytest.mark.asyncio
+async def test_uploaded_workspace_package_can_be_activated_without_run() -> None:
+    repo = ObserverRepository()
+    program_ref = await _program_ref(repo)
+    io_contract_ref = await _empty_io_contract_ref(repo)
+    manifest = process_package_value(
+        repo,
+        package_id="uploaded-activation",
+        operation_ref="loom://uploaded-activation",
+        program_content_ref=program_ref,
+        io_contract_ref=io_contract_ref,
+    )
+    with TestClient(create_embedded_app(repo)) as client:
+        uploaded = client.post("/api/v1/capability-packages", json=manifest).json()
+        response = client.post(
+            f"/api/v1/capability-packages/capability-package://{uploaded['package_id']}/{uploaded['package_version']}/promote",
+            json={
+                "approved_digest": uploaded["package_digest"],
+                "target_slaves": ["slave-a"],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["health_reports"][0]["activation_state"] == "ready"
+
+        capabilities = client.get("/api/v1/capabilities").json()
+        slave_a = next(item for item in capabilities if item["slave_id"] == "slave-a")
+        assert any(
+            activation["package_version_ref"] == f"capability-package://{uploaded['package_id']}/{uploaded['package_version']}"
+            for activation in slave_a["activations"]
+        )
 
 
 @pytest.mark.asyncio
