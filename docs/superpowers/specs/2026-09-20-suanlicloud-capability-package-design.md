@@ -1,7 +1,7 @@
 # Suanli Cloud capability package
 
 **日期：** 2026-09-20  
-**状态：** 实现完成；只读生产联调通过
+**状态：** 实现完成；v2 已在生产激活，只读联调通过
 
 ## 必须补齐的信息
 
@@ -61,5 +61,8 @@ manifest 只有 profile 名称，不包含凭据。通用 runtime 只验证 oper
 canonicalization。使用标准签名对生产执行了全部六个只读操作并成功：
 `DescribeRegions`（3 个区域）、`DescribeZones`（3 个 zone）、`DescribeImages`
 （27 个镜像）、`DescribeInstances`、`DescribeInstanceStatus` 和
-`DescribeNodes`（12 个节点）。没有创建、修改或删除任何算力云资源；写操作
-仍未联调。
+`DescribeNodes`（12 个节点）。随后用镜像 digest
+`sha256:7c39d0c7d84dbb4fceea76d514c3c9c3b6bfb03979d53c7fc43327af6552e888`
+构建并发布 `suanlicloud-http/v2`，在生产 `slave-a` 上激活为 `ready/running`；
+从实际运行容器再次验证上述六个只读操作全部返回 200。没有创建、修改或删除
+任何算力云资源；写操作仍未联调。

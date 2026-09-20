@@ -31,5 +31,8 @@ branch is added to Observer, Driver, or Slave core. The signer reproduces the
 reference vector in `cloud-backend/internal/auth/testdata/vectors.json`.
 
 The production endpoint now runs cloud-backend revision `6dd51a0`, which fixes
-the HTTP verifier's Host canonicalization. Standard signed requests from this
-image have been verified against production for all six read-only operations.
+the HTTP verifier's Host canonicalization. Image digest
+`sha256:7c39d0c7d84dbb4fceea76d514c3c9c3b6bfb03979d53c7fc43327af6552e888` was
+published as package `suanlicloud-http/v2` and activated on production
+`slave-a`. Standard signed requests from the running container have been
+verified against production for all six read-only operations.
