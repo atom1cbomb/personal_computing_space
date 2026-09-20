@@ -1,7 +1,7 @@
 # Suanli Cloud capability package
 
 **日期：** 2026-09-20  
-**状态：** 实现完成；等待生产 cloud API 修复 Host canonicalization bug
+**状态：** 实现完成；只读生产联调通过
 
 ## 必须补齐的信息
 
@@ -57,11 +57,9 @@ manifest 只有 profile 名称，不包含凭据。通用 runtime 只验证 oper
 ## 验证与剩余工作
 
 已验证命名操作路由、凭据缺失、签名 reference vector 和 provider 错误归一化。
-生产容器的镜像 revision 确认是 `811093d`，与 `/root/cloud-backend` 当前实现
-一致。使用标准 Host 签名时，生产所有只读 API 都返回
-`SignatureDoesNotMatch`；使用临时的空 Host canonicalization 可成功读取
-`DescribeRegions`、`DescribeZones`、`DescribeImages`、`DescribeInstances`、
-`DescribeInstanceStatus` 和 `DescribeNodes`。根因是 Go 服务端验证器从
-`req.Header` 读取 Host，而真实请求的 Host 在 `req.Host` 字段中。应修复并
-重新部署 cloud-backend 的 canonicalization，再激活本能力包；此前没有创建、
-修改或删除任何算力云资源。
+生产容器现为 revision `6dd51a0`，已修复 Go 服务端验证器的 Host
+canonicalization。使用标准签名对生产执行了全部六个只读操作并成功：
+`DescribeRegions`（3 个区域）、`DescribeZones`（3 个 zone）、`DescribeImages`
+（27 个镜像）、`DescribeInstances`、`DescribeInstanceStatus` 和
+`DescribeNodes`（12 个节点）。没有创建、修改或删除任何算力云资源；写操作
+仍未联调。

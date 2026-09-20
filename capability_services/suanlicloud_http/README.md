@@ -30,10 +30,6 @@ The provider's AK/SK signer is isolated in `server.py`; no Suanli-specific
 branch is added to Observer, Driver, or Slave core. The signer reproduces the
 reference vector in `cloud-backend/internal/auth/testdata/vectors.json`.
 
-The production endpoint is running the checked-out `/root/cloud-backend`
-revision and its routes are correct. However, its HTTP verifier currently reads
-the signed `host` value only from `http.Request.Header`; Go keeps the Host field
-in `http.Request.Host`, so production computes `host:` with an empty value.
-The standard signer in this image therefore receives `SignatureDoesNotMatch`
-until the cloud API fixes that canonicalization bug. Do not work around this by
-shipping an empty host in new clients; fix the verifier and redeploy it.
+The production endpoint now runs cloud-backend revision `6dd51a0`, which fixes
+the HTTP verifier's Host canonicalization. Standard signed requests from this
+image have been verified against production for all six read-only operations.
