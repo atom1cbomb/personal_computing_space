@@ -250,8 +250,16 @@ class DockerContainerHTTPRuntimeV1:
             raise RuntimeError("credential_profile_unavailable") from exc
         if not profile_dir.is_dir():
             raise RuntimeError("credential_profile_unavailable")
-        # The operator selects which directories may be mounted. The service,
-        # not the generic runtime, owns credential filenames and validation.
+        # The profile is an opaque, operator-selected credential bundle.  The
+        # generic runtime must not know the service-specific credential format;
+        # that knowledge belongs to the service image.  The profile name and
+        # containment checks above are the runtime's security boundary.
+        try:
+            entries = list(profile_dir.iterdir())
+        except OSError as exc:
+            raise RuntimeError("credential_profile_unavailable") from exc
+        if not entries or any(entry.is_symlink() for entry in entries):
+            raise RuntimeError("credential_profile_unavailable")
         return [
             "--mount",
             f"type=bind,src={profile_dir},dst=/run/loom/credentials,readonly",

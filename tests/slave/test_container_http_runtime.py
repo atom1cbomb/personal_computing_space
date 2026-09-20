@@ -124,6 +124,47 @@ def test_credential_mount_accepts_an_operator_owned_aksk_profile(tmp_path: Path)
         f"type=bind,src={profile},dst=/run/loom/credentials,readonly",
     ]
 
+
+def test_credential_mount_accepts_an_operator_owned_named_profile(tmp_path: Path) -> None:
+    profile = tmp_path / "named-service-prod"
+    profile.mkdir()
+    (profile / "token").write_text("opaque", encoding="utf-8")
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test",
+        network="loom-test-internal",
+        credential_dir=tmp_path,
+    )
+
+    args = runtime._credential_mount_args(
+        {"body": {"credential_profile": "named-service-prod"}}
+    )
+
+    assert args == [
+        "--mount",
+        f"type=bind,src={profile},dst=/run/loom/credentials,readonly",
+    ]
+
+
+def test_credential_mount_is_opaque_to_generic_runtime(tmp_path: Path) -> None:
+    profile = tmp_path / "custom-service-prod"
+    profile.mkdir()
+    (profile / "service-token.bin").write_bytes(b"opaque")
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test",
+        network="loom-test-internal",
+        credential_dir=tmp_path,
+    )
+
+    args = runtime._credential_mount_args(
+        {"body": {"credential_profile": "custom-service-prod"}}
+    )
+
+    assert args == [
+        "--mount",
+        f"type=bind,src={profile},dst=/run/loom/credentials,readonly",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_provision_uses_fixed_container_security_arguments() -> None:
     runner = RecordingRunner()
