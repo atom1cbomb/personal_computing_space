@@ -30,10 +30,10 @@ The provider's AK/SK signer is isolated in `server.py`; no Suanli-specific
 branch is added to Observer, Driver, or Slave core. The signer reproduces the
 reference vector in `cloud-backend/internal/auth/testdata/vectors.json`.
 
-The currently observed production endpoint still serves the older route shape:
-`POST /v1/meta` returns HTTP 404, while a correctly signed request to
-`/v1/meta?Action=DescribeRegions` reaches authentication but returns
-`SignatureDoesNotMatch`. This indicates that the production cloud API has not
-yet been deployed from the checked-out `/root/cloud-backend` routing/signing
-implementation. The package follows the checked-out source; deploy that API
-revision before activating this image in production.
+The production endpoint is running the checked-out `/root/cloud-backend`
+revision and its routes are correct. However, its HTTP verifier currently reads
+the signed `host` value only from `http.Request.Header`; Go keeps the Host field
+in `http.Request.Host`, so production computes `host:` with an empty value.
+The standard signer in this image therefore receives `SignatureDoesNotMatch`
+until the cloud API fixes that canonicalization bug. Do not work around this by
+shipping an empty host in new clients; fix the verifier and redeploy it.

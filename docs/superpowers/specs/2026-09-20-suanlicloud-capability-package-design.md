@@ -1,7 +1,7 @@
 # Suanli Cloud capability package
 
 **日期：** 2026-09-20  
-**状态：** 实现完成；等待生产 cloud API 部署到与源代码一致的路由
+**状态：** 实现完成；等待生产 cloud API 修复 Host canonicalization bug
 
 ## 必须补齐的信息
 
@@ -57,8 +57,11 @@ manifest 只有 profile 名称，不包含凭据。通用 runtime 只验证 oper
 ## 验证与剩余工作
 
 已验证命名操作路由、凭据缺失、签名 reference vector 和 provider 错误归一化。
-生产 AK/SK 的只读探测尚未通过：当前生产 endpoint 对无 query 的
-`POST /v1/meta` 返回 404，对旧 query 路由返回 `SignatureDoesNotMatch`。这与
-已检出的 `/root/cloud-backend` 源码不一致，说明 cloud API 部署版本落后；在
-部署该 API 修订后，再发布新的不可变能力包版本并完成 `DescribeRegions` 联调。
-此前没有创建、修改或删除任何算力云资源。
+生产容器的镜像 revision 确认是 `811093d`，与 `/root/cloud-backend` 当前实现
+一致。使用标准 Host 签名时，生产所有只读 API 都返回
+`SignatureDoesNotMatch`；使用临时的空 Host canonicalization 可成功读取
+`DescribeRegions`、`DescribeZones`、`DescribeImages`、`DescribeInstances`、
+`DescribeInstanceStatus` 和 `DescribeNodes`。根因是 Go 服务端验证器从
+`req.Header` 读取 Host，而真实请求的 Host 在 `req.Host` 字段中。应修复并
+重新部署 cloud-backend 的 canonicalization，再激活本能力包；此前没有创建、
+修改或删除任何算力云资源。
