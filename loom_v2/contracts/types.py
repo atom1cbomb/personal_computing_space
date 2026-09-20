@@ -365,7 +365,7 @@ class CapabilityPackageActivation(ContractModel):
     last_idempotency_key: str
     evidence_refs: list[str] = Field(default_factory=list)
     activation_state: Literal[
-        "not_installed", "provisioning", "ready", "degraded", "stopped", "failed", "lost"
+        "not_installed", "provisioning", "pending_auth", "ready", "degraded", "stopped", "failed", "lost"
     ] = "not_installed"
     runtime_profile: dict[str, Any] = Field(default_factory=dict)
 
@@ -407,7 +407,7 @@ class CapabilityHealthReport(ContractModel):
     package_version_ref: str
     package_digest: str
     target_slave: str
-    activation_state: Literal["ready", "degraded", "failed", "stopped"]
+    activation_state: Literal["pending_auth", "ready", "degraded", "failed", "stopped"]
     evidence_refs: list[str] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
     activation_revision: int = Field(ge=1)

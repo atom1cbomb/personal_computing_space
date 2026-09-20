@@ -13,6 +13,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -24,6 +25,7 @@ IMAGE_RE = re.compile(
     r"[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
 )
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
 RUNTIME_DESCRIPTOR: dict[str, Any] = {
     "plugin_id": "container-http-v1",
@@ -105,6 +107,8 @@ class DockerContainerHTTPRuntimeV1:
         response_max_bytes: int = 4 * 1024 * 1024,
         max_concurrency: int = 16,
         docker_timeout: float = 120.0,
+        credential_dir: str | Path | None = None,
+        egress_network: str | None = None,
         runner: DockerRunner | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -134,6 +138,12 @@ class DockerContainerHTTPRuntimeV1:
         self.response_max_bytes = int(response_max_bytes)
         self.max_concurrency = int(max_concurrency)
         self.docker_timeout = float(docker_timeout)
+        self.credential_dir = (
+            Path(credential_dir).expanduser().resolve()
+            if credential_dir
+            else None
+        )
+        self.egress_network = egress_network or None
         self.runner = runner or SubprocessDockerRunner()
         self.http_transport = http_transport
         self._semaphores: dict[str, asyncio.Semaphore] = {}
@@ -211,6 +221,79 @@ class DockerContainerHTTPRuntimeV1:
         if health_path in paths:
             raise RuntimeError("service_health_endpoint_conflict")
         return image_ref, container_port, health_path, normalized_exports
+
+    @classmethod
+    def _credential_profile(cls, package: dict[str, Any]) -> str | None:
+        body = package.get("body")
+        if not isinstance(body, dict):
+            raise RuntimeError("runtime_plugin_capability_mismatch")
+        profile = body.get("credential_profile")
+        if profile is None:
+            return None
+        if not isinstance(profile, str) or not PROFILE_RE.fullmatch(profile):
+            raise RuntimeError("runtime_plugin_capability_mismatch")
+        return profile
+
+    def _credential_mount_args(self, package: dict[str, Any]) -> list[str]:
+        profile = self._credential_profile(package)
+        if profile is None:
+            return []
+        if self.credential_dir is None:
+            raise RuntimeError("credential_profile_unavailable")
+        raw_profile_dir = self.credential_dir / profile
+        if raw_profile_dir.is_symlink():
+            raise RuntimeError("credential_profile_unavailable")
+        profile_dir = raw_profile_dir.resolve()
+        try:
+            profile_dir.relative_to(self.credential_dir)
+        except ValueError as exc:
+            raise RuntimeError("credential_profile_unavailable") from exc
+        kubeconfig = profile_dir / "kubeconfig"
+        if not profile_dir.is_dir() or not kubeconfig.is_file() or kubeconfig.is_symlink():
+            raise RuntimeError("credential_profile_unavailable")
+        return [
+            "--mount",
+            f"type=bind,src={profile_dir},dst=/run/loom/credentials,readonly",
+        ]
+
+    @staticmethod
+    def _network_profile(package: dict[str, Any]) -> str:
+        body = package.get("body")
+        profile = body.get("network_profile", "internal") if isinstance(body, dict) else None
+        if profile not in {"internal", "egress"}:
+            raise RuntimeError("runtime_plugin_capability_mismatch")
+        return str(profile)
+
+    def _network_args(self, package: dict[str, Any]) -> list[str]:
+        if self._network_profile(package) == "internal":
+            return ["--network", self.network]
+        if not self.egress_network:
+            raise RuntimeError("service_egress_network_unavailable")
+        return ["--network", self.network, "--network", self.egress_network]
+
+    @staticmethod
+    def _authentication(package: dict[str, Any]) -> dict[str, str] | None:
+        body = package.get("body")
+        authentication = body.get("authentication") if isinstance(body, dict) else None
+        if authentication is None:
+            return None
+        if not isinstance(authentication, dict) or set(authentication) != {"start_path", "status_path"}:
+            raise RuntimeError("runtime_plugin_capability_mismatch")
+        start_path = authentication.get("start_path")
+        status_path = authentication.get("status_path")
+        if (
+            not isinstance(start_path, str)
+            or not isinstance(status_path, str)
+            or not start_path.startswith("/")
+            or "?" in start_path
+            or "#" in start_path
+            or not status_path.startswith("/")
+            or "?" in status_path
+            or "#" in status_path
+            or start_path == status_path
+        ):
+            raise RuntimeError("runtime_plugin_capability_mismatch")
+        return {"start_path": start_path, "status_path": status_path}
 
     def _command_context(
         self, package: dict[str, Any], command: dict[str, Any]
@@ -358,6 +441,93 @@ class DockerContainerHTTPRuntimeV1:
         except (httpx.HTTPError, TimeoutError):
             return False
 
+    async def _authentication_probe(
+        self, container_name: str, port: int, path: str
+    ) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(
+                transport=self.http_transport,
+                timeout=self.request_timeout,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    f"http://{container_name}:{port}{path}", json={}
+                )
+            if not 200 <= response.status_code < 300:
+                return {"status": "auth_failed"}
+            value = response.json()
+        except (httpx.HTTPError, TimeoutError, ValueError):
+            return {"status": "auth_failed"}
+        if not isinstance(value, dict):
+            return {"status": "auth_failed"}
+        status = str(value.get("status") or "")
+        if status not in {"authenticated", "auth_required", "auth_failed"}:
+            return {"status": "auth_failed"}
+        # Authentication challenges are public interaction data. Keep only
+        # the protocol fields and never propagate arbitrary service output.
+        if status == "auth_required":
+            allowed = {
+                "status",
+                "verification_uri",
+                "user_code",
+                "qr_payload",
+                "expires_at",
+                "poll_after_seconds",
+            }
+            return {key: value[key] for key in allowed if key in value}
+        return {"status": status}
+
+    async def auth_start(
+        self,
+        package: dict[str, Any],
+        activation: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Start a new external-service login session without recreating Docker."""
+        image_ref, port, health_path, _exports = self._service_values(package)
+        package_ref, package_digest = self._execution_identity(package)
+        workspace_id = activation.get("workspace_id")
+        target_slave = activation.get("target_slave") or activation.get("slave_id")
+        if (
+            not isinstance(workspace_id, str)
+            or not workspace_id
+            or target_slave != self.slave_id
+            or activation.get("package_version_ref") != package_ref
+            or str(activation.get("package_digest") or "").lower() != package_digest
+        ):
+            raise RuntimeError("runtime_plugin_identity_mismatch")
+        authentication = self._authentication(package)
+        if authentication is None:
+            raise RuntimeError("service_authentication_not_configured")
+        expected_name = self._container_name(workspace_id, package_digest)
+        profile = activation.get("runtime_profile") or {}
+        container_name = str(profile.get("container_name") or expected_name)
+        if container_name != expected_name:
+            raise RuntimeError("service_container_identity_conflict")
+        container = await self._inspect_container(container_name)
+        if container is None or not await self._matching_container(
+            container,
+            labels=self._labels(workspace_id, package_ref, package_digest),
+            image_ref=image_ref,
+        ):
+            raise RuntimeError("service_container_identity_conflict")
+        if not bool((container.get("State") or {}).get("Running")):
+            raise RuntimeError("service_container_not_running")
+        if not await self._health(container_name, port, health_path):
+            raise RuntimeError("service_health_check_failed")
+        auth = await self._authentication_probe(
+            container_name, port, authentication["start_path"]
+        )
+        return {
+            **auth,
+            "runtime_plugin_id": "container-http-v1",
+            "runtime_profile": {
+                **dict(profile),
+                "container_name": container_name,
+                "container_port": port,
+                "authentication": auth,
+            },
+        }
+
     async def provision(
         self, package: dict[str, Any], command: dict[str, Any]
     ) -> dict[str, Any]:
@@ -367,6 +537,8 @@ class DockerContainerHTTPRuntimeV1:
         workspace_id, package_ref, package_digest = self._command_context(
             package, command
         )
+        credential_mount = self._credential_mount_args(package)
+        network_args = self._network_args(package)
         # All cross-export path checks above happen before the first Docker
         # read or mutation.
         await self._image_ready(image_ref)
@@ -404,8 +576,7 @@ class DockerContainerHTTPRuntimeV1:
                 "--pull=never",
                 "--restart",
                 "unless-stopped",
-                "--network",
-                self.network,
+                *network_args,
                 "--read-only",
                 "--user",
                 "65534:65534",
@@ -422,6 +593,7 @@ class DockerContainerHTTPRuntimeV1:
                 "--tmpfs",
                 f"/tmp:rw,noexec,nosuid,size={self.tmpfs_size}",
             ]
+            args.extend(credential_mount)
             for key, value in labels.items():
                 args.extend(["--label", f"{key}={value}"])
             args.append(image_ref)
@@ -444,6 +616,37 @@ class DockerContainerHTTPRuntimeV1:
         deadline = asyncio.get_running_loop().time() + self.startup_timeout
         while asyncio.get_running_loop().time() < deadline:
             if await self._health(container_name, container_port, health_path):
+                authentication = self._authentication(package)
+                if authentication is not None:
+                    auth = await self._authentication_probe(
+                        container_name,
+                        container_port,
+                        authentication["start_path"],
+                    )
+                    if auth["status"] == "auth_required":
+                        return {
+                            "activation_state": "pending_auth",
+                            "runtime_plugin_id": "container-http-v1",
+                            "runtime_profile": {
+                                "container_name": container_name,
+                                "container_port": container_port,
+                                "authentication": auth,
+                            },
+                            "evidence_refs": [
+                                f"container:{container_name}",
+                                f"health:{package_digest[:16]}",
+                            ],
+                            "details": {"authentication": auth},
+                            "idempotent": idempotent,
+                        }
+                    if auth["status"] != "authenticated":
+                        return {
+                            "activation_state": "failed",
+                            "runtime_plugin_id": "container-http-v1",
+                            "runtime_profile": {"container_name": container_name},
+                            "details": {"code": "service_auth_probe_failed"},
+                            "idempotent": idempotent,
+                        }
                 return {
                     "activation_state": "ready",
                     "runtime_plugin_id": "container-http-v1",
@@ -607,12 +810,20 @@ class DockerContainerHTTPRuntimeV1:
             and running
             and await self._health(name, port, health_path)
         )
-        return {
+        result = {
             "exists": True,
             "running": running,
             "identity_match": identity_match,
             "healthy": healthy,
         }
+        authentication = self._authentication(package)
+        if authentication is not None and healthy:
+            auth = await self._authentication_probe(
+                name, port, authentication["status_path"]
+            )
+            result["authentication"] = auth
+            result["authenticated"] = auth["status"] == "authenticated"
+        return result
 
     async def deprovision(self, command: dict[str, Any]) -> dict[str, Any]:
         workspace_id = command.get("workspace_id")
@@ -700,11 +911,18 @@ class DockerContainerHTTPRuntimeV1:
 
                 inspected = await self.inspect(activation)
                 if inspected.get("identity_match") and inspected.get("healthy"):
+                    auth = inspected.get("authentication")
+                    state = "ready"
+                    profile = dict(activation.get("runtime_profile") or {})
+                    if auth is not None:
+                        profile["authentication"] = auth
+                        state = {"authenticated": "ready", "auth_required": "pending_auth"}.get(auth["status"], "degraded")
                     results.append(
                         {
                             "activation_key": activation_key,
                             "inspect": inspected,
-                            "activation_state": "ready",
+                            "activation_state": state,
+                            "runtime_profile": profile,
                             "runtime_plugin_id": "container-http-v1",
                         }
                     )

@@ -40,6 +40,9 @@ ServiceContainerHttpV1Body {
     image_ref: str
     container_port: int       // 1..65535
     health_path: str
+    credential_profile: str?  // operator-local name, never secret content
+    network_profile: "internal" | "egress"  // defaults to internal
+    authentication: {start_path: str, status_path: str}?
 }
 
 ServiceContainerHttpV1RuntimeBinding {
@@ -59,6 +62,8 @@ Operator contract 以纯 JSON 文件安装到所有 Observer、Driver 和 Slave 
 - descriptor digest 不能只做字符串形状校验。权威 descriptor registry 必须能按 `resource_id + digest` 返回不可变 descriptor；registry 对 descriptor 正文使用项目统一 JCS 序列化和 `loom/operation-descriptor/v1` 域分离。无法解析或重算不一致时拒绝 package。
 - descriptor registry 的访问凭据和部署地址不进入 package body 或 package digest。
 - `health_path` 和 export `runtime_binding.path` 必须是以 `/` 开头、不含 query、fragment、scheme 或 host 的 origin-form path；health path 不得与业务 path 相同。
+- `credential_profile` 只能是受限的 operator-local profile 名称；`network_profile=egress`
+  只能选择 operator 预配置的 egress 网络，不能携带路径、网络名或任意 Docker 参数。
 - capability descriptor 在同一 package 内唯一，由公共 envelope 校验。JSON Schema 校验每个 HTTP path 的形状；需要跨数组比较的 path 唯一性和 health 冲突由 `container-http-v1` plugin 在 provision 前校验，Observer 不为此加入 HTTP 专用代码。
 
 ## 3. package digest

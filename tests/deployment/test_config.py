@@ -221,3 +221,18 @@ def test_rejects_unknown_build_network(tmp_path: Path):
 
     with pytest.raises(DeploymentConfigError, match="cluster.build_network"):
         DeploymentConfig.from_file(path)
+
+
+def test_rejects_relative_runtime_credentials_dir(tmp_path: Path):
+    for filename in ("internal.secret", "postgres.secret", "minio.secret"):
+        write_secret(tmp_path / filename, "secret")
+    path = tmp_path / "deployment.toml"
+    path.write_text(
+        config_text().replace(
+            "[cluster]", '[cluster]\nruntime_credentials_dir = "credentials"'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentConfigError, match="runtime_credentials_dir"):
+        DeploymentConfig.from_file(path)

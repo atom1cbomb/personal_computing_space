@@ -95,6 +95,33 @@ def test_http_contract_round_trips_full_manifest() -> None:
     assert restored == package
 
 
+def test_http_contract_accepts_credential_profile_name() -> None:
+    payload = http_package_payload()
+    payload["body"]["credential_profile"] = "k8s-prod_1"
+
+    package = CapabilityPackageVersion.model_validate(payload)
+
+    assert package.body["credential_profile"] == "k8s-prod_1"
+
+
+def test_http_contract_accepts_bounded_egress_network_profile() -> None:
+    payload = http_package_payload()
+    payload["body"]["network_profile"] = "egress"
+
+    package = CapabilityPackageVersion.model_validate(payload)
+
+    assert package.body["network_profile"] == "egress"
+
+
+@pytest.mark.parametrize("profile", ["../secret", "/tmp/x", "bad name", ""])
+def test_http_contract_rejects_invalid_credential_profile(profile: str) -> None:
+    payload = http_package_payload()
+    payload["body"]["credential_profile"] = profile
+
+    with pytest.raises(ValueError, match="package_contract_invalid"):
+        CapabilityPackageVersion.model_validate(payload)
+
+
 def test_duplicate_descriptor_export_is_rejected() -> None:
     payload = http_package_payload()
     payload["capability_exports"].append(

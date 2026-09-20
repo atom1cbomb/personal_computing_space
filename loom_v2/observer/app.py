@@ -37,7 +37,7 @@ from loom_v2.contracts.refs import select_slave_agents
 from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.gateway import ObserverDriverGateway
 from loom_v2.observer.dispatcher import ObserverMessageDispatcher
-from loom_v2.observer.activation import execute_activation_targets
+from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
 from loom_v2.auth import InternalAuth
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
 
@@ -768,6 +768,52 @@ def create_app(
             workers=app.state.workers,
             slaves=app.state.slaves,
             idempotency_key=payload.idempotency_key,
+        )
+        return {"package": package.model_dump(mode="json"), "health_reports": reports}
+
+    @app.post("/api/v1/capability-packages/{package_ref:path}/auth/start")
+    async def start_capability_auth(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
+        payload = payload or CapabilityActivationRequest()
+        try:
+            package = await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
+            if not payload.approved_digest:
+                raise ValueError("approved_digest_required")
+            if payload.approved_digest.lower() != package.package_digest.lower():
+                raise ValueError("capability_package_digest_mismatch")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        targets = payload.target_slaves
+        if not targets:
+            raise HTTPException(status_code=400, detail="target_slave_required")
+        request = {
+            "package_ref": package.version_ref,
+            "target_slaves": targets,
+            "approved_digest": package.package_digest,
+        }
+        if not app.state.embedded:
+            try:
+                return {
+                    "package": package.model_dump(mode="json"),
+                    **await app.state.gateway.forward("/driver/v1/capability/auth/start", request),
+                }
+            except RuntimeError as exc:
+                return {
+                    "package": package.model_dump(mode="json"),
+                    "health_reports": [
+                        {"target_slave": target, "activation_state": "failed", "error": str(exc)}
+                        for target in targets
+                    ],
+                }
+        reports = await execute_auth_targets(
+            app.state.repo,
+            package,
+            targets,
+            workspace_id=settings.workspace_id,
+            workers=app.state.workers,
+            slaves=app.state.slaves,
+            approved_digest=package.package_digest,
         )
         return {"package": package.model_dump(mode="json"), "health_reports": reports}
 

@@ -148,6 +148,30 @@ class WorkerSession:
             raise RuntimeError(str(detail))
         return CapabilityHealthReport.model_validate(response.json().get("health_report") or response.json())
 
+    async def auth_start(
+        self,
+        *,
+        package: CapabilityPackageVersion,
+        target_slave: str,
+        workspace_id: str,
+        driver_id: str | None = None,
+        driver_epoch: int | None = None,
+    ) -> CapabilityHealthReport:
+        payload: dict[str, Any] = {
+            "package": package.model_dump(mode="json"),
+            "target_slave": target_slave,
+            "workspace_id": workspace_id,
+        }
+        if driver_id is not None:
+            payload["driver_id"] = driver_id
+        if driver_epoch is not None:
+            payload["driver_epoch"] = driver_epoch
+        response = await self._post("/worker/v1/capability/auth/start", payload)
+        if response.status_code >= 400:
+            detail = response.json().get("detail", "worker_auth_start_failed")
+            raise RuntimeError(str(detail))
+        return CapabilityHealthReport.model_validate(response.json().get("health_report") or response.json())
+
     async def _post(self, path: str, payload: dict[str, Any]) -> httpx.Response:
         try:
             self._http.transport = self.transport

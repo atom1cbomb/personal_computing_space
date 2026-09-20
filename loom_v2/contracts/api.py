@@ -205,6 +205,16 @@ class SlaveDeprovisionRequest(ContractModel):
     driver_epoch: int | None = None
 
 
+class SlaveAuthStartRequest(ContractModel):
+    """Request to restart authentication for an existing activation."""
+
+    package: CapabilityPackageVersion
+    target_slave: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
+    driver_id: str | None = None
+    driver_epoch: int | None = None
+
+
 __all__ = [
     "AgentLeaseRequest",
     "CapabilityHealthRequest",
@@ -220,6 +230,7 @@ __all__ = [
     "PublicMessageRequest",
     "ResolveRequest",
     "SlaveDeprovisionRequest",
+    "SlaveAuthStartRequest",
     "SlaveDispatchRequest",
     "SlaveProvisionRequest",
     "StartRequest",

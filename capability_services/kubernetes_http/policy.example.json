@@ -1,0 +1,4 @@
+{
+  "namespace": "dev-example",
+  "context": "k8s-prod"
+}

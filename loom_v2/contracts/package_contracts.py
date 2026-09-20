@@ -192,6 +192,22 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                 "type": "string",
                 "pattern": _ORIGIN_PATH_PATTERN,
             },
+            "credential_profile": {
+                "type": "string",
+                "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+            },
+            "network_profile": {
+                "enum": ["internal", "egress"],
+            },
+            "authentication": {
+                "type": "object",
+                "required": ["start_path", "status_path"],
+                "properties": {
+                    "start_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                    "status_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                },
+                "additionalProperties": False,
+            },
         },
         "additionalProperties": False,
     },

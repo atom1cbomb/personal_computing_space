@@ -8,6 +8,10 @@ workspace_id = "workspace-default"
 # Optional Dockerfile build network: default, host, or none. Use host only
 # when the target Docker bridge cannot resolve package mirrors.
 build_network = "default"
+# Optional host directory containing operator-managed runtime credential profiles.
+# runtime_credentials_dir = "/var/lib/loom/runtime-credentials"
+# Optional pre-created Docker bridge network for packages with network_profile=egress.
+# runtime_plugin_egress_network = "loom-egress"
 internal_secret_file = "../secrets/internal_api_secret"
 postgres_password_file = "../secrets/postgres_password"
 minio_access_key = "loom"

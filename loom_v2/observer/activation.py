@@ -102,4 +102,40 @@ async def execute_activation_targets(
     return reports
 
 
-__all__ = ["execute_activation_targets"]
+async def execute_auth_targets(
+    repository: Any,
+    package: CapabilityPackageVersion,
+    targets: list[Any],
+    *,
+    workspace_id: str,
+    workers: dict[str, Any],
+    slaves: dict[str, Any],
+    approved_digest: str | None = None,
+) -> list[dict[str, Any]]:
+    """Start authentication on existing activations without changing lifecycle."""
+    if approved_digest is not None and approved_digest.lower() != package.package_digest.lower():
+        raise ValueError("capability_package_digest_mismatch")
+    reports: list[dict[str, Any]] = []
+    for raw_target in targets:
+        target = str(raw_target)
+        try:
+            worker = workers.get(target)
+            slave = slaves.get(target)
+            if worker is not None:
+                report = await worker.auth_start(
+                    package=package,
+                    target_slave=target,
+                    workspace_id=workspace_id,
+                )
+            elif slave is not None:
+                report = await slave.auth_start(package)
+            else:
+                raise RuntimeError("slave_not_found")
+            await repository.record_capability_health(report)
+            reports.append(report.model_dump(mode="json"))
+        except (RuntimeError, ValueError) as exc:
+            reports.append({"target_slave": target, "activation_state": "failed", "error": str(exc)})
+    return reports
+
+
+__all__ = ["execute_activation_targets", "execute_auth_targets"]

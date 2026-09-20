@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -142,6 +143,216 @@ async def test_provision_uses_fixed_container_security_arguments() -> None:
         assert forbidden not in create
     assert all("docker.sock" not in item for item in create)
     assert create[-1] == IMAGE_REF
+
+
+@pytest.mark.asyncio
+async def test_authenticated_service_reports_pending_auth_and_challenge() -> None:
+    runner = RecordingRunner()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/healthz":
+            return httpx.Response(204)
+        assert request.method == "POST"
+        assert request.url.path == "/v1/auth/start"
+        return httpx.Response(
+            200,
+            json={
+                "status": "auth_required",
+                "verification_uri": "https://login.example/device",
+                "user_code": "ABCD-EFGH",
+                "qr_payload": "https://login.example/device",
+                "token": "must-not-leak",
+            },
+        )
+
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test",
+        network="loom-test-internal",
+        runner=runner,
+        http_transport=httpx.MockTransport(respond),
+    )
+    package = _package(["/v1/echo"])
+    package.body["authentication"] = {
+        "start_path": "/v1/auth/start",
+        "status_path": "/v1/auth/status",
+    }
+    report = await runtime.provision(
+        package.model_dump(mode="json"),
+        CapabilityProvisionCommand(
+            command_id="provision-auth",
+            package_version_ref=package.version_ref,
+            package_digest=package.package_digest,
+            target_slave="slave-test",
+            idempotency_key="provision-auth",
+            activation_revision=1,
+        ).model_dump(mode="json"),
+    )
+
+    assert report["activation_state"] == "pending_auth"
+    assert report["details"]["authentication"] == {
+        "status": "auth_required",
+        "verification_uri": "https://login.example/device",
+        "user_code": "ABCD-EFGH",
+        "qr_payload": "https://login.example/device",
+    }
+
+
+@pytest.mark.asyncio
+async def test_auth_start_reuses_existing_container() -> None:
+    package = _package(["/v1/echo"])
+    package.body["authentication"] = {
+        "start_path": "/v1/auth/start",
+        "status_path": "/v1/auth/status",
+    }
+    workspace = "workspace-default"
+    runner = RecordingRunner()
+
+    async def run(args: list[str], *, timeout: float) -> DockerCommandResult:
+        runner.calls.append(list(args))
+        if args[:2] == ["image", "inspect"]:
+            return DockerCommandResult(0, json.dumps([IMAGE_REF]))
+        if args[0] == "inspect":
+            return DockerCommandResult(
+                0,
+                json.dumps([{
+                    "Config": {"Image": IMAGE_REF, "Labels": {
+                        "io.loom.managed": "container-http-v1",
+                        "io.loom.workspace": workspace,
+                        "io.loom.slave": "slave-test",
+                        "io.loom.package-digest": package.package_digest,
+                    }},
+                    "Image": IMAGE_REF,
+                    "State": {"Running": True},
+                }]),
+            )
+        return DockerCommandResult(0)
+
+    runner.run = run  # type: ignore[method-assign]
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthz":
+            return httpx.Response(204)
+        return httpx.Response(200, json={"status": "auth_required", "verification_uri": "https://login.example/device", "user_code": "ABCD-EFGH"})
+
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test",
+        network="loom-test-internal",
+        runner=runner,
+        http_transport=httpx.MockTransport(respond),
+    )
+    result = await runtime.auth_start(
+        package.model_dump(mode="json"),
+        {
+            "workspace_id": workspace,
+            "target_slave": "slave-test",
+            "package_version_ref": package.version_ref,
+            "package_digest": package.package_digest,
+            "runtime_profile": {},
+        },
+    )
+
+    assert result["status"] == "auth_required"
+    assert not any(args[0] in {"create", "start", "rm"} for args in runner.calls)
+
+
+@pytest.mark.asyncio
+async def test_credential_profile_is_mounted_read_only_from_operator_directory(tmp_path: Path) -> None:
+    profile = tmp_path / "k8s-prod"
+    profile.mkdir()
+    (profile / "kubeconfig").write_text("apiVersion: v1\n", encoding="utf-8")
+    runner = RecordingRunner()
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test",
+        network="loom-test-internal",
+        credential_dir=tmp_path,
+        runner=runner,
+        http_transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+    )
+    package = _package(["/v1/echo"])
+    package.body["credential_profile"] = "k8s-prod"
+
+    await runtime.provision(
+        package.model_dump(mode="json"),
+        CapabilityProvisionCommand(
+            command_id="provision-1",
+            package_version_ref=package.version_ref,
+            package_digest=package.package_digest,
+            target_slave="slave-test",
+            idempotency_key="provision-1",
+            activation_revision=1,
+        ).model_dump(mode="json"),
+    )
+
+    create = next(args for args in runner.calls if args[0] == "create")
+    mount_index = create.index("--mount")
+    assert create[mount_index + 1] == (
+        f"type=bind,src={profile.resolve()},dst=/run/loom/credentials,readonly"
+    )
+
+
+@pytest.mark.asyncio
+async def test_missing_credential_profile_fails_before_docker_mutation(tmp_path: Path) -> None:
+    runner = RecordingRunner()
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test", network="loom-test-internal", credential_dir=tmp_path, runner=runner
+    )
+    package = _package(["/v1/echo"])
+    package.body["credential_profile"] = "missing"
+
+    with pytest.raises(RuntimeError, match="credential_profile_unavailable"):
+        await runtime.provision(
+            package.model_dump(mode="json"),
+            CapabilityProvisionCommand(
+                command_id="provision-1",
+                package_version_ref=package.version_ref,
+                package_digest=package.package_digest,
+                target_slave="slave-test",
+                idempotency_key="provision-1",
+                activation_revision=1,
+            ).model_dump(mode="json"),
+        )
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_egress_network_requires_operator_configuration_and_is_not_arbitrary(
+    tmp_path: Path,
+) -> None:
+    runner = RecordingRunner()
+    package = _package(["/v1/echo"])
+    package.body["network_profile"] = "egress"
+    command = CapabilityProvisionCommand(
+        command_id="provision-1",
+        package_version_ref=package.version_ref,
+        package_digest=package.package_digest,
+        target_slave="slave-test",
+        idempotency_key="provision-1",
+        activation_revision=1,
+    ).model_dump(mode="json")
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test", network="loom-test-internal", runner=runner
+    )
+
+    with pytest.raises(RuntimeError, match="service_egress_network_unavailable"):
+        await runtime.provision(package.model_dump(mode="json"), command)
+    assert runner.calls == []
+
+    runtime = DockerContainerHTTPRuntimeV1(
+        slave_id="slave-test",
+        network="loom-test-internal",
+        egress_network="loom-egress",
+        runner=runner,
+        http_transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+    )
+    await runtime.provision(package.model_dump(mode="json"), command)
+    create = next(args for args in runner.calls if args[0] == "create")
+    assert create[create.index("--network") : create.index("--network") + 2] == [
+        "--network",
+        "loom-test-internal",
+    ]
+    assert create.count("--network") == 2
+    assert "loom-egress" in create
 
 
 def test_promoted_coordinate_reuses_digest_backed_container_identity() -> None:

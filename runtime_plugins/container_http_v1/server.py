@@ -77,6 +77,11 @@ class PluginServer:
                 result = await self.runtime.inspect(
                     _mapping(payload, "activation")
                 )
+            elif path == "/v1/auth/start":
+                result = await self.runtime.auth_start(
+                    _mapping(payload, "package"),
+                    _mapping(payload, "activation"),
+                )
             elif path == "/v1/deprovision":
                 result = await self.runtime.deprovision(
                     _mapping(payload, "command")
@@ -224,6 +229,8 @@ async def main() -> None:
         docker_timeout=float(
             os.getenv("LOOM_RUNTIME_PLUGIN_DOCKER_TIMEOUT", "120")
         ),
+        credential_dir=os.getenv("LOOM_RUNTIME_PLUGIN_CREDENTIAL_DIR"),
+        egress_network=os.getenv("LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK"),
     )
     server = PluginServer(runtime)
     listener = await asyncio.start_unix_server(

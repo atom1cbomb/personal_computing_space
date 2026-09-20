@@ -120,9 +120,31 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
 {
   "image_ref": "registry.example/org/service@sha256:<64 lowercase hex>",
   "container_port": 8080,
-  "health_path": "/healthz"
+  "health_path": "/healthz",
+  "credential_profile": "optional-slave-local-profile",
+  "network_profile": "internal",
+  "authentication": {
+    "start_path": "/v1/auth/start",
+    "status_path": "/v1/auth/status"
+  }
 }
 ```
+
+`credential_profile` 是 Slave operator 在本机配置的非敏感名称，不是
+kubeconfig、token 或任意宿主机路径。`container-http-v1` 只为该名称匹配
+operator 配置的只读 credential profile，并挂载到能力容器的固定路径；package
+digest 不包含 profile 内容。没有配置匹配 profile 时，provision 失败并返回
+`credential_profile_unavailable`。
+
+`network_profile` 默认为 `internal`，能力容器只加入 Loom 的隔离网络。需要访问
+外部 Kubernetes/API 服务的包可声明 `egress`，但只有在 Slave operator 配置了
+`LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK` 时才会额外加入该网络；package 不能指定
+任意网络名。
+
+`authentication` 是可选的通用外部服务认证协议。声明后，runtime 在容器健康后
+调用 `start_path`；返回 `auth_required` 时激活状态为 `pending_auth`，健康报告
+携带设备登录信息。后台健康检查调用 `status_path`，仅返回 `authenticated` 后
+才将激活标记为 `ready`。两个路径均为无参数 `POST`，不能与健康或业务路径冲突。
 
 每个 export 的 runtime binding 为：
 
@@ -160,7 +182,7 @@ Host 只按三元组路由，不读取 package-specific body。声明未注册 c
 
 Core 与插件通过私有 Unix socket 上的 HTTP/JSON 通信。Core 负责 auth、lease、workspace、package digest、export 选择、IoContract、activation 持久化和结果验证；插件负责解释其 contract 的 body/runtime binding 以及具体 runtime 生命周期。
 
-`container-http-v1` 插件通过 Docker CLI/socket 管理由 dockerd 承载的 sibling container。能力容器不是 Slave 的 POSIX 子进程，也不获得 Loom credential、Docker socket、host port、volume、device 或额外 capability。插件固定使用 internal network、只读 rootfs、非 root 用户、cap-drop、no-new-privileges 和资源限制。
+`container-http-v1` 插件通过 Docker CLI/socket 管理由 dockerd 承载的 sibling container。能力容器不是 Slave 的 POSIX 子进程，也不获得 Loom credential、Docker socket、host port、device 或额外 capability。插件固定使用 internal network、只读 rootfs、非 root 用户、cap-drop、no-new-privileges 和资源限制；唯一受支持的外部 credential 是 operator 按 profile 名称配置的只读目录挂载。
 
 ## 7. Driver 边界
 

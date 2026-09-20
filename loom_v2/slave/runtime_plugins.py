@@ -146,6 +146,12 @@ class RuntimePlugin(Protocol):
 
     async def inspect(self, activation: dict[str, Any]) -> dict[str, Any]: ...
 
+    async def auth_start(
+        self,
+        package: CapabilityPackageVersion,
+        activation: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
     async def deprovision(self, command: CapabilityDeprovisionCommand) -> dict[str, Any]: ...
 
     async def reconcile(self, activations: Sequence[dict[str, Any]]) -> dict[str, Any]: ...
@@ -473,6 +479,20 @@ class ProcessRuntimePlugin:
     async def inspect(self, activation: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/v1/inspect", {"activation": activation})
 
+    async def auth_start(
+        self,
+        package: CapabilityPackageVersion,
+        activation: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/auth/start",
+            {
+                "package": package.model_dump(mode="json"),
+                "activation": activation,
+            },
+        )
+
     async def deprovision(self, command: CapabilityDeprovisionCommand) -> dict[str, Any]:
         return await self._request("POST", "/v1/deprovision", {"command": command.model_dump(mode="json")})
 
@@ -675,6 +695,23 @@ class RuntimePluginHost:
             }
         )
         return await self.get(package).inspect(payload)
+
+    async def auth_start(
+        self,
+        package: CapabilityPackageVersion,
+        activation: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = dict(activation)
+        payload.update(
+            {
+                "package_type": package.package_type,
+                "execution": package.execution.model_dump(mode="json"),
+                "package_version_ref": package.version_ref,
+                "package_digest": package.package_digest,
+                "package_payload": package.model_dump(mode="json"),
+            }
+        )
+        return await self.get(package).auth_start(package, payload)
 
     async def deprovision(self, package: CapabilityPackageVersion, command: CapabilityDeprovisionCommand) -> dict[str, Any]:
         return await self.get(package).deprovision(command)

@@ -31,6 +31,14 @@
 - `container:python_orchestrator/1` 是 Driver 保留的编排执行器，用于解释动态节点计划；它不是普通能力包 runtime 的扩展模板。
 - 除该保留执行器外，普通能力包都通过 runtime-neutral Worker API 转发。新增 package contract 或 Slave runtime plugin 不得要求修改 Driver 源码、增加 `package_type` 分支或解析 package-specific body。
 - Docker runtime 作为 operator 安装的进程外插件运行；CapabilityPackage 不能携带插件路径、命令或 Docker 参数。
+- 外部服务所需的 credential 只能通过 Slave operator 的本地 `credential_profile`
+  名称解析，并由 `container-http-v1` 以固定只读挂载提供；kubeconfig、token 和
+  宿主机路径不进入 package、digest、Observer 或日志。具体 Kubernetes gateway
+  见 [Kubernetes 能力包设计](2026-09-19-kubernetes-capability-package-design.md)。
+- 服务默认只加入隔离的 internal network。需要外部 API 的 package 必须声明受限
+  的 `network_profile=egress`，由 operator 通过
+  `LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK` 预先配置网络；package 不能携带任意网络
+  名称或 Docker 参数。
 - 新设计不保留被替代的任意字典 fallback、函数包专用服务安装字段或重复 digest 字段。
 
 ## 3. 分阶段边界

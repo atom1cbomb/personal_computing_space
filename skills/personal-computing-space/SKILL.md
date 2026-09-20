@@ -29,6 +29,10 @@ tools, orchestrate work, and dispatch nodes to Slaves.
   creates a workspace-reusable package without a Run and does not activate a
   Slave. Run-bound packages remain the Driver agent's responsibility.
 
+For a Kubernetes task, require a ready `service + container:http/1` export whose
+package contract documents the Kubernetes gateway. `available=true` alone does
+not mean that a Kubernetes credential profile is configured.
+
 ## Workflow
 
 1. Check `GET /healthz` and `GET /api/v1/runtime`. Stop and report
@@ -63,3 +67,16 @@ an error.
 Read [references/observer-workflow.md](references/observer-workflow.md) before
 calling the Observer. It contains request shapes, polling rules, decision
 handling, result retrieval, and a distributed-task prompt template.
+
+## Kubernetes capability package
+
+Use the gateway's fixed operation exports rather than constructing shell
+commands. Call `/v1/auth/start` or `/v1/auth/status` first. If the result is
+`auth_required`, show the user `verification_uri`, `user_code`, and `qr_payload`,
+wait for OIDC device-code login, then poll status. Never ask for a token or
+kubeconfig in a task message.
+
+Call `/v1/jobs/submit` only with a VolcanoJob manifest
+(`apiVersion: batch.volcano.sh/v1alpha1`, `kind: Job`). Use the gateway's status,
+logs, and delete operations; do not submit a bare GPU Pod or invoke arbitrary
+kubectl commands.

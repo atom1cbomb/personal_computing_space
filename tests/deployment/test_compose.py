@@ -104,6 +104,31 @@ def test_slave_advertises_cross_host_endpoint_to_observer(tmp_path: Path):
     assert environment["LOOM_SLAVE_ENDPOINT_URL"] == "http://10.0.0.13:8081"
 
 
+def test_slave_mounts_operator_runtime_credentials_when_configured(tmp_path: Path):
+    path = tmp_path / "deployment.toml"
+    for filename, value in {
+        "internal.secret": "internal-token",
+        "postgres.secret": "pg-password",
+        "minio.secret": "minio-password",
+    }.items():
+        write_secret(tmp_path / filename, value)
+    path.write_text(
+        config_text().replace(
+            "workspace_id = \"workspace-default\"",
+            "workspace_id = \"workspace-default\"\n"
+            "runtime_credentials_dir = \"/var/lib/loom/runtime-credentials\"\n"
+            "runtime_plugin_egress_network = \"loom-egress\"",
+        ),
+        encoding="utf-8",
+    )
+    project = render_project(DeploymentConfig.from_file(path), "worker-a")
+    app = json.loads(project.compose_text)["services"]["slave"]
+
+    assert app["environment"]["LOOM_RUNTIME_PLUGIN_CREDENTIAL_DIR"] == "/var/lib/loom/runtime-credentials"
+    assert app["environment"]["LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK"] == "loom-egress"
+    assert "/var/lib/loom/runtime-credentials:/var/lib/loom/runtime-credentials:ro" in app["volumes"]
+
+
 def test_database_url_uses_url_encoded_password_variable(tmp_path: Path):
     for filename, value in {
         "internal.secret": "internal-token",

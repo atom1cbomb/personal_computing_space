@@ -169,6 +169,17 @@ def _render_slave(config: DeploymentConfig, machine: MachineConfig) -> tuple[dic
             "networks": ["default", "loom-internal"],
         }
     )
+    if config.runtime_credentials_dir:
+        # The runtime plugin invokes the host Docker daemon through the
+        # mounted socket.  Bind sources in ``docker create`` are therefore
+        # resolved by the daemon on the host, not by the Slave container.
+        # Keep the operator directory at the same absolute path inside the
+        # Slave so the plugin can validate it and the daemon can mount it
+        # into the service container.
+        app["environment"]["LOOM_RUNTIME_PLUGIN_CREDENTIAL_DIR"] = config.runtime_credentials_dir
+        app["volumes"].append(f"{config.runtime_credentials_dir}:{config.runtime_credentials_dir}:ro")
+    if config.runtime_plugin_egress_network:
+        app["environment"]["LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK"] = config.runtime_plugin_egress_network
     document = {
         "services": {"slave": app, "postgres": _postgres_service(f"{machine.name}-postgres-data", database)},
         "secrets": {"internal_api_secret": {"file": "./secrets/internal_api_secret"}},

@@ -216,6 +216,30 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"health_reports": reports}
 
+    @app.post("/driver/v1/capability/auth/start", dependencies=[Depends(require_internal)])
+    async def auth_start_capability(payload: CapabilityTargetRequest) -> dict[str, Any]:
+        target_slaves = payload.effective_target_slaves
+        if not target_slaves:
+            raise HTTPException(status_code=400, detail="target_slave_required")
+        package_ref = payload.effective_package_ref
+        if not package_ref:
+            raise HTTPException(status_code=400, detail="package_ref_required")
+        if not payload.approved_digest:
+            raise HTTPException(status_code=400, detail="approved_digest_required")
+        try:
+            package_ref_value = ResourceRef.model_validate(package_ref) if isinstance(package_ref, dict) else str(package_ref)
+            reports = [
+                await app.state.service.auth_start_capability(
+                    package_ref_value,
+                    str(target),
+                    approved_digest=payload.approved_digest,
+                )
+                for target in target_slaves
+            ]
+        except (ValueError, RuntimeError, KeyError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"health_reports": reports}
+
     @app.post("/driver/v1/mcp", dependencies=[Depends(require_internal)])
     async def mcp(payload: dict[str, Any], request: Request) -> dict[str, Any]:
         conversation_ref = request.headers.get("x-loom-conversation-ref", "")

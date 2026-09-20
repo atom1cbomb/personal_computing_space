@@ -2201,7 +2201,17 @@ class ObserverRepository:
                 if current.desired_state != desired_state:
                     raise ValueError("idempotency_key_reused")
                 return current
-            if current is not None and current.desired_state == desired_state and not rebuild:
+            if (
+                current is not None
+                and current.desired_state == desired_state
+                and not rebuild
+                # A failed transition must be retryable with a new
+                # activation revision.  Keeping the old revision here leaves
+                # the Slave fenced on its failed projection and makes a
+                # subsequent promote/deactivate permanently return
+                # ``activation_revision_conflict``.
+                and current.activation_state != "failed"
+            ):
                 return current
 
             revision = 1 if current is None else current.activation_revision + 1
@@ -2345,13 +2355,14 @@ class ObserverRepository:
             raise ValueError("health_report_id_reused")
 
         allowed_transitions = {
-            "not_installed": {"ready", "failed", "stopped"},
-            "provisioning": {"ready", "degraded", "failed", "stopped"},
-            "ready": {"ready", "degraded", "failed", "stopped"},
-            "degraded": {"ready", "degraded", "failed", "stopped"},
+            "not_installed": {"pending_auth", "ready", "failed", "stopped"},
+            "provisioning": {"pending_auth", "ready", "degraded", "failed", "stopped"},
+            "pending_auth": {"pending_auth", "ready", "degraded", "failed", "stopped"},
+            "ready": {"pending_auth", "ready", "degraded", "failed", "stopped"},
+            "degraded": {"pending_auth", "ready", "degraded", "failed", "stopped"},
             "failed": {"failed", "stopped"},
             "stopped": {"stopped"},
-            "lost": {"ready", "degraded", "failed", "stopped"},
+            "lost": {"pending_auth", "ready", "degraded", "failed", "stopped"},
         }
         if report.activation_state not in allowed_transitions[current.activation_state]:
             raise ValueError("activation_state_transition_invalid")

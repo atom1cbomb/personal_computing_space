@@ -909,6 +909,37 @@ class DriverService:
         )
         return report.model_dump(mode="json")
 
+    async def auth_start_capability(
+        self,
+        package_ref: str | ResourceRef,
+        target_slave: str,
+        *,
+        approved_digest: str | None = None,
+    ) -> dict[str, Any]:
+        """Request a new login challenge for an already-running activation."""
+        if self.control_client is None or self.remote_repository is None:
+            raise RuntimeError("driver_control_unavailable")
+        await self._refresh_remote_workers()
+        worker = self.workers.get(target_slave)
+        if worker is None:
+            raise RuntimeError("slave_not_found")
+        package = await self.remote_repository.get_capability_package(package_ref)
+        if approved_digest is not None and approved_digest.lower() != package.package_digest.lower():
+            raise RuntimeError("capability_package_digest_mismatch")
+        report = await worker.auth_start(
+            package=package,
+            target_slave=target_slave,
+            workspace_id=self.control_client.workspace_id,
+            driver_id=self.control_client.driver_id,
+            driver_epoch=self.control_client.driver_epoch,
+        )
+        await self.control_client.command(
+            "capability.health",
+            {"report": report.model_dump(mode="json")},
+            request_id=f"health:{package.package_digest}:{target_slave}:auth:{report.report_id}",
+        )
+        return report.model_dump(mode="json")
+
     async def _attach_open_run(
         self,
         mcp: DriverMCP,

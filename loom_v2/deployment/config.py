@@ -120,6 +120,8 @@ class ClusterConfig(ConfigModel):
     postgres_password_file: NonEmptyString
     minio_secret_key_file: NonEmptyString
     minio_access_key: NonEmptyString = "loom"
+    runtime_credentials_dir: str | None = None
+    runtime_plugin_egress_network: NonEmptyString | None = None
 
     @field_validator("name")
     @classmethod
@@ -133,6 +135,13 @@ class ClusterConfig(ConfigModel):
     def absolute_remote_dir(cls, value: str) -> str:
         if not value.startswith("/"):
             raise ValueError("cluster.remote_dir must be absolute")
+        return value
+
+    @field_validator("runtime_credentials_dir")
+    @classmethod
+    def absolute_runtime_credentials_dir(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("/"):
+            raise ValueError("cluster.runtime_credentials_dir must be absolute")
         return value
 
 
@@ -168,6 +177,8 @@ class DeploymentConfig:
     driver: DriverConfig
     secret_paths: tuple[Path, ...]
     build_network: str = "default"
+    runtime_credentials_dir: str | None = None
+    runtime_plugin_egress_network: str | None = None
 
     @classmethod
     def from_file(cls, path: str | Path) -> "DeploymentConfig":
@@ -247,6 +258,8 @@ class DeploymentConfig:
             driver=driver,
             secret_paths=tuple(secret_paths),
             build_network=build_network,
+            runtime_credentials_dir=cluster.runtime_credentials_dir,
+            runtime_plugin_egress_network=cluster.runtime_plugin_egress_network,
         )
 
     def machine(self, name_or_role: str) -> MachineConfig:

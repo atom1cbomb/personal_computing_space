@@ -247,7 +247,7 @@ class SlaveService:
                         await self._persist_activation(package, updated, runtime_plugin_id="", last_error_code="runtime_plugin_not_found")
                 continue
             state = str(item.get("activation_state") or ("ready" if (item.get("inspect") or {}).get("running") else activation.activation_state))
-            update_fields: dict[str, Any] = {"activation_state": state if state in {"ready", "degraded", "failed", "stopped", "lost"} else activation.activation_state}
+            update_fields: dict[str, Any] = {"activation_state": state if state in {"ready", "pending_auth", "degraded", "failed", "stopped", "lost"} else activation.activation_state}
             if isinstance(item.get("runtime_profile"), dict):
                 update_fields["runtime_profile"] = dict(item["runtime_profile"])
             updated = activation.model_copy(update=update_fields)
@@ -510,7 +510,7 @@ class SlaveService:
             await self._persist_activation(package, failed, last_error_code=code)
             raise RuntimeError(code) from exc
         state = str(response.get("activation_state") or response.get("state") or "ready")
-        if state not in {"ready", "degraded", "failed"}:
+        if state not in {"pending_auth", "ready", "degraded", "failed"}:
             raise RuntimeError("runtime_plugin_protocol_error")
         activation = pending.model_copy(
             update={
@@ -543,6 +543,7 @@ class SlaveService:
                 "runtime_plugin_id": str(response.get("runtime_plugin_id") or ""),
                 "package_version_ref": ref,
                 "package_digest": package.package_digest,
+                "runtime_profile": activation.runtime_profile,
                 **dict(response.get("details") or {}),
             },
         )
@@ -585,6 +586,61 @@ class SlaveService:
             if self._uses_runtime_plugin(package):
                 return await self._provision_runtime_locked(command, package)
             return await self._provision_executor_locked(command, package)
+
+    async def auth_start(
+        self, package: CapabilityPackageVersion
+    ) -> CapabilityHealthReport:
+        """Restart authentication for an existing runtime activation."""
+        if self.runtime_plugin_host is None:
+            raise RuntimeError("runtime_plugin_not_found")
+        if not self._uses_runtime_plugin(package):
+            raise RuntimeError("service_authentication_unsupported")
+        if package.workspace_id is not None and package.workspace_id != self.workspace_id:
+            raise RuntimeError("workspace_binding_mismatch")
+        activation_key = self._activation_key(package.version_ref)
+        lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
+        async with lock:
+            activation = self.activations.get(activation_key)
+            if activation is None or activation.package_digest.lower() != package.package_digest.lower():
+                raise RuntimeError("capability_activation_not_found")
+            if activation.desired_state != "running" or activation.activation_state == "stopped":
+                raise RuntimeError("capability_activation_not_running")
+            self._cache_package(package, package.version_ref)
+            payload = activation.model_dump(mode="json")
+            payload.update({"workspace_id": self.workspace_id, "slave_id": self.slave_id})
+            try:
+                response = await self.runtime_plugin_host.auth_start(package, payload)
+            except (RuntimePluginError, RuntimeError) as exc:
+                code = getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable"
+                raise RuntimeError(code) from exc
+            status = str(response.get("status") or "")
+            state = {"authenticated": "ready", "auth_required": "pending_auth"}.get(status, "failed")
+            profile = dict(activation.runtime_profile)
+            if isinstance(response.get("runtime_profile"), dict):
+                profile.update(response["runtime_profile"])
+            profile["authentication"] = {
+                key: value
+                for key, value in response.items()
+                if key in {"status", "verification_uri", "user_code", "qr_payload", "expires_at", "poll_after_seconds"}
+            }
+            updated = activation.model_copy(update={"activation_state": state, "runtime_profile": profile})
+            self.activations[activation_key] = updated
+            await self._persist_activation(package, updated)
+            report = CapabilityHealthReport(
+                report_id=f"health-{uuid4().hex}",
+                package_version_ref=package.version_ref,
+                package_digest=package.package_digest,
+                target_slave=self.slave_id,
+                activation_state=state,
+                activation_revision=activation.activation_revision,
+                evidence_refs=list(updated.evidence_refs),
+                details={
+                    "runtime_plugin_id": str(response.get("runtime_plugin_id") or ""),
+                    "authentication": profile["authentication"],
+                    "runtime_profile": profile,
+                },
+            )
+            return self._remember_health_report(activation_key, report)
 
     async def _provision_executor_locked(
         self,
@@ -881,8 +937,14 @@ class SlaveService:
                             },
                         )
                         details["inspect"] = inspected
-                        if inspected.get("identity_match") and inspected.get("healthy"):
+                        details["runtime_profile"] = dict(activation.runtime_profile)
+                        if isinstance(inspected.get("authentication"), dict):
+                            details["authentication"] = inspected["authentication"]
+                            details["runtime_profile"]["authentication"] = inspected["authentication"]
+                        if inspected.get("identity_match") and inspected.get("healthy") and inspected.get("authenticated", True):
                             state = "ready"
+                        elif inspected.get("identity_match") and inspected.get("healthy") and inspected.get("authentication", {}).get("status") == "auth_required":
+                            state = "pending_auth"
                         elif inspected.get("exists") and inspected.get("running"):
                             state = "degraded"
                         else:
@@ -892,10 +954,11 @@ class SlaveService:
                         details["code"] = getattr(exc, "code", None) or str(exc)
 
                 health = (activation.activation_revision, state)
-                if self._last_reported_health.get(activation_key) == health:
+                runtime_profile = details.get("runtime_profile", activation.runtime_profile)
+                if self._last_reported_health.get(activation_key) == health and runtime_profile == activation.runtime_profile:
                     continue
-                if state != activation.activation_state:
-                    activation = activation.model_copy(update={"activation_state": state})
+                if state != activation.activation_state or runtime_profile != activation.runtime_profile:
+                    activation = activation.model_copy(update={"activation_state": state, "runtime_profile": runtime_profile})
                     self.activations[activation_key] = activation
                     await self._persist_activation(package, activation)
                 report = CapabilityHealthReport(
