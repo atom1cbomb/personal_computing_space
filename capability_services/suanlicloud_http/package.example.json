@@ -1,0 +1,31 @@
+{
+  "package_type": "service",
+  "package_id": "suanlicloud-http",
+  "package_version": "v1",
+  "execution": {"kind": "container:http", "version": "1"},
+  "body": {
+    "image_ref": "localhost:5000/loom/suanlicloud-gateway@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "credential_profile": "suanlicloud-prod",
+    "network_profile": "egress",
+    "authentication": {
+      "start_path": "/v1/auth/start",
+      "status_path": "/v1/auth/status"
+    }
+  },
+  "capability_exports": [
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/regions-list", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/regions/list"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/zones-list", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/zones/list"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/nodes-list", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/nodes/list"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-list", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/instances/list"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-status", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/instances/status"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/images-list", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/images/list"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-run", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.instance.create"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/instances/run"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-start", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.instance.power"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/instances/start"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-stop", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.instance.power"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/instances/stop"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-reboot", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.instance.power"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/instances/reboot"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-shutdown", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.instance.power"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/instances/shutdown"}},
+    {"capability_descriptor_ref": {"resource_id": "loom://suanlicloud/instances-terminate", "version_or_digest": "<descriptor-digest>", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/<io-contract-digest>", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["suanlicloud.instance.delete"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/instances/terminate"}}
+  ]
+}

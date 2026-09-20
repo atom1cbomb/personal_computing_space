@@ -248,9 +248,10 @@ class DockerContainerHTTPRuntimeV1:
             profile_dir.relative_to(self.credential_dir)
         except ValueError as exc:
             raise RuntimeError("credential_profile_unavailable") from exc
-        kubeconfig = profile_dir / "kubeconfig"
-        if not profile_dir.is_dir() or not kubeconfig.is_file() or kubeconfig.is_symlink():
+        if not profile_dir.is_dir():
             raise RuntimeError("credential_profile_unavailable")
+        # The operator selects which directories may be mounted. The service,
+        # not the generic runtime, owns credential filenames and validation.
         return [
             "--mount",
             f"type=bind,src={profile_dir},dst=/run/loom/credentials,readonly",
