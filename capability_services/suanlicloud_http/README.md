@@ -1,10 +1,9 @@
 # Suanli Cloud HTTP capability package
 
-**Draft — not ready for use.** The supplied OpenAPI specifies
-`AKSKSignature` but omits its signing protocol. `_auth_headers` deliberately
-fails with `provider_signature_spec_required` until an official SDK or signing
-example is supplied. Production `suanlicloud-http/v1` was tried and then
-stopped; it is not an authenticated/usable package.
+The gateway implements the `SUANLI-HMAC-SHA256` protocol documented in
+`/root/cloud-backend/docs/api/signing.md`. The provider source defines the wire
+route as `POST /v1/{service}` with `Action` in the JSON body; the OpenAPI query
+form (`?Action=...`) is only a documentation key and is not sent by this image.
 
 This service exposes a fixed, named subset of the Suanli Cloud control-plane
 OpenAPI rather than a generic URL or `Action` proxy. It supports read-only
@@ -28,4 +27,13 @@ The directory must be traversable by container UID 65534 and the files must
 be readable by it (directory owner 65534, mode 0700; files owner 65534, mode 0600).
 
 The provider's AK/SK signer is isolated in `server.py`; no Suanli-specific
-branch is added to Observer, Driver, or Slave core.
+branch is added to Observer, Driver, or Slave core. The signer reproduces the
+reference vector in `cloud-backend/internal/auth/testdata/vectors.json`.
+
+The currently observed production endpoint still serves the older route shape:
+`POST /v1/meta` returns HTTP 404, while a correctly signed request to
+`/v1/meta?Action=DescribeRegions` reaches authentication but returns
+`SignatureDoesNotMatch`. This indicates that the production cloud API has not
+yet been deployed from the checked-out `/root/cloud-backend` routing/signing
+implementation. The package follows the checked-out source; deploy that API
+revision before activating this image in production.

@@ -8,10 +8,13 @@ operator credential profile and is never returned in an error or response.
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -21,20 +24,105 @@ MAX_BODY = 2 * 1024 * 1024
 MAX_RESPONSE = 8 * 1024 * 1024
 DEFAULT_ENDPOINT = "https://api.cloud.cs.ac.cn"
 
-OPERATIONS: dict[str, tuple[str, str]] = {
-    "regions_list": ("DescribeRegions", "/v1/meta"),
-    "zones_list": ("DescribeZones", "/v1/meta"),
-    "nodes_list": ("DescribeNodes", "/v1/vm"),
-    "instances_list": ("DescribeInstances", "/v1/vm"),
-    "instances_status": ("DescribeInstanceStatus", "/v1/vm"),
-    "images_list": ("DescribeImages", "/v1/vm"),
-    "instances_run": ("RunInstances", "/v1/vm"),
-    "instances_start": ("StartInstances", "/v1/vm"),
-    "instances_stop": ("StopInstances", "/v1/vm"),
-    "instances_reboot": ("RebootInstances", "/v1/vm"),
-    "instances_shutdown": ("ShutdownInstances", "/v1/vm"),
-    "instances_terminate": ("TerminateInstances", "/v1/vm"),
+# action, path, signing service.  The provider's Action discriminator belongs
+# in the JSON body; it is not a query parameter on the wire.
+OPERATIONS: dict[str, tuple[str, str, str]] = {
+    "regions_list": ("DescribeRegions", "/v1/meta", "meta"),
+    "zones_list": ("DescribeZones", "/v1/meta", "meta"),
+    "nodes_list": ("DescribeNodes", "/v1/vm", "vm"),
+    "instances_list": ("DescribeInstances", "/v1/vm", "vm"),
+    "instances_status": ("DescribeInstanceStatus", "/v1/vm", "vm"),
+    "images_list": ("DescribeImages", "/v1/vm", "vm"),
+    "instances_run": ("RunInstances", "/v1/vm", "vm"),
+    "instances_start": ("StartInstances", "/v1/vm", "vm"),
+    "instances_stop": ("StopInstances", "/v1/vm", "vm"),
+    "instances_reboot": ("RebootInstances", "/v1/vm", "vm"),
+    "instances_shutdown": ("ShutdownInstances", "/v1/vm", "vm"),
+    "instances_terminate": ("TerminateInstances", "/v1/vm", "vm"),
 }
+
+
+def _signing_region(action: str, parameters: dict[str, Any]) -> str:
+    """Return the provider signing scope region for an action.
+
+    Global metadata actions use the literal ``global``.  VM actions use the
+    request's RegionId when supplied; the provider also accepts ``global`` for
+    cross-region reads and requests whose instance IDs are resolved server-side.
+    """
+    if action in {"DescribeRegions", "DescribeZones", "DescribeImages"}:
+        return "global"
+    value = parameters.get("RegionId")
+    return value if isinstance(value, str) and value else "global"
+
+
+def _canonical_path(path: str) -> str:
+    # urllib.parse.quote operates on UTF-8 and uses uppercase %XX escapes.
+    from urllib.parse import quote
+
+    return quote(path or "/", safe="/-_.~")
+
+
+def _canonical_request(method: str, target: str, headers: dict[str, str], body: bytes) -> str:
+    parsed = urlparse(target)
+    host = headers["Host"].strip()
+    date = headers["X-Suanli-Date"].strip()
+    canonical_headers = f"host:{host}\nx-suanli-date:{date}\n"
+    return "\n".join(
+        (
+            method.upper(),
+            _canonical_path(parsed.path),
+            parsed.query,
+            canonical_headers,
+            "host;x-suanli-date",
+            hashlib.sha256(body).hexdigest(),
+        )
+    )
+
+
+def _build_auth_headers(
+    access_key_id: str,
+    secret_key: str,
+    endpoint: str,
+    method: str,
+    target: str,
+    body: bytes,
+    region: str,
+    service: str,
+    *,
+    now: Callable[[], datetime] | None = None,
+) -> dict[str, str]:
+    """Build the documented SUANLI-HMAC-SHA256 headers.
+
+    This is intentionally local to the capability container.  The secret is
+    only used as HMAC key material and never included in a request payload.
+    """
+    parsed_endpoint = urlparse(endpoint)
+    host = parsed_endpoint.netloc
+    if not host or parsed_endpoint.username or parsed_endpoint.password:
+        raise SuanliGatewayError("endpoint_invalid", 500)
+    timestamp = (now or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).replace(microsecond=0)
+    date_value = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    short_date = timestamp.strftime("%Y%m%d")
+    headers = {"Host": host, "X-Suanli-Date": date_value}
+    canonical = _canonical_request(method, target, headers, body)
+    scope = f"{short_date}/{region}/{service}/suanli_request"
+    string_to_sign = "\n".join(
+        ("SUANLI-HMAC-SHA256", date_value, scope, hashlib.sha256(canonical.encode("utf-8")).hexdigest())
+    )
+
+    def mac(key: bytes, value: str) -> bytes:
+        return hmac.new(key, value.encode("utf-8"), hashlib.sha256).digest()
+
+    k_date = mac(b"SUANLI" + secret_key.encode("utf-8"), short_date)
+    k_region = mac(k_date, region)
+    k_service = mac(k_region, service)
+    k_signing = mac(k_service, "suanli_request")
+    signature = hmac.new(k_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    headers["Authorization"] = (
+        f"SUANLI-HMAC-SHA256 Credential={access_key_id}/{scope}, "
+        f"SignedHeaders=host;x-suanli-date, Signature={signature}"
+    )
+    return headers
 
 
 class SuanliGatewayError(Exception):
@@ -71,25 +159,37 @@ class SuanliGateway:
             raise SuanliGatewayError("credential_profile_invalid", 503)
         return value
 
-    def _auth_headers(self, method: str, target: str, body: bytes) -> dict[str, str]:
-        self._secret("AccessKeyId")
-        self._secret("SecretKey")
-        # OpenAPI only names the Authorization header; it does not specify
-        # the algorithm, timestamp, canonical request, or wire format. Do not
-        # invent a signer or transmit raw credentials as a fallback.
-        raise SuanliGatewayError("provider_signature_spec_required", 503)
+    def _auth_headers(
+        self,
+        method: str,
+        target: str,
+        body: bytes,
+        operation: str,
+        parameters: dict[str, Any],
+    ) -> dict[str, str]:
+        action, _path, service = OPERATIONS[operation]
+        return _build_auth_headers(
+            self._secret("AccessKeyId"),
+            self._secret("SecretKey"),
+            self.endpoint,
+            method,
+            target,
+            body,
+            _signing_region(action, parameters),
+            service,
+        )
 
     def call(self, operation: str, parameters: dict[str, Any] | None = None) -> Any:
         if operation not in OPERATIONS:
             raise SuanliGatewayError("operation_not_allowed", 400)
-        action, path = OPERATIONS[operation]
+        action, path, _service = OPERATIONS[operation]
         body_value = dict(parameters or {})
         body_value["Action"] = action
         body = json.dumps(body_value, separators=(",", ":"), ensure_ascii=False).encode()
         if len(body) > MAX_BODY:
             raise SuanliGatewayError("request_too_large", 413)
-        target = f"{path}?Action={action}"
-        headers = self._auth_headers("POST", target, body)
+        target = path
+        headers = self._auth_headers("POST", target, body, operation, body_value)
         headers.update({"Content-Type": "application/json", "Accept": "application/json"})
         try:
             with httpx.stream(

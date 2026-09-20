@@ -1,9 +1,14 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from capability_services.suanlicloud_http.server import SuanliGateway, SuanliGatewayError
+from capability_services.suanlicloud_http.server import (
+    SuanliGateway,
+    SuanliGatewayError,
+    _build_auth_headers,
+)
 
 
 def _gateway(tmp_path: Path) -> SuanliGateway:
@@ -21,16 +26,34 @@ def test_profile_is_required_and_operation_is_allowlisted(tmp_path: Path) -> Non
         gateway.call("regions_list")
 
 
-def test_unconfirmed_signing_protocol_does_not_send_credentials(monkeypatch, tmp_path: Path) -> None:
+def test_signer_uses_provider_protocol_without_exposing_secret() -> None:
+    headers = _build_auth_headers(
+        "AKtest1234567890abcd",
+        "secret-1234567890abcdefghij1234567890abcdefghij",
+        "https://cloud.example.com",
+        "POST",
+        "/v1",
+        b'{"Action":"GetUserinfo"}',
+        "global",
+        "iam",
+        now=lambda: datetime(2026, 5, 31, 8, 42, tzinfo=timezone.utc),
+    )
+    assert headers["Host"] == "cloud.example.com"
+    assert headers["X-Suanli-Date"] == "2026-05-31T08:42:00Z"
+    assert headers["Authorization"].startswith(
+        "SUANLI-HMAC-SHA256 Credential=AKtest1234567890abcd/20260531/global/iam/suanli_request, "
+    )
+    assert headers["Authorization"].endswith(
+        "Signature=16181970e3f40395df018006699eebf2b00802a094969c69c2568c18abcc1190"
+    )
+    assert "secret-1234567890" not in headers["Authorization"]
+
+
+def test_missing_credentials_still_fails_closed(tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
-
-    def fail_if_called(*args, **kwargs):
-        pytest.fail("must not make an unsigned request")
-
-    monkeypatch.setattr("capability_services.suanlicloud_http.server.httpx.stream", fail_if_called)
-    with pytest.raises(SuanliGatewayError, match="provider_signature_spec_required"):
+    (tmp_path / "SecretKey").unlink()
+    with pytest.raises(SuanliGatewayError, match="credential_profile_unavailable"):
         gateway.call("regions_list")
-    assert gateway.auth_status()["status"] == "auth_failed"
 
 
 def test_operation_routes_to_documented_provider_action(monkeypatch, tmp_path: Path) -> None:
@@ -54,11 +77,11 @@ def test_operation_routes_to_documented_provider_action(monkeypatch, tmp_path: P
         return Response()
 
     monkeypatch.setattr("capability_services.suanlicloud_http.server.httpx.stream", fake_stream)
-    # A test-only signer isolates routing tests from the missing provider spec.
+    # A test-only signer isolates routing from the external provider.
     monkeypatch.setattr(gateway, "_auth_headers", lambda *args: {"Authorization": "test-only"})
     gateway.call("regions_list")
     assert captured["method"] == "POST"
-    assert captured["url"].endswith("/v1/meta?Action=DescribeRegions")
+    assert captured["url"].endswith("/v1/meta")
     assert captured["headers"]["Authorization"] == "test-only"
     assert captured["follow_redirects"] is False
     assert json.loads(captured["content"]) == {"Action": "DescribeRegions"}

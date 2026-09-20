@@ -1,13 +1,15 @@
 # Suanli Cloud capability package
 
 **日期：** 2026-09-20  
-**状态：** 草稿；认证协议待补充，尚未完成可用部署
+**状态：** 实现完成；等待生产 cloud API 部署到与源代码一致的路由
 
 ## 必须补齐的信息
 
-所给 OpenAPI 只声明 `AKSKSignature` 使用 `Authorization`，没有签名算法、
-canonical request 格式、时间戳头、编码方式或官方 SDK 地址。不能据此推导
-签名协议。当前实现保留明确失败的签名入口，不发送猜测签名或明文 SK。
+OpenAPI 只声明 `AKSKSignature` 使用 `Authorization`，但 `/root/cloud-backend`
+提供了权威协议：`SUANLI-HMAC-SHA256`、`X-Suanli-Date`、四步 HMAC key
+derivation，以及标准 canonical request。能力包严格按该实现签名，不发送明文
+SK。OpenAPI 中的 `/v1/{service}?Action=...` 是为了让每个 Action 具有唯一的
+文档 path key；真实请求是 `POST /v1/{service}`，`Action` 放在 JSON body。
 
 ## 目标
 
@@ -54,7 +56,9 @@ manifest 只有 profile 名称，不包含凭据。通用 runtime 只验证 oper
 
 ## 验证与剩余工作
 
-已验证命名操作路由、凭据缺失和未知签名协议下的 fail-closed 行为。生产试装
-v1 的认证探测未通过，已停用；未创建、修改或删除任何算力云资源。补齐官方
-签名协议后还需完成 OpenAPI schema 绑定、只读真实 API 联调和 Observer 到
-Slave 的结果落盘验证；应发布新包版本，不覆盖 v1 的不可变身份。
+已验证命名操作路由、凭据缺失、签名 reference vector 和 provider 错误归一化。
+生产 AK/SK 的只读探测尚未通过：当前生产 endpoint 对无 query 的
+`POST /v1/meta` 返回 404，对旧 query 路由返回 `SignatureDoesNotMatch`。这与
+已检出的 `/root/cloud-backend` 源码不一致，说明 cloud API 部署版本落后；在
+部署该 API 修订后，再发布新的不可变能力包版本并完成 `DescribeRegions` 联调。
+此前没有创建、修改或删除任何算力云资源。
