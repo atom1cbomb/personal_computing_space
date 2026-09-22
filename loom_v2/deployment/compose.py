@@ -217,10 +217,6 @@ def _render_driver(config: DeploymentConfig, machine: MachineConfig) -> tuple[di
         "LOOM_WORKSPACE_ID": config.workspace_id,
         "LOOM_WORKSPACE_ROOT": "/workspace",
     }
-    if "slave-a" in config.urls.slaves:
-        environment["LOOM_SLAVE_A_URL"] = config.urls.slaves["slave-a"]
-    if "slave-b" in config.urls.slaves:
-        environment["LOOM_SLAVE_B_URL"] = config.urls.slaves["slave-b"]
     if config.driver.model_catalog_file is not None:
         environment["LOOM_CODEX_MODEL_CATALOG_JSON"] = "/var/lib/loom/codex/model_catalog.json"
     app.update(

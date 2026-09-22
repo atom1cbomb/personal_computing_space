@@ -45,14 +45,15 @@ def test_slave_project_uses_observer_url_and_isolated_database(tmp_path: Path):
     assert f"{state_dir}:{state_dir}" in slave["volumes"]
 
 
-def test_driver_project_wires_all_remote_services_and_docker_socket(tmp_path: Path):
+def test_driver_project_uses_observer_and_docker_socket(tmp_path: Path):
     project = render_project(make_config(tmp_path), "driver")
     document = json.loads(project.compose_text)
     environment = document["services"]["driver"]["environment"]
 
     assert environment["LOOM_OBSERVER_URL"] == "http://10.0.0.11:8080"
     assert environment["LOOM_DRIVER_URL"] == "http://10.0.0.12:8090"
-    assert environment["LOOM_SLAVE_A_URL"] == "http://10.0.0.13:8081"
+    assert "LOOM_SLAVE_A_URL" not in environment
+    assert "LOOM_SLAVE_B_URL" not in environment
     assert environment["LOOM_S3_ENDPOINT_URL"] == "${LOOM_S3_ENDPOINT_URL}"
     assert document["services"]["driver"]["build"]["args"] == {"CODEX_VERSION": "0.151.0"}
     assert document["services"]["driver"]["volumes"][-1] == "/var/run/docker.sock:/var/run/docker.sock"

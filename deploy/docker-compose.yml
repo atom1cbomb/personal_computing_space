@@ -106,8 +106,6 @@ services:
       LOOM_CODEX_MODEL_CATALOG_JSON: /var/lib/loom/codex/model_catalog.json
       LOOM_CODEX_API_KEY_ENV: OPENAI_API_KEY
       LOOM_CODEX_WIRE_API: responses
-      LOOM_SLAVE_A_URL: http://slave-a:8081
-      LOOM_SLAVE_B_URL: http://slave-b:8082
       LOOM_S3_ENDPOINT_URL: http://minio:9000
       LOOM_S3_BUCKET: loom-content
       LOOM_S3_ACCESS_KEY: loom

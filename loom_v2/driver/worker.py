@@ -28,7 +28,7 @@ class WorkerSession:
     def __init__(
         self,
         slave_id: str,
-        base_url: str,
+        base_url: str = "",
         *,
         timeout: float | None = None,
         operation_timeout: float | None = None,
@@ -152,67 +152,6 @@ class WorkerSession:
             raise RuntimeError(str(detail))
         return CapabilityHealthReport.model_validate(response.json().get("health_report") or response.json())
 
-    async def auth_start(
-        self,
-        *,
-        package: CapabilityPackageVersion,
-        target_slave: str,
-        workspace_id: str,
-        instance_name: str = "default",
-        browser_auth: dict[str, Any] | None = None,
-        activation_revision: int | None = None,
-        driver_id: str | None = None,
-        driver_epoch: int | None = None,
-    ) -> CapabilityHealthReport:
-        payload: dict[str, Any] = {
-            "package": package.model_dump(mode="json"),
-            "target_slave": target_slave,
-            "workspace_id": workspace_id,
-            "instance_name": instance_name,
-            "browser_auth": browser_auth,
-            "activation_revision": activation_revision,
-        }
-        if driver_id is not None:
-            payload["driver_id"] = driver_id
-        if driver_epoch is not None:
-            payload["driver_epoch"] = driver_epoch
-        response = await self._post("/worker/v1/capability/auth/start", payload)
-        if response.status_code >= 400:
-            detail = response.json().get("detail", "worker_auth_start_failed")
-            raise RuntimeError(str(detail))
-        return CapabilityHealthReport.model_validate(response.json().get("health_report") or response.json())
-
-    async def auth_browser(
-        self,
-        *,
-        package: CapabilityPackageVersion,
-        target_slave: str,
-        workspace_id: str,
-        instance_name: str,
-        activation_revision: int,
-        payload: dict[str, Any],
-        driver_id: str | None = None,
-        driver_epoch: int | None = None,
-    ) -> dict[str, Any]:
-        request: dict[str, Any] = {
-            "package": package.model_dump(mode="json"),
-            "target_slave": target_slave,
-            "workspace_id": workspace_id,
-            "instance_name": instance_name,
-            "activation_revision": activation_revision,
-            "payload": payload,
-        }
-        if driver_id is not None:
-            request["driver_id"] = driver_id
-        if driver_epoch is not None:
-            request["driver_epoch"] = driver_epoch
-        response = await self._post("/worker/v1/capability/auth/browser", request)
-        if response.status_code >= 400:
-            detail = response.json().get("detail", "worker_auth_browser_failed")
-            raise RuntimeError(str(detail))
-        value = response.json()
-        return value if isinstance(value, dict) else {"status": "auth_failed"}
-
     async def _post(self, path: str, payload: dict[str, Any]) -> httpx.Response:
         try:
             self._http.transport = self.transport
@@ -224,6 +163,8 @@ class WorkerSession:
                     headers=self._headers(),
                     timeout=self.operation_timeout,
                 )
+            if not self.base_url:
+                raise WorkerUnavailableError("worker_transport_not_configured")
             return await self._http.request(
                 "POST",
                 f"{self.base_url}{path}",

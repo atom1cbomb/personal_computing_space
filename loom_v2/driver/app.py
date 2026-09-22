@@ -10,8 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from loom_v2.coding_agents.codex import CodexAppServerProvider
 from loom_v2.coding_agents.fake import FakeCodingAgentProvider
 from loom_v2.contracts.agents import AgentLease, AgentRegistration
-from loom_v2.contracts.api import CapabilityBrowserRequest, CapabilityTargetRequest, DriverMessageRequest, WorkspaceRequest
-from loom_v2.contracts.types import ResourceRef
+from loom_v2.contracts.api import DriverMessageRequest, WorkspaceRequest
 from loom_v2.settings import Settings
 from loom_v2.content_store import ContentStore
 
@@ -84,10 +83,6 @@ def create_app(
         settings=settings,
     )
     workers: dict[str, WorkerSession] = {}
-    if settings.slave_a_url:
-        workers["slave-a"] = WorkerSession("slave-a", settings.slave_a_url, operation_timeout=settings.worker_operation_timeout_seconds, internal_api_secret=settings.internal_api_secret, settings=settings, observer_url=settings.observer_url)
-    if settings.slave_b_url:
-        workers["slave-b"] = WorkerSession("slave-b", settings.slave_b_url, operation_timeout=settings.worker_operation_timeout_seconds, internal_api_secret=settings.internal_api_secret, settings=settings, observer_url=settings.observer_url)
     app.state.control = control
     app.state.provider = provider
     content_store = ContentStore.from_settings(settings)
@@ -167,97 +162,6 @@ def create_app(
         try:
             return await app.state.service.interrupt(conversation_ref)
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.post("/driver/v1/capability/provision", dependencies=[Depends(require_internal)])
-    async def provision_capability(payload: CapabilityTargetRequest) -> dict[str, Any]:
-        target_slaves = payload.effective_target_slaves
-        if not target_slaves:
-            raise HTTPException(status_code=400, detail="target_slave_required")
-        package_ref = payload.effective_package_ref
-        if not package_ref:
-            raise HTTPException(status_code=400, detail="package_ref_required")
-        try:
-            package_ref_value = ResourceRef.model_validate(package_ref) if isinstance(package_ref, dict) else str(package_ref)
-            binding = payload.compute_binding
-            reports = [
-                await app.state.service.provision_capability(
-                    package_ref_value,
-                    str(target),
-                    compute_binding=binding,
-                    idempotency_key=payload.idempotency_key,
-                    instance_name=payload.instance_name,
-                    target_resource_ref=payload.target_resource_ref,
-                    instance_config=payload.instance_config,
-                )
-                for target in target_slaves
-            ]
-        except (ValueError, RuntimeError, KeyError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"health_reports": reports}
-
-    @app.post("/driver/v1/capability/deprovision", dependencies=[Depends(require_internal)])
-    async def deprovision_capability(payload: CapabilityTargetRequest) -> dict[str, Any]:
-        target_slaves = payload.effective_target_slaves
-        if not target_slaves:
-            raise HTTPException(status_code=400, detail="target_slave_required")
-        package_ref = payload.effective_package_ref
-        if not package_ref:
-            raise HTTPException(status_code=400, detail="package_ref_required")
-        try:
-            package_ref_value = ResourceRef.model_validate(package_ref) if isinstance(package_ref, dict) else str(package_ref)
-            reports = [
-                await app.state.service.deprovision_capability(
-                    package_ref_value,
-                    str(target),
-                    approved_digest=payload.approved_digest,
-                    idempotency_key=payload.idempotency_key,
-                    instance_name=payload.instance_name,
-                )
-                for target in target_slaves
-            ]
-        except (ValueError, RuntimeError, KeyError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"health_reports": reports}
-
-    @app.post("/driver/v1/capability/auth/start", dependencies=[Depends(require_internal)])
-    async def auth_start_capability(payload: CapabilityTargetRequest) -> dict[str, Any]:
-        target_slaves = payload.effective_target_slaves
-        if not target_slaves:
-            raise HTTPException(status_code=400, detail="target_slave_required")
-        package_ref = payload.effective_package_ref
-        if not package_ref:
-            raise HTTPException(status_code=400, detail="package_ref_required")
-        if not payload.approved_digest:
-            raise HTTPException(status_code=400, detail="approved_digest_required")
-        try:
-            package_ref_value = ResourceRef.model_validate(package_ref) if isinstance(package_ref, dict) else str(package_ref)
-            reports = [
-                await app.state.service.auth_start_capability(
-                    package_ref_value,
-                    str(target),
-                    approved_digest=payload.approved_digest,
-                    instance_name=payload.instance_name,
-                    browser_auth=payload.browser_auth.model_dump(mode="json") if payload.browser_auth else None,
-                    activation_revision=payload.activation_revision,
-                )
-                for target in target_slaves
-            ]
-        except (ValueError, RuntimeError, KeyError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"health_reports": reports}
-
-    @app.post("/driver/v1/capability/auth/browser", dependencies=[Depends(require_internal)])
-    async def auth_browser_capability(payload: CapabilityBrowserRequest) -> dict[str, Any]:
-        try:
-            return await app.state.service.auth_browser_capability(
-                payload.package_ref,
-                payload.target_slave,
-                instance_name=payload.instance_name,
-                activation_revision=payload.activation_revision,
-                payload=payload.payload.model_dump(mode="json"),
-            )
-        except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/driver/v1/mcp", dependencies=[Depends(require_internal)])

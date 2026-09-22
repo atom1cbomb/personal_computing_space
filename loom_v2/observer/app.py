@@ -187,7 +187,12 @@ def create_app(
             capabilities = dict(agent.get("capabilities") or {})
             capabilities["operations"] = sorted(projected.get("operations", set()))
             agent["capabilities"] = capabilities
-        return agents
+        # Driver only needs logical identities and capability snapshots.  The
+        # Observer-owned relay keeps endpoint URLs out of the Driver plane.
+        return [
+            {key: value for key, value in agent.items() if key != "endpoint_url"}
+            for agent in agents
+        ]
 
     @internal_router.post("/internal/v1/capability-health")
     async def capability_health(payload: CapabilityHealthRequest) -> dict[str, Any]:

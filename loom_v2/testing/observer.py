@@ -109,10 +109,6 @@ def create_embedded_app(
         ),
     }
     workers: dict[str, WorkerSession] = {}
-    if settings.slave_a_url:
-        workers["slave-a"] = WorkerSession("slave-a", settings.slave_a_url, operation_timeout=settings.worker_operation_timeout_seconds)
-    if settings.slave_b_url:
-        workers["slave-b"] = WorkerSession("slave-b", settings.slave_b_url, operation_timeout=settings.worker_operation_timeout_seconds)
     provider = (
         FakeCodingAgentProvider()
         if settings.coding_agent_backend == "fake"

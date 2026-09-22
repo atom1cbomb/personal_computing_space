@@ -49,9 +49,6 @@ class Settings(BaseSettings):
     internal_api_secret: str = ""
     observer_url: str = "http://observer:8080"
     public_base_url: str = ""
-    # Injected only by an authenticated, trusted user-facing reverse proxy.
-    # Distinct from the service-to-service credential; never sent to the IdP.
-    browser_auth_proxy_secret: str = ""
     agent_id: str = "driver-default"
     agent_instance_id: str | None = None
     agent_protocol_version: str = "loom.v1"
@@ -60,7 +57,5 @@ class Settings(BaseSettings):
     agent_lease_ttl_seconds: float = 15.0
     driver_url: str | None = None
     slave_endpoint_url: str | None = None
-    slave_a_url: str | None = None
-    slave_b_url: str | None = None
 
     model_config = SettingsConfigDict(env_prefix="LOOM_", extra="ignore")

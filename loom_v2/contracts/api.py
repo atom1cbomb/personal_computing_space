@@ -162,38 +162,6 @@ class WorkspaceRequest(ContractModel):
     workspace_id: str | None = None
 
 
-class CapabilityTargetRequest(ContractModel):
-    """Driver capability endpoint envelope.
-
-    ``target_slave`` and ``package_version_ref`` remain accepted as the
-    singular/legacy spelling at this boundary.  The endpoint resolves them to
-    the canonical plural/current fields before invoking the service.
-    """
-
-    target_slaves: list[str] = Field(default_factory=list)
-    target_slave: str | None = None
-    package_ref: ResourceRef | str | None = None
-    package_version_ref: ResourceRef | str | None = None
-    compute_binding: ComputeBinding | None = None
-    idempotency_key: str | None = None
-    approved_digest: str | None = None
-    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-    target_resource_ref: ResourceRef | None = None
-    instance_config: dict[str, Any] = Field(default_factory=dict)
-    browser_auth: BrowserAuthContext | None = None
-    activation_revision: int | None = Field(default=None, ge=1)
-
-    @property
-    def effective_target_slaves(self) -> list[str]:
-        if self.target_slaves:
-            return self.target_slaves
-        return [self.target_slave] if self.target_slave else []
-
-    @property
-    def effective_package_ref(self) -> ResourceRef | str | None:
-        return self.package_ref or self.package_version_ref
-
-
 class SlaveDispatchRequest(ContractModel):
     attempt_id: str = Field(min_length=1)
     execution_id: str = Field(min_length=1)
@@ -235,14 +203,6 @@ class SlaveAuthStartRequest(ContractModel):
     activation_revision: int | None = Field(default=None, ge=1)
 
 
-class CapabilityBrowserRequest(ContractModel):
-    package_ref: ResourceRef
-    target_slave: str = Field(min_length=1)
-    instance_name: str = Field(pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-    activation_revision: int = Field(ge=1)
-    payload: BrowserAuthMessage
-
-
 class SlaveBrowserRequest(SlaveAuthStartRequest):
     activation_revision: int = Field(ge=1)
     payload: BrowserAuthMessage
@@ -251,7 +211,6 @@ class SlaveBrowserRequest(SlaveAuthStartRequest):
 __all__ = [
     "AgentLeaseRequest",
     "CapabilityHealthRequest",
-    "CapabilityTargetRequest",
     "CapabilityActivationRequest",
     "CapabilityPackageUploadRequest",
     "ResourceCreateRequest",
