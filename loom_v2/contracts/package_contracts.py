@@ -219,6 +219,16 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                         "start_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
                         "status_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
                         "browser_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                        "client": {
+                            "type": "object",
+                            "required": ["kind", "protocol_version", "entrypoint"],
+                            "properties": {
+                                "kind": {"const": "local-browser-bridge"},
+                                "protocol_version": {"const": "1"},
+                                "entrypoint": {"type": "string", "minLength": 1},
+                            },
+                            "additionalProperties": False,
+                        },
                     },
                 "additionalProperties": False,
             },

@@ -52,9 +52,6 @@ class Settings(BaseSettings):
     # Injected only by an authenticated, trusted user-facing reverse proxy.
     # Distinct from the service-to-service credential; never sent to the IdP.
     browser_auth_proxy_secret: str = ""
-    # Explicitly enabled only after restricting this Observer listener to SSH
-    # forwarding/private ingress; never a container address.
-    browser_tunnel_target: str = "127.0.0.1:8080"
     agent_id: str = "driver-default"
     agent_instance_id: str | None = None
     agent_protocol_version: str = "loom.v1"

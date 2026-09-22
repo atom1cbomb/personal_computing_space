@@ -138,7 +138,13 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
   "network_profile": "internal",
   "authentication": {
     "start_path": "/v1/auth/start",
-    "status_path": "/v1/auth/status"
+    "status_path": "/v1/auth/status",
+    "browser_path": "/v1/auth/browser",
+    "client": {
+      "kind": "local-browser-bridge",
+      "protocol_version": "1",
+      "entrypoint": "client/loom_vm_auth.py"
+    }
   }
 }
 ```
@@ -158,6 +164,11 @@ digest 不包含 profile 内容。没有配置匹配 profile 时，provision 失
 调用 `start_path`；返回 `auth_required` 时激活状态为 `pending_auth`，健康报告
 携带设备登录信息。后台健康检查调用 `status_path`，仅返回 `authenticated` 后
 才将激活标记为 `ready`。两个路径均为无参数 `POST`，不能与健康或业务路径冲突。
+
+需要浏览器往返的包必须声明 `browser_path` 和 `client`。`client` 指向随能力包交付、
+运行在用户电脑上的本地助手；助手只转发固定的登录入口与回调，不属于 Slave 容器，
+也不要求用户拥有 Observer 主机权限。Observer 为每次 `auth/start` 发放绑定 package
+digest、实例和 activation revision 的短期 bridge token。
 
 每个 export 的 runtime binding 为：
 

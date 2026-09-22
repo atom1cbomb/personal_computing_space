@@ -9,7 +9,16 @@
     "health_path": "/healthz",
     "network_profile": "egress",
     "persistent_state": true,
-    "authentication": {"start_path": "/v1/auth/start", "status_path": "/v1/auth/status", "browser_path": "/v1/auth/browser"}
+    "authentication": {
+      "start_path": "/v1/auth/start",
+      "status_path": "/v1/auth/status",
+      "browser_path": "/v1/auth/browser",
+      "client": {
+        "kind": "local-browser-bridge",
+        "protocol_version": "1",
+        "entrypoint": "client/loom_vm_auth.py"
+      }
+    }
   },
   "capability_exports": [
     {

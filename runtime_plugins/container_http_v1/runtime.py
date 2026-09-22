@@ -361,7 +361,7 @@ class DockerContainerHTTPRuntimeV1:
         return ["--network", self.network, "--network", self.egress_network]
 
     @staticmethod
-    def _authentication(package: dict[str, Any]) -> dict[str, str] | None:
+    def _authentication(package: dict[str, Any]) -> dict[str, Any] | None:
         body = package.get("body")
         authentication = body.get("authentication") if isinstance(body, dict) else None
         if authentication is None:
@@ -369,7 +369,7 @@ class DockerContainerHTTPRuntimeV1:
         if (
             not isinstance(authentication, dict)
             or not {"start_path", "status_path"}.issubset(authentication)
-            or set(authentication) - {"start_path", "status_path", "browser_path"}
+            or set(authentication) - {"start_path", "status_path", "browser_path", "client"}
         ):
             raise RuntimeError("runtime_plugin_capability_mismatch")
         start_path = authentication.get("start_path")
@@ -392,6 +392,15 @@ class DockerContainerHTTPRuntimeV1:
             if not isinstance(browser_path, str) or not browser_path.startswith("/") or "?" in browser_path or "#" in browser_path or browser_path in {start_path, status_path}:
                 raise RuntimeError("runtime_plugin_capability_mismatch")
             value["browser_path"] = browser_path
+        client = authentication.get("client")
+        if client is not None:
+            if (not isinstance(client, dict)
+                    or client.get("kind") != "local-browser-bridge"
+                    or client.get("protocol_version") != "1"
+                    or not isinstance(client.get("entrypoint"), str)
+                    or not client["entrypoint"]):
+                raise RuntimeError("runtime_plugin_capability_mismatch")
+            value["client"] = client
         return value
 
     async def auth_browser(

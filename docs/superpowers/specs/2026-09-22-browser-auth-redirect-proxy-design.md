@@ -1,13 +1,13 @@
 # 外部服务浏览器登录与远程回调代理
 
-状态：基础 localhost callback 与固定端口转发已实现；独立 tunnel listener 和真实
-OIDC/Docker E2E 仍未宣称完成。遵循 [设计规范](../spec-design-guidance.md)。
+状态：本地浏览器助手桥接已实现；真实 OIDC/Docker E2E 仍需按部署环境验收。遵循
+[设计规范](../spec-design-guidance.md)。
 
 本设计补充 [命名实例与 VM 访问](2026-09-21-named-activations-and-suanli-vm-access-design.md) 的认证部分，复用 [通用外部认证](2026-09-19-external-service-authentication-design.md)。不以当前单元测试通过作为该链路已实现的证据。
 
 ## 1. 决策及依据
 
-使用官方 opkssh v0.14.0 的 localhost listener，不修改 opkssh、不实现 OIDC/OpenPubkey，也不新增 SSH runtime。用户通过 SSH 本地端口转发访问 Observer；VM 访问容器仍不发布 host port。
+使用官方 opkssh v0.14.0 的 localhost listener，不修改 opkssh、不实现 OIDC/OpenPubkey，也不新增 SSH runtime。用户运行随能力包携带的本地浏览器助手；VM 访问容器仍不发布 host port。
 
 已核对官方源码：
 
@@ -17,14 +17,14 @@ OIDC/Docker E2E 仍未宣称完成。遵循 [设计规范](../spec-design-guidan
 
 因此必须代理 **登录入口与回调两段**，并保留同一次登录的 Cookie。只转发授权码或返回 `callback_received` 不会完成认证。
 
-本设计使用一次性的 localhost 端口转发，不要求为每个外部 IdP 注册新的 Observer
-callback。用户本机的 `localhost:3000` 仍是已登记的 redirect，Observer 仅把本次
-隧道收到的 `/login` 与 `/login-callback` 转发到 Observer → Slave → runtime → VM
-能力包容器。Observer 通过固定 Worker auth 路径连接 Slave，不经过 Driver，也不把容器
-端口暴露到公网。
+本设计使用一次性的本地助手桥接，不要求用户拥有 Observer 主机账号，也不要求为每个
+外部 IdP 注册新的 Observer callback。用户本机的 `localhost:3000` 仍是已登记的
+redirect；助手仅把本次 `/login` 与 `/login-callback` 转发到 Observer 的短期 bridge，
+再由 Observer → Slave → runtime → VM 能力包容器完成认证。Observer 通过固定 Worker
+auth 路径连接 Slave，不经过 Driver，也不把容器端口暴露到公网。
 
 ```text
-浏览器 → 本机 localhost:3000 → 端口转发 → Observer → Slave → container-http runtime
+浏览器 → 本机 localhost:3000 → 本地助手 HTTPS bridge → Observer → Slave → container-http runtime
                                                   ↓
                                指定 VM 访问容器 → localhost opkssh
 浏览器 ← 授权跳转 ←─────────────────────────────────┘
@@ -44,14 +44,22 @@ URL、端口、HTTP 方法或路径代理。
   "authentication": {
     "start_path": "/v1/auth/start",
     "status_path": "/v1/auth/status",
-    "browser_path": "/v1/auth/browser"
+    "browser_path": "/v1/auth/browser",
+    "client": {
+      "kind": "local-browser-bridge",
+      "protocol_version": "1",
+      "entrypoint": "client/loom_vm_auth.py"
+    }
   }
 }
 ```
 
 三者是互不冲突的包内 origin path，不能与健康或业务 export 路径重叠。`browser_path` 不导出为业务能力，不需要 descriptor 或 IoContract。未声明它的设备码、静态凭据包继续使用现有协议，这不是旧浏览器方案的兼容层。
 
-有 `browser_path` 的包，安装和普通健康探测只报告 `auth_required`，不自动创建无限重试的登录进程。用户通过现有 Observer `auth/start` 为一个确定的命名实例发起登录。该请求必须指定精确包 digest、Slave 和实例名。
+有 `browser_path` 的包必须同时声明 `authentication.client`，其中的客户端入口随能力包
+目录交付，不放进 Slave 容器。安装和普通健康探测只报告 `auth_required`，不自动创建
+无限重试的登录进程。用户通过现有 Observer `auth/start` 为一个确定的命名实例发起
+登录。该请求必须指定精确包 digest、Slave 和实例名。
 
 Observer 创建随机 `session_id`，并把 `{session_id, callback_uri, expires_at}` 沿既有 `auth_start` 通道传给包。这是一次临时登录尝试的关联信息，不是新的 activation ID。`callback_uri` 固定为已经登记的 `http://localhost:3000/login-callback`，不接受调用者输入。
 
@@ -71,15 +79,11 @@ Host/process/server 和 container-http runtime；生产请求由 Observer 直接
 
 ## 3. 对外入口与浏览器绑定
 
-部署为每个 Observer 提供一个受控的 SSH/TCP 端口转发目标。用户把本机
-`localhost:3000` 接到 Observer 的固定本地监听端口：
+能力包的 `authentication.client` 声明本地助手入口和协议版本。`auth/start` 返回
+Observer bridge URL、session id、短期 session token 和客户端元数据。用户在自己的
+电脑运行助手；助手只绑定本机 loopback，不要求 Observer 主机 SSH/TCP 访问权限。
 
-```text
-ssh -N -L 3000:127.0.0.1:<tunnel-port> <observer-host>
-```
-
-远端端口只绑定 Observer 所在主机的 loopback，不能从公网访问。浏览器和 IdP 继续
-使用已有的：
+浏览器和 IdP 继续使用已有的：
 
 ```text
 http://localhost:3000/login-callback
@@ -87,27 +91,30 @@ http://localhost:3000/login-callback
 
 无需为每个包、Slave 或 VM 注册 URI，也不依赖 IdP 接受通配符。
 
-Observer 返回端口转发目标和命令。该入口只提供固定的 `/login` 与 `/login-callback`，
-受 workspace 用户访问控制和随机 session 绑定保护；不接受任意 upstream、path 或
-header。动态 tunnel listener 不属于当前实现范围。
+Observer bridge 只接受固定的 `POST /api/v1/auth/browser/bridge`，由 bearer token
+绑定到一个 package digest、Slave、实例和 activation revision；它不接受 upstream、
+path、Host 或任意 header。
 
-首次打开入口时：
+助手打开本地入口时：
 
 1. 校验该登录尝试的 workspace 与当前用户可访问的 workspace 相同。
-2. 生成独立的随机浏览器绑定值，写入 `HttpOnly; SameSite=Lax`、host-only Cookie；因为已登记 callback 是 localhost HTTP，不能设置 `Secure`；有效期不超过该 session。
-3. 将绑定值保存在 Observer 的临时会话记录中。登录链接第二次被不同浏览器消费应拒绝。
-4. 调用 `open`，收到包校验后的授权 Location 后返回 302；服务端 HTTP 客户端不自动跟随跳转。
+2. 生成独立的随机浏览器绑定值并保存到临时会话；助手随后将它写入
+   `HttpOnly; SameSite=Lax`、host-only Cookie。因为已登记 callback 是 localhost HTTP，
+   不能设置 `Secure`；有效期不超过该 session。
+3. Observer 将绑定值返回给助手；助手把它作为 localhost host-only Cookie 写给浏览器。
+4. 助手调用 `open`，收到包校验后的授权 Location 后返回 302；不自动跟随跳转。
 
-localhost callback 不携带 Loom API token。Observer tunnel 用短时随机 session 找到
-实例，再代理回调。缺失 tunnel、过期、已消费或找不到记录时直接拒绝；不能退回按包名、
-IP、query 中的 Slave 或“第一个 pending 实例”选择。
+localhost callback 不携带 Loom API token。助手用短时 bearer token 找到实例，再代理回调。
+缺失 token、过期、已消费或找不到记录时直接拒绝；不能退回按包名、IP、query 中的
+Slave 或“第一个 pending 实例”选择。
 
 首版同一浏览器 Cookie jar 只允许一个进行中的浏览器认证；打开第二个实例的登录入口返回 `browser_auth_in_progress`，不能覆盖第一条绑定。不同浏览器会话可以同时登录不同 VM。需要另开浏览器配置文件或先结束原认证，不增加多标签页关联协议。
 
 回调仅支持授权码流程的顶层 GET/query 模式，使用 SameSite=Lax；不支持 `form_post` 或 iframe 登录。显式重登让原 session 失效，原浏览器 Cookie 不再可用。
 
-生产必须提供受信任的 SSH/TCP 端口转发入口和 workspace 用户访问控制。仅有内部
-service token 不等于浏览器用户鉴权；不能为了测试把未鉴权的 tunnel 创建接口暴露公网。
+生产必须提供受信任的 HTTPS Observer 入口和 workspace 用户访问控制。仅有内部 service
+token 不等于浏览器用户鉴权；bridge token 只能由已授权的 `auth/start` 响应发放，不能
+单独创建或延长登录会话。
 
 ## 4. 会话状态与实例校验
 
@@ -116,7 +123,7 @@ Observer 只在内存维护有数量上限、默认 5 分钟 TTL 的临时记录
 ```text
 session_id → workspace, package_version_ref, package_digest,
              target_slave, instance_name, activation_revision,
-             tunnel_port, expires_at, browser_binding, phase
+             bridge_token, expires_at, browser_binding, phase
 ```
 
 `phase` 只需区分已创建、浏览器已绑定、回调处理中；完成、失败和到期即删除。每个实例同时只允许一个登录尝试。每次回调都核对当前 activation 仍为 running、revision 与包/实例身份一致。Slave 检查本地 activation，runtime 验证完整容器 labels，不让旧回调命中新实例。
@@ -162,11 +169,12 @@ opkssh login --disable-browser-open
 
 1. 补齐命名实例的已有缺口：Worker `auth_start` 参数、RemoteRepository 目标/配置透传、具名执行与停止隔离。回调建立在这条身份链路上，不新增第二套实例 registry。
 2. 扩展 `authentication.browser_path` 契约与 runtime-plugin 的 `auth_start` 上下文、`auth_browser` 通道。设备码包不要求实现 `auth_browser`。
-3. Observer 实现固定用途 localhost 路由、短时会话与绑定；Slave 通过固定 Worker auth
-   路径执行容器转发。当前不引入独立 tunnel listener。
+3. Observer 实现固定用途 bridge、短时会话与绑定；Slave 通过固定 Worker auth 路径
+执行容器转发。能力包目录携带本地助手，不引入独立 tunnel listener。
 4. VM 包实现官方 `/login` 与 `/login-callback` 的局部代理、认证进程清理及实际 SSH 就绪探测。
 5. 删除当前占位 `/v1/auth/callback`、抓取任意日志 URL、私钥存在即 authenticated 的代码。删除并修正 README 中“设置环境变量即可完成远程登录”的说明。协议仍用 `auth_required/authenticated/auth_failed`，不用未被 runtime 接受的 `auth_pending`。
-6. 配置并验证端口转发访问控制，再发布真实镜像 digest 和契约，执行生产验收。不能把全零 image/descriptor digest 示例发布为可用包。
+6. 发布本地助手与真实镜像 digest 和契约，执行生产验收。不能把全零 image/descriptor
+digest 示例发布为可用包。
 
 不新增认证数据库、认证 broker、通用 HTML 代理或特定云厂商的 Observer/Driver 分支。UI 复用 verification_uri，不需要新建 VM 登录页面产品。
 
@@ -182,8 +190,8 @@ opkssh login --disable-browser-open
 - 登录成功但 SSH 不通或 host key 改变不进入 ready；私钥文件存在但登录未完成/已过期也不进入 ready。
 - 日志、DB events、健康报告和 ContentStore 检查不到授权码、Cookie 或私钥。测试中用唯一假值验证，包括 TLS 入口访问日志。
 
-生产验收依赖 operator 提供受信任的端口转发入口和用户访问控制；继续使用已登记的
-localhost redirect，不需要为每个 IdP 新增 callback。若用户环境不能建立端口转发，
-才另行启用固定 HTTPS callback 并满足对应 IdP 注册要求。
+生产验收依赖 operator 提供受信任的 HTTPS Observer 入口和用户访问控制；继续使用已
+登记的 localhost redirect，不需要为每个 IdP 新增 callback。若用户环境不能运行本地
+助手，才另行启用固定 HTTPS callback 并满足对应 IdP 注册要求。
 
 前置条件通过后，按主 spec 的预算/授权创建测试 VM，Observer 返回登录链接，用户登录，等待该实例 ready，从 Observer 发起唯一标记的 exec 任务，核验退出码/输出及内容寻址取回。最后按约定终止测试 VM、停用访问实例并清理专属状态。前置条件不满足时，不创建付费资源来等待认证接入。
