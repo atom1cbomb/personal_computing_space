@@ -37,6 +37,16 @@ class WorkspaceCapabilityPackageRow(Base):
     events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
 
+class WorkspaceResourceRow(Base):
+    """Workspace-owned resource handle and its usage package binding."""
+
+    __tablename__ = "workspace_resources"
+
+    workspace_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    resource: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
 class IdempotencyRow(Base):
     __tablename__ = "idempotency"
 

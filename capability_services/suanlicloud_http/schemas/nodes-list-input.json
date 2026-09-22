@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "RegionId": {
+      "type": "string"
+    },
+    "Filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  "required": [
+    "RegionId",
+    "Filters"
+  ]
+}

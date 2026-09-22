@@ -59,7 +59,8 @@ async def test_user_upload_registers_workspace_package_without_run() -> None:
 
 
 @pytest.mark.asyncio
-async def test_uploaded_workspace_package_can_be_activated_without_run() -> None:
+@pytest.mark.parametrize("resource_bound", [False, True])
+async def test_uploaded_workspace_package_can_be_activated_without_run(resource_bound) -> None:
     repo = ObserverRepository()
     program_ref = await _program_ref(repo)
     io_contract_ref = await _empty_io_contract_ref(repo)
@@ -72,11 +73,25 @@ async def test_uploaded_workspace_package_can_be_activated_without_run() -> None
     )
     with TestClient(create_embedded_app(repo)) as client:
         uploaded = client.post("/api/v1/capability-packages", json=manifest).json()
+        target_fields = {}
+        if resource_bound:
+            resource_ref = {"resource_id": "resource://test/vm"}
+            resource = client.post("/api/v1/resources", json={
+                "resource_ref": resource_ref,
+                "package_ref": {
+                    "resource_id": f"capability-package://{uploaded['package_id']}/{uploaded['package_version']}",
+                    "version_or_digest": uploaded["package_digest"],
+                },
+                "state": "running",
+            })
+            assert resource.status_code == 200, resource.text
+            target_fields = {"target_resource_ref": resource_ref, "instance_name": "vm-test"}
         response = client.post(
             f"/api/v1/capability-packages/capability-package://{uploaded['package_id']}/{uploaded['package_version']}/promote",
             json={
                 "approved_digest": uploaded["package_digest"],
                 "target_slaves": ["slave-a"],
+                **target_fields,
             },
         )
         assert response.status_code == 200, response.text

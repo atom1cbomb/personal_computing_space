@@ -10,13 +10,14 @@ from fastapi import Depends, FastAPI, HTTPException
 from loom_v2.db.session import make_engine
 from loom_v2.settings import Settings
 from loom_v2.content_store import ContentStore
-from loom_v2.contracts.api import SlaveAuthStartRequest, SlaveDeprovisionRequest, SlaveDispatchRequest, SlaveProvisionRequest
+from loom_v2.contracts.api import SlaveAuthStartRequest, SlaveBrowserRequest, SlaveDeprovisionRequest, SlaveDispatchRequest, SlaveProvisionRequest
 
 from .service import SlaveService
 from loom_v2.contracts.agents import AgentLease, AgentRegistration
 from loom_v2.auth import InternalAuth
 from loom_v2.internal_http import InternalHttpClient
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
+from loom_v2.contracts.types import CapabilityPackageVersion
 
 
 def create_app(
@@ -204,6 +205,7 @@ def create_app(
                 closure=closure,
                 binding=binding,
                 execution_epoch=execution_epoch,
+                instance_name=payload.instance_name,
             )
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=f"missing_field:{exc.args[0]}") from exc
@@ -251,6 +253,28 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"accepted": True, "health_report": report.model_dump(mode="json")}
 
+    @app.post("/worker/v1/capability/auth/browser", dependencies=[Depends(require_internal)])
+    async def auth_browser(payload: SlaveBrowserRequest) -> dict[str, object]:
+        service: SlaveService = app.state.service
+        try:
+            record_driver_epoch(payload.driver_id, payload.driver_epoch)
+            if payload.workspace_id != service.workspace_id:
+                raise ValueError("workspace_binding_mismatch")
+            if payload.target_slave != service.slave_id:
+                raise ValueError("target_slave_mismatch")
+            package = payload.package
+            if package.workspace_id is not None and package.workspace_id != service.workspace_id:
+                raise ValueError("workspace_binding_mismatch")
+            result = await service.auth_browser(
+                package,
+                instance_name=payload.instance_name,
+                activation_revision=payload.activation_revision,
+                payload=payload.payload.model_dump(mode="json"),
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return result
+
     @app.post("/worker/v1/deprovision", dependencies=[Depends(require_internal)])
     async def deprovision(payload: SlaveDeprovisionRequest) -> dict[str, object]:
         service: SlaveService = app.state.service
@@ -278,7 +302,11 @@ def create_app(
                 raise ValueError("target_slave_mismatch")
             if payload.package.workspace_id is not None and payload.package.workspace_id != service.workspace_id:
                 raise ValueError("workspace_binding_mismatch")
-            report = await service.auth_start(payload.package)
+            report = await service.auth_start(
+                payload.package, instance_name=payload.instance_name,
+                browser_auth=payload.browser_auth.model_dump(mode="json") if payload.browser_auth else None,
+                activation_revision=payload.activation_revision,
+            )
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"accepted": True, "health_report": report.model_dump(mode="json")}

@@ -765,6 +765,7 @@ class DriverService:
                 run_id=run_id,
                 activation_closure_version_ref=(current.get("committed") or {}).get("version_id") or package.package_closure_version_ref,
                 compute_binding_ref=binding.binding_id,
+                instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
             )
             provision_command = CapabilityProvisionCommand(
                 command_id=f"provision-{package.package_id}-{target}",
@@ -811,6 +812,7 @@ class DriverService:
                 operation_timeout=self.settings.worker_operation_timeout_seconds,
                 internal_api_secret=getattr(self.control_client, "internal_api_secret", None),
                 settings=self.settings,
+                observer_url=self.settings.observer_url,
             )
 
     async def provision_capability(
@@ -820,6 +822,9 @@ class DriverService:
         *,
         compute_binding: ComputeBinding | None = None,
         idempotency_key: str | None = None,
+        instance_name: str = "default",
+        target_resource_ref: ResourceRef | None = None,
+        instance_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Provision a published package on a Slave and report health to Observer."""
         if self.control_client is None or self.remote_repository is None:
@@ -837,6 +842,9 @@ class DriverService:
             idempotency_key=requested_idempotency_key,
             activation_closure_version_ref=package.package_closure_version_ref,
             compute_binding_ref=compute_binding.binding_id if compute_binding is not None else "",
+            instance_name=instance_name,
+            target_resource_ref=target_resource_ref,
+            instance_config=dict(instance_config or {}),
         )
         command = CapabilityProvisionCommand(
             command_id=f"provision-{package.package_id}-{target_slave}",
@@ -848,6 +856,9 @@ class DriverService:
             compute_binding=compute_binding,
             idempotency_key=desired.last_idempotency_key,
             activation_revision=desired.activation_revision,
+            instance_name=instance_name,
+            target_resource_ref=target_resource_ref,
+            instance_config=dict(instance_config or {}),
         )
         report = await worker.provision(
             command=command,
@@ -869,6 +880,7 @@ class DriverService:
         *,
         approved_digest: str | None = None,
         idempotency_key: str | None = None,
+        instance_name: str = "default",
     ) -> dict[str, Any]:
         """Stop one exact package activation on a Slave."""
         if self.control_client is None or self.remote_repository is None:
@@ -886,6 +898,7 @@ class DriverService:
             target_slave,
             desired_state="stopped",
             idempotency_key=requested_idempotency_key,
+            instance_name=instance_name,
         )
         command = CapabilityDeprovisionCommand(
             command_id=f"deprovision-{package.package_id}-{target_slave}",
@@ -895,6 +908,7 @@ class DriverService:
             workspace_id=self.control_client.workspace_id,
             idempotency_key=desired.last_idempotency_key,
             activation_revision=desired.activation_revision,
+            instance_name=instance_name,
         )
         report = await worker.deprovision(
             command=command,
@@ -915,6 +929,9 @@ class DriverService:
         target_slave: str,
         *,
         approved_digest: str | None = None,
+        instance_name: str = "default",
+        browser_auth: dict[str, Any] | None = None,
+        activation_revision: int | None = None,
     ) -> dict[str, Any]:
         """Request a new login challenge for an already-running activation."""
         if self.control_client is None or self.remote_repository is None:
@@ -928,6 +945,9 @@ class DriverService:
             raise RuntimeError("capability_package_digest_mismatch")
         report = await worker.auth_start(
             package=package,
+            instance_name=instance_name,
+            browser_auth=browser_auth,
+            activation_revision=activation_revision,
             target_slave=target_slave,
             workspace_id=self.control_client.workspace_id,
             driver_id=self.control_client.driver_id,
@@ -939,6 +959,33 @@ class DriverService:
             request_id=f"health:{package.package_digest}:{target_slave}:auth:{report.report_id}",
         )
         return report.model_dump(mode="json")
+
+    async def auth_browser_capability(
+        self,
+        package_ref: str | ResourceRef,
+        target_slave: str,
+        *,
+        instance_name: str,
+        activation_revision: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.remote_repository is None or self.control_client is None:
+            raise RuntimeError("driver_repository_unavailable")
+        await self._refresh_remote_workers()
+        package = await self.remote_repository.get_capability_package(package_ref)
+        worker = self.workers.get(target_slave)
+        if worker is None:
+            raise RuntimeError("slave_not_found")
+        return await worker.auth_browser(
+            package=package,
+            target_slave=target_slave,
+            workspace_id=self.control_client.workspace_id,
+            instance_name=instance_name,
+            activation_revision=activation_revision,
+            payload=payload,
+            driver_id=self.control_client.driver_id,
+            driver_epoch=self.control_client.driver_epoch,
+        )
 
     async def _attach_open_run(
         self,
@@ -1098,6 +1145,7 @@ class DriverService:
                         run_id=run_id,
                         activation_closure_version_ref=record.committed.version_id if record.committed else package.package_closure_version_ref,
                         compute_binding_ref=binding.binding_id,
+                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
                     )
                     command = CapabilityProvisionCommand(
                         command_id=f"provision-{package.package_id}-{target}",
@@ -1109,6 +1157,7 @@ class DriverService:
                         compute_binding=binding,
                         idempotency_key=desired.last_idempotency_key,
                         activation_revision=desired.activation_revision,
+                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
                     )
                     report = await worker.provision(command=command, package=package, driver_id=getattr(self.control_client, "driver_id", None), driver_epoch=getattr(self.control_client, "driver_epoch", None))
                     await self.repository.record_capability_health(report, run_id=run_id)
@@ -1140,6 +1189,7 @@ class DriverService:
                         run_id=run_id,
                         activation_closure_version_ref=record.committed.version_id if record.committed else package.package_closure_version_ref,
                         compute_binding_ref=binding.binding_id,
+                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
                     )
                     command = CapabilityProvisionCommand(
                         command_id=f"provision-{package.package_id}-{target}",
@@ -1151,6 +1201,7 @@ class DriverService:
                         compute_binding=binding,
                         idempotency_key=desired.last_idempotency_key,
                         activation_revision=desired.activation_revision,
+                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
                     )
                     report = await slave.provision(command, package)
                     await self.repository.record_capability_health(report, run_id=run_id)

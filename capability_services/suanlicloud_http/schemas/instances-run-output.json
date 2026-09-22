@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "instances_run"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "Instances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      "required": [
+        "Instances"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

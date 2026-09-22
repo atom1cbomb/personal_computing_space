@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "zones_list"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "Zones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      "required": [
+        "Zones"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

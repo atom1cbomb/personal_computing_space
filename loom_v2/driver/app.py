@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from loom_v2.coding_agents.codex import CodexAppServerProvider
 from loom_v2.coding_agents.fake import FakeCodingAgentProvider
 from loom_v2.contracts.agents import AgentLease, AgentRegistration
-from loom_v2.contracts.api import CapabilityTargetRequest, DriverMessageRequest, WorkspaceRequest
+from loom_v2.contracts.api import CapabilityBrowserRequest, CapabilityTargetRequest, DriverMessageRequest, WorkspaceRequest
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.settings import Settings
 from loom_v2.content_store import ContentStore
@@ -85,9 +85,9 @@ def create_app(
     )
     workers: dict[str, WorkerSession] = {}
     if settings.slave_a_url:
-        workers["slave-a"] = WorkerSession("slave-a", settings.slave_a_url, operation_timeout=settings.worker_operation_timeout_seconds, internal_api_secret=settings.internal_api_secret, settings=settings)
+        workers["slave-a"] = WorkerSession("slave-a", settings.slave_a_url, operation_timeout=settings.worker_operation_timeout_seconds, internal_api_secret=settings.internal_api_secret, settings=settings, observer_url=settings.observer_url)
     if settings.slave_b_url:
-        workers["slave-b"] = WorkerSession("slave-b", settings.slave_b_url, operation_timeout=settings.worker_operation_timeout_seconds, internal_api_secret=settings.internal_api_secret, settings=settings)
+        workers["slave-b"] = WorkerSession("slave-b", settings.slave_b_url, operation_timeout=settings.worker_operation_timeout_seconds, internal_api_secret=settings.internal_api_secret, settings=settings, observer_url=settings.observer_url)
     app.state.control = control
     app.state.provider = provider
     content_store = ContentStore.from_settings(settings)
@@ -186,6 +186,9 @@ def create_app(
                     str(target),
                     compute_binding=binding,
                     idempotency_key=payload.idempotency_key,
+                    instance_name=payload.instance_name,
+                    target_resource_ref=payload.target_resource_ref,
+                    instance_config=payload.instance_config,
                 )
                 for target in target_slaves
             ]
@@ -209,6 +212,7 @@ def create_app(
                     str(target),
                     approved_digest=payload.approved_digest,
                     idempotency_key=payload.idempotency_key,
+                    instance_name=payload.instance_name,
                 )
                 for target in target_slaves
             ]
@@ -233,12 +237,28 @@ def create_app(
                     package_ref_value,
                     str(target),
                     approved_digest=payload.approved_digest,
+                    instance_name=payload.instance_name,
+                    browser_auth=payload.browser_auth.model_dump(mode="json") if payload.browser_auth else None,
+                    activation_revision=payload.activation_revision,
                 )
                 for target in target_slaves
             ]
         except (ValueError, RuntimeError, KeyError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"health_reports": reports}
+
+    @app.post("/driver/v1/capability/auth/browser", dependencies=[Depends(require_internal)])
+    async def auth_browser_capability(payload: CapabilityBrowserRequest) -> dict[str, Any]:
+        try:
+            return await app.state.service.auth_browser_capability(
+                payload.package_ref,
+                payload.target_slave,
+                instance_name=payload.instance_name,
+                activation_revision=payload.activation_revision,
+                payload=payload.payload.model_dump(mode="json"),
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/driver/v1/mcp", dependencies=[Depends(require_internal)])
     async def mcp(payload: dict[str, Any], request: Request) -> dict[str, Any]:

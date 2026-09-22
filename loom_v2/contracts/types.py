@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .constraints import Constraint, ConstraintRef
-from .package_contracts import package_contract_registry
+from .package_contracts import INTERFACE_PACKAGE_KEY, package_contract_registry
 from .terms import TypedTerm
 from loom_v2.digest import digest_json
 
@@ -219,7 +219,7 @@ class CapabilityPackageVersion(ContractModel):
     provenance: list[dict[str, Any]] = Field(default_factory=list)
     execution: ExecutionContract = Field(default_factory=ExecutionContract)
     capability_exports: list[CapabilityExport] = Field(min_length=1)
-    body: dict[str, JsonValue]
+    body: dict[str, JsonValue] | None = None
     package_digest: str = ""
 
     @model_validator(mode="after")
@@ -263,6 +263,18 @@ class CapabilityPackageVersion(ContractModel):
         if len(matches) != 1:
             raise ValueError("capability_export_not_found")
         return matches[0]
+
+    @property
+    def is_interface(self) -> bool:
+        return (
+            self.package_type,
+            self.execution.kind,
+            self.execution.version,
+        ) == INTERFACE_PACKAGE_KEY
+
+    @property
+    def is_executable(self) -> bool:
+        return not self.is_interface
 
     @property
     def version_ref(self) -> str:
@@ -368,6 +380,10 @@ class CapabilityPackageActivation(ContractModel):
         "not_installed", "provisioning", "pending_auth", "ready", "degraded", "stopped", "failed", "lost"
     ] = "not_installed"
     runtime_profile: dict[str, Any] = Field(default_factory=dict)
+    # A package may have several independent runtime instances on one Slave.
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    target_resource_ref: ResourceRef | None = None
+    instance_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityPackage(ContractModel):
@@ -390,6 +406,9 @@ class CapabilityProvisionCommand(ContractModel):
     compute_binding: ComputeBinding | None = None
     idempotency_key: str = Field(min_length=1)
     activation_revision: int = Field(ge=1)
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    target_resource_ref: ResourceRef | None = None
+    instance_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityDeprovisionCommand(ContractModel):
@@ -400,6 +419,9 @@ class CapabilityDeprovisionCommand(ContractModel):
     workspace_id: str = "workspace-default"
     idempotency_key: str = Field(min_length=1)
     activation_revision: int = Field(ge=1)
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    target_resource_ref: ResourceRef | None = None
+    instance_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityHealthReport(ContractModel):
@@ -411,6 +433,7 @@ class CapabilityHealthReport(ContractModel):
     evidence_refs: list[str] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
     activation_revision: int = Field(ge=1)
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class NodeIntent(ContractModel):
@@ -421,6 +444,7 @@ class NodeIntent(ContractModel):
     package_ref: ResourceRef
     capability_descriptor_ref: ResourceRef
     input_refs: list[ResourceRef] = Field(default_factory=list)
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",)
 
 
 class DynamicNode(ContractModel):
@@ -433,6 +457,7 @@ class DynamicNode(ContractModel):
     capability_descriptor_ref: ResourceRef
     input_refs: list[ResourceRef] = Field(default_factory=list)
     state: Literal["accepted", "dispatched", "completed", "failed", "decision_required"] = "accepted"
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",)
 
     @property
     def package_digest(self) -> str | None:
@@ -449,6 +474,15 @@ class ResourceEventFrame(ContractModel):
     target_slave: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ManagedResource(ContractModel):
+    """A workspace resource and the package describing how to use it."""
+
+    resource_ref: ResourceRef
+    package_ref: ResourceRef
+    managed_by_ref: ResourceRef | None = None
+    state: str = "unknown"
 
 
 class NodeInputBinding(ContractModel):

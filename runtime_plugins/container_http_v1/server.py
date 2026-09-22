@@ -82,6 +82,15 @@ class PluginServer:
                     _mapping(payload, "package"),
                     _mapping(payload, "activation"),
                 )
+            elif path == "/v1/auth/browser":
+                browser_payload = payload.get("payload")
+                if not isinstance(browser_payload, dict):
+                    raise RuntimeError("request_json_invalid")
+                result = await self.runtime.auth_browser(
+                    _mapping(payload, "package"),
+                    _mapping(payload, "activation"),
+                    browser_payload,
+                )
             elif path == "/v1/deprovision":
                 result = await self.runtime.deprovision(
                     _mapping(payload, "command")
@@ -231,6 +240,7 @@ async def main() -> None:
         ),
         credential_dir=os.getenv("LOOM_RUNTIME_PLUGIN_CREDENTIAL_DIR"),
         egress_network=os.getenv("LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK"),
+        instance_state_dir=os.getenv("LOOM_RUNTIME_PLUGIN_INSTANCE_STATE_DIR"),
     )
     server = PluginServer(runtime)
     listener = await asyncio.start_unix_server(

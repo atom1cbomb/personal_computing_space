@@ -2,7 +2,10 @@
   "package_type": "service",
   "package_id": "kubernetes-http",
   "package_version": "v1",
-  "execution": {"kind": "container:http", "version": "1"},
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
   "body": {
     "image_ref": "registry.example/loom/kubernetes-gateway@sha256:<replace-after-build>",
     "container_port": 8080,
@@ -15,13 +18,157 @@
     }
   },
   "capability_exports": [
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/auth-start", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000001", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000011", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.auth"], "replay_safety": "DeclaredByPackage", "runtime_binding": {"path": "/v1/auth/start"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/auth-status", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000002", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000012", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.auth"], "replay_safety": "DeclaredByPackage", "runtime_binding": {"path": "/v1/auth/status"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/resources-list", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000003", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000013", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/resources/list"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/resources-get", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000004", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000014", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/resources/get"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/jobs-submit", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000005", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000015", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.jobs.submit"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/jobs/submit"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/jobs-status", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000006", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000016", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.jobs.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/jobs/status"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/jobs-logs", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000007", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000017", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.jobs.read"], "replay_safety": "SafeRead", "runtime_binding": {"path": "/v1/jobs/logs"}},
-    {"capability_descriptor_ref": {"resource_id": "loom://k8s/jobs-delete", "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000008", "identity_criterion": "descriptor_digest"}, "io_contract_ref": {"resource_id": "content://sha256/0000000000000000000000000000000000000000000000000000000000000018", "identity_criterion": "content_digest"}, "effect_class": "ExternalService", "permissions": ["kubernetes.jobs.delete"], "replay_safety": "NotReplaySafe", "runtime_binding": {"path": "/v1/jobs/delete"}}
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/auth-start",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/8aa32f88cd45a1dc549c11ea818e53e485e3e74a99541738a1417f8171f9e40a",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.auth"
+      ],
+      "replay_safety": "DeclaredByPackage",
+      "runtime_binding": {
+        "path": "/v1/auth/start"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/auth-status",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/8aa32f88cd45a1dc549c11ea818e53e485e3e74a99541738a1417f8171f9e40a",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.auth"
+      ],
+      "replay_safety": "DeclaredByPackage",
+      "runtime_binding": {
+        "path": "/v1/auth/status"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/resources-list",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/bf35040e03154238318956d9ef42cfc2fa2826781355abe7e19840c0d5dee4d3",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/resources/list"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/resources-get",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/83563d9ac56b577172892fbc916975d1309721a612f1440a871e21088ec68794",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/resources/get"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/jobs-submit",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/acd78da4755600db76e35be334d874e3e6d0d5de53229d002a68b1d1555759ac",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.jobs.submit"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/jobs/submit"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/jobs-status",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000006",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/c08478006d932a96c2e3fb69c144999ab85beece6d50d142930512f0ff92630d",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.jobs.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/jobs/status"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/jobs-logs",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000007",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/0e03afd80627c70e4bfb03358fc52f0bc25e3ae76b259c6eed1479fc2eea335c",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.jobs.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/jobs/logs"
+      }
+    },
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://k8s/jobs-delete",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000008",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/043a94cc2fa4ee575c203c41af75f0994b562a8b9439a93920ad799cda0f7cf0",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.jobs.delete"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/jobs/delete"
+      }
+    }
   ]
 }

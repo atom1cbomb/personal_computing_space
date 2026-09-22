@@ -29,3 +29,12 @@ The package manifest refers only to the non-sensitive profile name
 `outline-prod`. The runtime mounts that profile read-only. Build the image and
 replace the example image digest before registration; this repository does not
 push the image or register the package automatically.
+
+Each exported operation has a small input/output schema in `schemas/` and an
+IoContract in `contracts/`. The package example is updated from those files by
+`python scripts/generate_service_contracts.py`; use its `--check` mode in CI.
+
+The IoContracts keep `success_semantics` null because the gateway treats a
+successful Outline JSON response matching the output schema as sufficient.
+Stronger document-level criteria require a deterministic validator rather than
+an unexecuted descriptive field.

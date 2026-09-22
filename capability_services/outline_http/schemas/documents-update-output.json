@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "documents_update"
+    },
+    "result": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

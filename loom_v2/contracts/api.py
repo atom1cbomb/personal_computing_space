@@ -24,6 +24,7 @@ from .types import (
     ResourceRef,
     TaskClosure,
 )
+from .browser_auth import BrowserAuthContext, BrowserAuthMessage
 
 
 class AgentLeaseRequest(ContractModel):
@@ -74,8 +75,15 @@ class CapabilityPackageUploadRequest(PublicRequest):
     package_type: str = Field(default="function", min_length=1)
     execution: ExecutionContract = Field(default_factory=ExecutionContract)
     capability_exports: list[CapabilityExport] = Field(min_length=1)
-    body: dict[str, Any]
+    body: dict[str, Any] | None = None
     package_digest: str | None = None
+
+
+class ResourceCreateRequest(PublicRequest):
+    resource_ref: ResourceRef
+    package_ref: ResourceRef
+    managed_by_ref: ResourceRef | None = None
+    state: str = "unknown"
 
 
 class OpenRunRequest(PublicRequest):
@@ -127,6 +135,9 @@ class CapabilityActivationRequest(PublicRequest):
     approved_digest: str | None = None
     idempotency_key: str | None = None
     compute_binding: ComputeBinding | None = None
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    target_resource_ref: ResourceRef | None = None
+    instance_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityHealthRequest(ContractModel):
@@ -166,6 +177,11 @@ class CapabilityTargetRequest(ContractModel):
     compute_binding: ComputeBinding | None = None
     idempotency_key: str | None = None
     approved_digest: str | None = None
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    target_resource_ref: ResourceRef | None = None
+    instance_config: dict[str, Any] = Field(default_factory=dict)
+    browser_auth: BrowserAuthContext | None = None
+    activation_revision: int | None = Field(default=None, ge=1)
 
     @property
     def effective_target_slaves(self) -> list[str]:
@@ -183,6 +199,7 @@ class SlaveDispatchRequest(ContractModel):
     execution_id: str = Field(min_length=1)
     execution_epoch: int = 1
     workspace_id: str | None = None
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     operation: str = Field(min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
     closure: TaskClosure | None = None
@@ -213,6 +230,22 @@ class SlaveAuthStartRequest(ContractModel):
     workspace_id: str = Field(min_length=1)
     driver_id: str | None = None
     driver_epoch: int | None = None
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    browser_auth: BrowserAuthContext | None = None
+    activation_revision: int | None = Field(default=None, ge=1)
+
+
+class CapabilityBrowserRequest(ContractModel):
+    package_ref: ResourceRef
+    target_slave: str = Field(min_length=1)
+    instance_name: str = Field(pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    activation_revision: int = Field(ge=1)
+    payload: BrowserAuthMessage
+
+
+class SlaveBrowserRequest(SlaveAuthStartRequest):
+    activation_revision: int = Field(ge=1)
+    payload: BrowserAuthMessage
 
 
 __all__ = [
@@ -221,6 +254,7 @@ __all__ = [
     "CapabilityTargetRequest",
     "CapabilityActivationRequest",
     "CapabilityPackageUploadRequest",
+    "ResourceCreateRequest",
     "CommitRequest",
     "ContentPutRequest",
     "DriverMessageRequest",

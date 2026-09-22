@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "RegionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "RegionId"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "package_type": "service",
+  "package_id": "suanli-vm-ssh-http",
+  "package_version": "v1",
+  "execution": {"kind": "container:http", "version": "1"},
+  "body": {
+    "image_ref": "localhost:5000/loom/suanli-vm-ssh-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "network_profile": "egress",
+    "persistent_state": true,
+    "authentication": {"start_path": "/v1/auth/start", "status_path": "/v1/auth/status", "browser_path": "/v1/auth/browser"}
+  },
+  "capability_exports": [
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "loom://suanli-vm/exec",
+        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/2ed0753aae06c382e67dc9865d5e13246a3b912acb3d751a266f6ea381fb335b",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "RemoteExecution",
+      "permissions": ["suanli.vm.ssh"],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {"path": "/v1/exec"}
+    }
+  ]
+}

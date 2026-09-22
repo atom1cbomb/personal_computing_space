@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "instances_status"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "InstanceStatuses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      "required": [
+        "InstanceStatuses"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

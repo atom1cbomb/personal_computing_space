@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "pod_name": {
+      "type": "string"
+    },
+    "logs": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "pod_name",
+    "logs"
+  ]
+}

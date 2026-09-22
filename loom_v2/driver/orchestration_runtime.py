@@ -186,6 +186,7 @@ class DynamicOrchestrationRuntime:
                 package_ref=package_ref,
                 capability_descriptor_ref=capability_descriptor_ref,
                 input_refs=input_refs,
+                instance_name="default",
             )
             node = await self.repository.accept_node_intent(run_id, intent, selected_target=target)
             if node.state == "completed":
@@ -420,6 +421,7 @@ class DynamicOrchestrationRuntime:
             capability_descriptor_ref=descriptor_ref,
             capability_package_ref=node.package_ref,
             target_resource_ref=ResourceRef(resource_id=target),
+            activation_ref=f"{node.package_ref.resource_id}#{node.instance_name}",
         )
         closure = TaskClosure(
             closure_id=node.node_id,
@@ -441,6 +443,7 @@ class DynamicOrchestrationRuntime:
                 else package.package_closure_version_ref
             ),
             compute_binding_ref=binding.binding_id,
+            instance_name=node.instance_name,
         )
         command = CapabilityProvisionCommand(
             command_id=f"provision-{node.node_id}",
@@ -452,8 +455,49 @@ class DynamicOrchestrationRuntime:
             compute_binding=binding,
             idempotency_key=desired.last_idempotency_key,
             activation_revision=desired.activation_revision,
+            instance_name=node.instance_name,
         )
         operation = operation_name(operation_ref)
+
+        # In production the immutable Worker envelopes are submitted to
+        # Observer.  Observer creates the Attempt, forwards both envelopes
+        # through the active Slave lease, and records the terminal result.
+        # Embedded repositories intentionally keep the local test adapter.
+        execute_dynamic_node = getattr(self.repository, "execute_dynamic_node", None)
+        if execute_dynamic_node is not None:
+            provision_payload: dict[str, Any] = {
+                "command": command.model_dump(mode="json"),
+                "package": package.model_dump(mode="json"),
+            }
+            dispatch_payload: dict[str, Any] = {
+                "operation": operation,
+                "payload": {},
+                "closure": closure.model_dump(mode="json"),
+                "binding": binding.model_dump(mode="json"),
+                "instance_name": node.instance_name,
+            }
+            if self.driver_id is not None:
+                provision_payload["driver_id"] = self.driver_id
+                dispatch_payload["driver_id"] = self.driver_id
+            if self.driver_epoch is not None:
+                provision_payload["driver_epoch"] = self.driver_epoch
+                dispatch_payload["driver_epoch"] = self.driver_epoch
+            envelope = await execute_dynamic_node(
+                run_id,
+                node.node_id,
+                target=target,
+                provision_payload=provision_payload,
+                dispatch_payload=dispatch_payload,
+            )
+            terminal = envelope.get("terminal_report") or {}
+            if str(terminal.get("state") or "") != "completed":
+                raise RuntimeError(str(terminal.get("error") or "dynamic_node_failed"))
+            stored_attempt = envelope.get("attempt") or {}
+            result_ref = stored_attempt.get("result_ref")
+            if not isinstance(result_ref, dict):
+                raise RuntimeError("dynamic_node_result_missing")
+            return ResourceRef.model_validate(result_ref)
+
         worker = self.workers.get(target)
         if worker is not None:
             report = await worker.provision(command=command, package=package, driver_id=self.driver_id, driver_epoch=self.driver_epoch)
@@ -467,6 +511,7 @@ class DynamicOrchestrationRuntime:
                 payload={},
                 closure=closure,
                 binding=binding,
+                instance_name=node.instance_name,
                 driver_id=self.driver_id,
                 driver_epoch=self.driver_epoch,
             )

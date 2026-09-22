@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,7 @@ class DockerContainerHTTPRuntimeV1:
         max_concurrency: int = 16,
         docker_timeout: float = 120.0,
         credential_dir: str | Path | None = None,
+        instance_state_dir: str | Path | None = None,
         egress_network: str | None = None,
         runner: DockerRunner | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
@@ -143,19 +145,97 @@ class DockerContainerHTTPRuntimeV1:
             if credential_dir
             else None
         )
+        self.instance_state_dir = Path(
+            instance_state_dir or "/var/lib/loom/container-http-v1"
+        ).expanduser().resolve()
         self.egress_network = egress_network or None
         self.runner = runner or SubprocessDockerRunner()
         self.http_transport = http_transport
         self._semaphores: dict[str, asyncio.Semaphore] = {}
 
-    def _container_name(self, workspace_id: str, package_digest: str) -> str:
+    @staticmethod
+    def _instance_config(activation: dict[str, Any] | None) -> dict[str, Any]:
+        value = (activation or {}).get("instance_config") or {}
+        if not isinstance(value, dict):
+            raise RuntimeError("activation_instance_config_invalid")
+        host = value.get("host")
+        port = value.get("port", 22)
+        user = value.get("user")
+        if (
+            not isinstance(host, str)
+            or not host
+            or len(host) > 253
+            or any(ord(char) < 33 or char in {"/", "\\"} for char in host)
+            or isinstance(port, bool)
+            or not isinstance(port, int)
+            or not 1 <= port <= 65535
+            or not isinstance(user, str)
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", user)
+        ):
+            raise RuntimeError("activation_instance_config_invalid")
+        return {"host": host, "port": port, "user": user}
+
+    @staticmethod
+    def _persistent_state(package: dict[str, Any]) -> bool:
+        body = package.get("body")
+        value = body.get("persistent_state", False) if isinstance(body, dict) else False
+        if not isinstance(value, bool):
+            raise RuntimeError("runtime_plugin_capability_mismatch")
+        return value
+
+    def _state_volume_name(
+        self, workspace_id: str, package_digest: str, instance_name: str
+    ) -> str:
+        safe_workspace = re.sub(r"[^a-z0-9_.-]", "-", workspace_id.lower()).strip("-")[:40] or "workspace"
+        safe_slave = re.sub(r"[^a-z0-9_.-]", "-", self.slave_id.lower()).strip("-")[:24] or "slave"
+        safe_instance = re.sub(r"[^a-z0-9-]", "-", instance_name.lower()).strip("-")[:63] or "default"
+        return f"loom-cap-state-{safe_workspace}-{safe_slave}-{package_digest[:16]}-{safe_instance}"
+
+    def _instance_config_path(
+        self, workspace_id: str, package_digest: str, instance_name: str
+    ) -> Path:
+        safe_workspace = re.sub(r"[^a-z0-9_.-]", "-", workspace_id.lower()).strip("-")[:40] or "workspace"
+        safe_instance = re.sub(r"[^a-z0-9-]", "-", instance_name.lower()).strip("-")[:63] or "default"
+        return self.instance_state_dir / safe_workspace / package_digest / f"{safe_instance}.json"
+
+    def _write_instance_config(
+        self,
+        workspace_id: str,
+        package_digest: str,
+        instance_name: str,
+        activation: dict[str, Any],
+    ) -> Path:
+        path = self._instance_config_path(workspace_id, package_digest, instance_name)
+        path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        payload = {
+            "target_resource_ref": activation.get("target_resource_ref"),
+            **self._instance_config(activation),
+        }
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        # The file contains only non-secret target metadata and must be
+        # readable by the fixed unprivileged service UID in the container.
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+        return path
+
+    def _container_name(self, workspace_id: str, package_digest: str, instance_name: str = "default") -> str:
         safe_workspace = re.sub(
             r"[^a-z0-9_.-]", "-", workspace_id.lower()
         ).strip("-")[:40] or "workspace"
         safe_slave = re.sub(
             r"[^a-z0-9_.-]", "-", self.slave_id.lower()
         ).strip("-")[:24] or "slave"
-        return f"loom-cap-{safe_workspace}-{safe_slave}-{package_digest[:16]}"
+        safe_instance = re.sub(r"[^a-z0-9-]", "-", instance_name.lower()).strip("-")[:63] or "default"
+        suffix = "" if safe_instance == "default" else f"-{safe_instance}"
+        return f"loom-cap-{safe_workspace}-{safe_slave}-{package_digest[:16]}{suffix}"
+
+    @staticmethod
+    def _instance_name(command: dict[str, Any] | None) -> str:
+        value = str((command or {}).get("instance_name") or "default")
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value):
+            raise RuntimeError("activation_instance_invalid")
+        return value
 
     @staticmethod
     def _execution_identity(package: dict[str, Any]) -> tuple[str, str]:
@@ -286,7 +366,11 @@ class DockerContainerHTTPRuntimeV1:
         authentication = body.get("authentication") if isinstance(body, dict) else None
         if authentication is None:
             return None
-        if not isinstance(authentication, dict) or set(authentication) != {"start_path", "status_path"}:
+        if (
+            not isinstance(authentication, dict)
+            or not {"start_path", "status_path"}.issubset(authentication)
+            or set(authentication) - {"start_path", "status_path", "browser_path"}
+        ):
             raise RuntimeError("runtime_plugin_capability_mismatch")
         start_path = authentication.get("start_path")
         status_path = authentication.get("status_path")
@@ -302,7 +386,62 @@ class DockerContainerHTTPRuntimeV1:
             or start_path == status_path
         ):
             raise RuntimeError("runtime_plugin_capability_mismatch")
-        return {"start_path": start_path, "status_path": status_path}
+        value = {"start_path": start_path, "status_path": status_path}
+        browser_path = authentication.get("browser_path")
+        if browser_path is not None:
+            if not isinstance(browser_path, str) or not browser_path.startswith("/") or "?" in browser_path or "#" in browser_path or browser_path in {start_path, status_path}:
+                raise RuntimeError("runtime_plugin_capability_mismatch")
+            value["browser_path"] = browser_path
+        return value
+
+    async def auth_browser(
+        self, package: dict[str, Any], activation: dict[str, Any], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        image_ref, port, health_path, _exports = self._service_values(package)
+        workspace_id, package_ref, package_digest = self._command_context(package, {
+            **activation, "target_slave": activation.get("target_slave") or activation.get("slave_id"),
+        })
+        instance_name = self._instance_name(activation)
+        auth = self._authentication(package)
+        browser_path = auth.get("browser_path") if auth else None
+        if not browser_path:
+            raise RuntimeError("service_browser_auth_not_configured")
+        expected = self._container_name(workspace_id, package_digest, instance_name)
+        profile = activation.get("runtime_profile") or {}
+        name = str(profile.get("container_name") or expected)
+        if name != expected:
+            raise RuntimeError("service_container_identity_conflict")
+        container = await self._inspect_container(name)
+        if container is None or not await self._matching_container(container, labels=self._labels(workspace_id, package_ref, package_digest, instance_name), image_ref=image_ref):
+            raise RuntimeError("service_container_identity_conflict")
+        if not bool((container.get("State") or {}).get("Running")) or not await self._health(name, port, health_path):
+            raise RuntimeError("service_container_not_ready")
+        if not isinstance(payload, dict) or payload.get("action") not in {"open", "callback"}:
+            raise RuntimeError("service_browser_request_invalid")
+        try:
+            async with httpx.AsyncClient(transport=self.http_transport, timeout=self.request_timeout,
+                                         follow_redirects=False, trust_env=False) as client:
+                async with client.stream("POST", f"http://{name}:{port}{browser_path}", json=payload) as response:
+                    if response.status_code != 200:
+                        raise RuntimeError("service_browser_proxy_failed")
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        raw.extend(chunk)
+                        if len(raw) > 65536:
+                            raise RuntimeError("service_browser_proxy_invalid")
+            value = json.loads(raw)
+        except (ValueError, httpx.HTTPError) as exc:
+            raise RuntimeError("service_browser_proxy_invalid") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("service_browser_proxy_invalid")
+        if payload["action"] == "callback" and value != {"status": "accepted"}:
+            raise RuntimeError("service_browser_proxy_invalid")
+        if payload["action"] == "open" and (
+            set(value) != {"status", "location"} or value["status"] != "redirect"
+            or not isinstance(value["location"], str) or len(value["location"]) > 16384
+        ):
+            raise RuntimeError("service_browser_proxy_invalid")
+        return value
 
     def _command_context(
         self, package: dict[str, Any], command: dict[str, Any]
@@ -320,18 +459,21 @@ class DockerContainerHTTPRuntimeV1:
         return workspace_id, package_ref, package_digest
 
     def _labels(
-        self, workspace_id: str, package_ref: str, package_digest: str
+        self, workspace_id: str, package_ref: str, package_digest: str, instance_name: str = "default"
     ) -> dict[str, str]:
         # The package digest is the immutable execution identity.  A promoted
         # reusable coordinate intentionally keeps the same digest as its
         # run-bound candidate, so the lifecycle coordinate must not fence the
         # Docker container itself.
-        return {
+        labels = {
             "io.loom.managed": "container-http-v1",
             "io.loom.workspace": workspace_id,
             "io.loom.slave": self.slave_id,
             "io.loom.package-digest": package_digest,
         }
+        if instance_name != "default":
+            labels["io.loom.instance-name"] = instance_name
+        return labels
 
     async def _docker(self, args: list[str]) -> DockerCommandResult:
         result = await self.runner.run(args, timeout=self.docker_timeout)
@@ -451,7 +593,8 @@ class DockerContainerHTTPRuntimeV1:
             return False
 
     async def _authentication_probe(
-        self, container_name: str, port: int, path: str
+        self, container_name: str, port: int, path: str,
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(
@@ -460,7 +603,7 @@ class DockerContainerHTTPRuntimeV1:
                 follow_redirects=False,
             ) as client:
                 response = await client.post(
-                    f"http://{container_name}:{port}{path}", json={}
+                    f"http://{container_name}:{port}{path}", json=payload or {}
                 )
             if not 200 <= response.status_code < 300:
                 return {"status": "auth_failed"}
@@ -507,7 +650,8 @@ class DockerContainerHTTPRuntimeV1:
         authentication = self._authentication(package)
         if authentication is None:
             raise RuntimeError("service_authentication_not_configured")
-        expected_name = self._container_name(workspace_id, package_digest)
+        instance_name = self._instance_name(activation)
+        expected_name = self._container_name(workspace_id, package_digest, instance_name)
         profile = activation.get("runtime_profile") or {}
         container_name = str(profile.get("container_name") or expected_name)
         if container_name != expected_name:
@@ -515,7 +659,7 @@ class DockerContainerHTTPRuntimeV1:
         container = await self._inspect_container(container_name)
         if container is None or not await self._matching_container(
             container,
-            labels=self._labels(workspace_id, package_ref, package_digest),
+            labels=self._labels(workspace_id, package_ref, package_digest, instance_name),
             image_ref=image_ref,
         ):
             raise RuntimeError("service_container_identity_conflict")
@@ -524,7 +668,8 @@ class DockerContainerHTTPRuntimeV1:
         if not await self._health(container_name, port, health_path):
             raise RuntimeError("service_health_check_failed")
         auth = await self._authentication_probe(
-            container_name, port, authentication["start_path"]
+            container_name, port, authentication["start_path"],
+            activation.get("browser_auth"),
         )
         return {
             **auth,
@@ -546,13 +691,46 @@ class DockerContainerHTTPRuntimeV1:
         workspace_id, package_ref, package_digest = self._command_context(
             package, command
         )
+        instance_name = self._instance_name(command)
         credential_mount = self._credential_mount_args(package)
         network_args = self._network_args(package)
+        instance_config = command.get("instance_config") or {}
+        config_mount: list[str] = []
+        if instance_config or command.get("target_resource_ref") is not None:
+            config_path = self._write_instance_config(
+                workspace_id, package_digest, instance_name, command
+            )
+            config_mount = [
+                "--mount",
+                f"type=bind,src={config_path},dst=/run/loom/instance.json,readonly",
+            ]
+        persistent_state = self._persistent_state(package)
+        volume_name = self._state_volume_name(workspace_id, package_digest, instance_name)
+        if persistent_state:
+            volume = await self._docker(
+                [
+                    "volume",
+                    "create",
+                    "--label",
+                    "io.loom.managed=container-http-v1",
+                    "--label",
+                    f"io.loom.workspace={workspace_id}",
+                    "--label",
+                    f"io.loom.slave={self.slave_id}",
+                    "--label",
+                    f"io.loom.package-digest={package_digest}",
+                    "--label",
+                    f"io.loom.instance-name={instance_name}",
+                    volume_name,
+                ]
+            )
+            if volume.returncode != 0:
+                raise RuntimeError("service_state_volume_unavailable")
         # All cross-export path checks above happen before the first Docker
         # read or mutation.
         await self._image_ready(image_ref)
-        container_name = self._container_name(workspace_id, package_digest)
-        labels = self._labels(workspace_id, package_ref, package_digest)
+        container_name = self._container_name(workspace_id, package_digest, instance_name)
+        labels = self._labels(workspace_id, package_ref, package_digest, instance_name)
         existing = await self._inspect_container(container_name)
         if existing is not None and not await self._matching_container(
             existing, labels=labels, image_ref=image_ref
@@ -603,6 +781,14 @@ class DockerContainerHTTPRuntimeV1:
                 f"/tmp:rw,noexec,nosuid,size={self.tmpfs_size}",
             ]
             args.extend(credential_mount)
+            args.extend(config_mount)
+            if persistent_state:
+                args.extend(
+                    [
+                        "--mount",
+                        f"type=volume,source={volume_name},target=/var/lib/loom/service",
+                    ]
+                )
             for key, value in labels.items():
                 args.extend(["--label", f"{key}={value}"])
             args.append(image_ref)
@@ -708,13 +894,15 @@ class DockerContainerHTTPRuntimeV1:
             raise RuntimeError("service_endpoint_binding_mismatch")
         runtime_binding = capability_export.get("runtime_binding") or {}
         path = str(runtime_binding.get("path") or "")
-        expected_name = self._container_name(workspace_id, package_digest)
+        instance_name = self._instance_name(activation)
+        expected_name = self._container_name(workspace_id, package_digest, instance_name)
         profile = activation.get("runtime_profile") or {}
         container_name = str(profile.get("container_name") or expected_name)
         if container_name != expected_name:
             raise RuntimeError("service_container_identity_conflict")
         container = await self._inspect_container(container_name)
-        labels = self._labels(workspace_id, package_ref, package_digest)
+        instance_name = self._instance_name(activation)
+        labels = self._labels(workspace_id, package_ref, package_digest, instance_name)
         if container is None or not await self._matching_container(
             container, labels=labels, image_ref=image_ref
         ):
@@ -729,8 +917,9 @@ class DockerContainerHTTPRuntimeV1:
         )
         if capacity_timeout <= 0:
             raise RuntimeError("capability_service_busy")
+        semaphore_key = f"{package_digest}:{instance_name}"
         semaphore = self._semaphores.setdefault(
-            package_digest, asyncio.Semaphore(self.max_concurrency)
+            semaphore_key, asyncio.Semaphore(self.max_concurrency)
         )
         try:
             await asyncio.wait_for(semaphore.acquire(), timeout=capacity_timeout)
@@ -795,7 +984,8 @@ class DockerContainerHTTPRuntimeV1:
             != package_digest
         ):
             raise RuntimeError("runtime_plugin_identity_mismatch")
-        expected_name = self._container_name(workspace_id, package_digest)
+        instance_name = self._instance_name(activation)
+        expected_name = self._container_name(workspace_id, package_digest, instance_name)
         profile = activation.get("runtime_profile") or {}
         name = str(profile.get("container_name") or expected_name)
         if name != expected_name:
@@ -810,7 +1000,7 @@ class DockerContainerHTTPRuntimeV1:
             }
         identity_match = await self._matching_container(
             container,
-            labels=self._labels(workspace_id, package_ref, package_digest),
+            labels=self._labels(workspace_id, package_ref, package_digest, instance_name),
             image_ref=image_ref,
         )
         running = bool((container.get("State") or {}).get("Running"))
@@ -847,7 +1037,8 @@ class DockerContainerHTTPRuntimeV1:
             or command.get("target_slave") != self.slave_id
         ):
             raise RuntimeError("runtime_plugin_identity_mismatch")
-        name = self._container_name(workspace_id, package_digest)
+        instance_name = self._instance_name(command)
+        name = self._container_name(workspace_id, package_digest, instance_name)
         existing = await self._inspect_container(name)
         if existing is None:
             return {
@@ -856,7 +1047,7 @@ class DockerContainerHTTPRuntimeV1:
                 "idempotent": True,
             }
         if not self._labels_match(
-            existing, self._labels(workspace_id, package_ref, package_digest)
+            existing, self._labels(workspace_id, package_ref, package_digest, instance_name)
         ):
             raise RuntimeError("service_container_identity_conflict")
         await self._remove_container(name)
@@ -892,9 +1083,8 @@ class DockerContainerHTTPRuntimeV1:
                     raise RuntimeError("runtime_plugin_identity_mismatch")
                 desired_state = str(activation.get("desired_state") or "running")
                 if desired_state == "stopped":
-                    expected_name = self._container_name(
-                        workspace_id, package_digest
-                    )
+                    instance_name = self._instance_name(activation)
+                    expected_name = self._container_name(workspace_id, package_digest, instance_name)
                     profile = activation.get("runtime_profile") or {}
                     name = str(profile.get("container_name") or expected_name)
                     if name != expected_name:
@@ -902,7 +1092,7 @@ class DockerContainerHTTPRuntimeV1:
                     existing = await self._inspect_container(name)
                     if existing is not None:
                         labels = self._labels(
-                            workspace_id, package_ref, package_digest
+                            workspace_id, package_ref, package_digest, instance_name
                         )
                         if not self._labels_match(existing, labels):
                             raise RuntimeError(
@@ -945,6 +1135,9 @@ class DockerContainerHTTPRuntimeV1:
                     "target_slave": self.slave_id,
                     "workspace_id": workspace_id,
                     "idempotency_key": f"reconcile-{package_digest}",
+                    "instance_name": self._instance_name(activation),
+                    "target_resource_ref": activation.get("target_resource_ref"),
+                    "instance_config": dict(activation.get("instance_config") or {}),
                 }
                 provisioned = await self.provision(package, command)
                 results.append({"activation_key": activation_key, **provisioned})

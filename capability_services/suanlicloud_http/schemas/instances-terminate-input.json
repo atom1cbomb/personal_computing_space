@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "InstanceIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "InstanceIds"
+  ]
+}

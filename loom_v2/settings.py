@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     runtime_plugin_dir: str = "/opt/loom/runtime-plugins"
     package_contract_dir: str = "/opt/loom/package-contracts"
     runtime_plugin_socket_dir: str = "/run/loom/runtime-plugins"
+    runtime_plugin_instance_state_dir: str = "/var/lib/loom/runtime-plugin-state"
     runtime_plugin_startup_timeout_seconds: float = 10.0
     runtime_plugin_call_timeout_seconds: float = 90.0
     runtime_plugin_network: str = "loom-internal"
@@ -47,6 +48,13 @@ class Settings(BaseSettings):
     workspace_root: str = "/workspace"
     internal_api_secret: str = ""
     observer_url: str = "http://observer:8080"
+    public_base_url: str = ""
+    # Injected only by an authenticated, trusted user-facing reverse proxy.
+    # Distinct from the service-to-service credential; never sent to the IdP.
+    browser_auth_proxy_secret: str = ""
+    # Explicitly enabled only after restricting this Observer listener to SSH
+    # forwarding/private ingress; never a container address.
+    browser_tunnel_target: str = "127.0.0.1:8080"
     agent_id: str = "driver-default"
     agent_instance_id: str | None = None
     agent_protocol_version: str = "loom.v1"

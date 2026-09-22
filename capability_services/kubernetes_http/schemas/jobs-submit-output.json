@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "submitted"
+    },
+    "name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "name"
+  ]
+}

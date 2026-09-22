@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "resource": {
+      "type": "string",
+      "enum": [
+        "pods",
+        "pvc",
+        "jobs",
+        "vcjobs"
+      ]
+    }
+  }
+}

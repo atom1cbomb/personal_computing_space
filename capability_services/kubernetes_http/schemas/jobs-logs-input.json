@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "pod_name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "pod_name"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {"resource_id": "content://sha256/0af4379adb5488ef6d260a6705c5e2ab52660c8f31fd2384260da31ad3a484e6", "identity_criterion": "content_digest"},
+  "output_schema_ref": {"resource_id": "content://sha256/7d623d5b67614f615e22868564d97fbb0dfe8a7a6e8166d69ab49fee30e1fabc", "identity_criterion": "content_digest"},
+  "success_semantics": {
+    "all": ["exit_code == 0", "timed_out == false"]
+  }
+}

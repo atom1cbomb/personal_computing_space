@@ -36,6 +36,7 @@ from loom_v2.contracts.types import (
     TypedHole,
     NodeInputBinding,
     ValidationEvidence,
+    ManagedResource,
 )
 from loom_v2.db.models import (
     DriverRequestRow,
@@ -45,6 +46,7 @@ from loom_v2.db.models import (
     RunRow,
     RuntimeAgentRow,
     WorkspaceCapabilityPackageRow,
+    WorkspaceResourceRow,
 )
 from loom_v2.db.migrations import apply_migrations
 from loom_v2.contracts.agents import DRIVER_COMMANDS, DRIVER_RUN_SCOPED_COMMANDS, AgentLease, AgentRegistration, DriverCommand, DriverThreadBinding
@@ -208,6 +210,7 @@ class ObserverRepository:
         self.workspace_packages: dict[tuple[str, str], CapabilityPackageVersion] = {}
         self.workspace_package_activations: dict[tuple[str, str], list[CapabilityPackageActivation]] = {}
         self.workspace_package_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self.workspace_resources: dict[tuple[str, str], ManagedResource] = {}
         self.engine = engine
         self.sessions = make_session_factory(engine) if engine is not None else None
         self.settings = settings or Settings()
@@ -1207,11 +1210,16 @@ class ObserverRepository:
             raise ValueError("workspace_binding_mismatch")
         return package
 
-    async def execute_driver_command(self, command: DriverCommand) -> dict[str, Any]:
+    async def execute_driver_command(
+        self,
+        command: DriverCommand,
+        *,
+        node_executor: Any | None = None,
+    ) -> dict[str, Any]:
         request_key = (command.driver_id, command.request_id)
         lock = self._driver_request_locks.setdefault(request_key, asyncio.Lock())
         async with lock:
-            return await self._execute_driver_command(command)
+            return await self._execute_driver_command(command, node_executor=node_executor)
 
     async def _admit_driver_arguments(self, name: str, args: dict[str, Any], workspace_id: str) -> None:
         """Check resource scope and normalize package refs before dispatch."""
@@ -1236,7 +1244,12 @@ class ObserverRepository:
             report = args.get("report") or {}
             await self._assert_package_workspace(str(report.get("package_version_ref") or ""), workspace_id)
 
-    async def _execute_driver_command(self, command: DriverCommand) -> dict[str, Any]:
+    async def _execute_driver_command(
+        self,
+        command: DriverCommand,
+        *,
+        node_executor: Any | None = None,
+    ) -> dict[str, Any]:
         if command.command not in DRIVER_COMMANDS:
             raise ValueError("driver_command_not_allowed")
         requested_workspace = command.arguments.get("workspace_id")
@@ -1399,6 +1412,7 @@ class ObserverRepository:
                 activation_closure_version_ref=str(args.get("activation_closure_version_ref") or ""),
                 compute_binding_ref=str(args.get("compute_binding_ref") or ""),
                 rebuild=bool(args.get("rebuild", False)),
+                instance_name=str(args.get("instance_name") or "default"),
             )
             result = activation.model_dump(mode="json")
         elif command.command == "capability.health":
@@ -1409,6 +1423,28 @@ class ObserverRepository:
         elif command.command == "node.dispatch":
             attempt = await self.dispatch_dynamic_node(str(args["run_id"]), str(args["node_id"]), target=str(args["target"]))
             result = {"attempt": attempt}
+        elif command.command == "node.execute":
+            if node_executor is None:
+                raise ValueError("node_executor_unavailable")
+            result = await node_executor(
+                workspace_id=workspace_id,
+                run_id=str(args["run_id"]),
+                node_id=str(args["node_id"]),
+                target=str(args["target"]),
+                provision_payload=dict(args.get("provision_payload") or {}),
+                dispatch_payload=dict(args.get("dispatch_payload") or {}),
+            )
+        elif command.command == "resource.register":
+            resource_payload = args.get("resource")
+            if resource_payload is None:
+                resource_payload = {
+                    key: args[key]
+                    for key in ("resource_ref", "package_ref", "managed_by_ref", "state")
+                    if key in args
+                }
+            if not isinstance(resource_payload, dict):
+                raise ValueError("resource_payload_invalid")
+            result = (await self.register_resource(workspace_id, resource_payload)).model_dump(mode="json")
         elif command.command == "node.reassign":
             attempt = await self.reassign_dynamic_node(
                 str(args["run_id"]),
@@ -1607,6 +1643,84 @@ class ObserverRepository:
             ]
             self.workspace_package_events[key] = list(row.events or [])
 
+    async def _load_workspace_resources(self) -> None:
+        if self.sessions is None:
+            return
+        async with self.sessions() as session:
+            rows = (await session.scalars(select(WorkspaceResourceRow))).all()
+        for row in rows:
+            resource = ManagedResource.model_validate(row.resource)
+            self.workspace_resources[(row.workspace_id, row.resource_id)] = resource
+
+    async def _persist_workspace_resource(
+        self, workspace_id: str, resource: ManagedResource
+    ) -> None:
+        key = (workspace_id, resource.resource_ref.resource_id)
+        self.workspace_resources[key] = resource
+        if self.sessions is None:
+            return
+        async with self.sessions() as session:
+            row = await session.get(WorkspaceResourceRow, key)
+            values = {
+                "workspace_id": workspace_id,
+                "resource_id": resource.resource_ref.resource_id,
+                "resource": resource.model_dump(mode="json"),
+            }
+            if row is None:
+                session.add(WorkspaceResourceRow(**values))
+            else:
+                row.resource = values["resource"]
+            await session.commit()
+
+    async def register_resource(
+        self, workspace_id: str, payload: ManagedResource | dict[str, Any]
+    ) -> ManagedResource:
+        """Register or update one workspace resource handle."""
+        resource = payload if isinstance(payload, ManagedResource) else ManagedResource.model_validate(payload)
+        if not resource.resource_ref.resource_id:
+            raise ValueError("resource_ref_required")
+        if resource.package_ref.digest is None:
+            raise ValueError("package_digest_required")
+        package = await self.get_capability_package(resource.package_ref)
+        if package.workspace_id != workspace_id or package.publication_state != "published":
+            raise ValueError("resource_package_unavailable")
+        if resource.managed_by_ref is not None:
+            if resource.managed_by_ref.resource_id == resource.resource_ref.resource_id:
+                raise ValueError("resource_manager_self_reference")
+            await self.get_resource(workspace_id, resource.managed_by_ref)
+        await self._load_workspace_resources()
+        key = (workspace_id, resource.resource_ref.resource_id)
+        existing = self.workspace_resources.get(key)
+        if existing is not None:
+            if (
+                existing.package_ref != resource.package_ref
+                or existing.managed_by_ref != resource.managed_by_ref
+            ):
+                raise ValueError("resource_binding_conflict")
+        await self._persist_workspace_resource(workspace_id, resource)
+        return resource
+
+    async def list_resources(self, workspace_id: str) -> list[ManagedResource]:
+        await self._load_workspace_resources()
+        return [
+            resource
+            for (scope, _), resource in sorted(self.workspace_resources.items())
+            if scope == workspace_id
+        ]
+
+    async def get_resource(
+        self, workspace_id: str, resource_ref: ResourceRef | str
+    ) -> ManagedResource:
+        await self._load_workspace_resources()
+        resource_id = resource_ref.resource_id if isinstance(resource_ref, ResourceRef) else resource_ref
+        resource = self.workspace_resources.get((workspace_id, resource_id))
+        if resource is None:
+            raise KeyError(resource_id)
+        if isinstance(resource_ref, ResourceRef) and resource_ref.digest is not None:
+            if resource.resource_ref.digest != resource_ref.digest:
+                raise ValueError("resource_digest_mismatch")
+        return resource
+
     async def _persist_workspace_package(self, package: CapabilityPackageVersion) -> None:
         key = self._workspace_package_key(package)
         self.workspace_packages[key] = package
@@ -1651,7 +1765,7 @@ class ObserverRepository:
                 CapabilityExport.model_validate(item)
                 for item in manifest["capability_exports"]
             ],
-            body=dict(manifest["body"]),
+            body=(dict(manifest.get("body")) if manifest.get("body") is not None else None),
             package_digest=str(manifest.get("package_digest") or ""),
         )
         await self._validate_package_exports(package)
@@ -1685,6 +1799,7 @@ class ObserverRepository:
                         package_ref=package_ref,
                         capability_descriptor_ref=capability_descriptor_ref,
                         input_refs=input_refs,
+                        instance_name=str(event.get("instance_name") or "default"),
                         state="accepted",
                     )
                 except (TypeError, ValueError):
@@ -2147,6 +2262,9 @@ class ObserverRepository:
         activation_closure_version_ref: str = "",
         compute_binding_ref: str = "",
         rebuild: bool = False,
+        instance_name: str = "default",
+        target_resource_ref: ResourceRef | None = None,
+        instance_config: dict[str, Any] | None = None,
     ) -> CapabilityPackageActivation:
         """Atomically assign the next desired-state revision for one activation."""
         if desired_state not in {"running", "stopped"}:
@@ -2158,6 +2276,8 @@ class ObserverRepository:
         package = await self.get_capability_package(package_ref, run_id=run_id)
         if package.publication_state == "abandoned":
             raise ValueError("capability_package_abandoned")
+        if package.is_interface:
+            raise ValueError("capability_package_not_executable")
         record: RunRecord | None = None
         if package.workspace_id is not None:
             package_key = self._workspace_package_key(package)
@@ -2173,9 +2293,16 @@ class ObserverRepository:
                 if record.closure_contract is not None
                 else "workspace-default"
             )
+        if target_resource_ref is not None:
+            target_resource = await self.get_resource(record_workspace, target_resource_ref)
+            if (
+                target_resource.package_ref.resource_id != package.version_ref
+                or target_resource.package_ref.digest != package.package_digest
+            ):
+                raise ValueError("activation_target_resource_package_mismatch")
         if workspace_id is not None and workspace_id != record_workspace:
             raise ValueError("workspace_binding_mismatch")
-        lock_key = (record_workspace, package.version_ref, target_slave)
+        lock_key = (record_workspace, package.version_ref, target_slave, instance_name)
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             if record is None:
@@ -2192,11 +2319,17 @@ class ObserverRepository:
                     for item in activation_list
                     if item.package_version_ref == package.version_ref
                     and item.target_slave == target_slave
+                    and item.instance_name == instance_name
                 ),
                 None,
             )
             if current is not None and current.package_digest != package.package_digest:
                 raise ValueError("capability_package_identity_conflict")
+            if current is not None:
+                requested_target = target_resource_ref if target_resource_ref is not None else current.target_resource_ref
+                requested_config = dict(instance_config or current.instance_config)
+                if requested_target != current.target_resource_ref or requested_config != current.instance_config:
+                    raise ValueError("activation_instance_binding_conflict")
             if current is not None and current.last_idempotency_key == idempotency_key:
                 if current.desired_state != desired_state:
                     raise ValueError("idempotency_key_reused")
@@ -2242,6 +2375,9 @@ class ObserverRepository:
                 evidence_refs=list(current.evidence_refs) if current is not None else [],
                 activation_state=actual_state,
                 runtime_profile=dict(current.runtime_profile) if current is not None else {},
+                instance_name=instance_name,
+                target_resource_ref=target_resource_ref if target_resource_ref is not None else (current.target_resource_ref if current is not None else None),
+                instance_config=dict(instance_config or (current.instance_config if current is not None else {})),
             )
             activation_list[:] = [
                 item
@@ -2249,6 +2385,7 @@ class ObserverRepository:
                 if not (
                     item.package_version_ref == package.version_ref
                     and item.target_slave == target_slave
+                    and item.instance_name == instance_name
                 )
             ]
             activation_list.append(activation)
@@ -2289,7 +2426,7 @@ class ObserverRepository:
                 else "workspace-default"
             )
         lock = self._activation_locks.setdefault(
-            (workspace, package.version_ref, report.target_slave), asyncio.Lock()
+            (workspace, package.version_ref, report.target_slave, report.instance_name), asyncio.Lock()
         )
         async with lock:
             return await self._record_capability_health_locked(report, run_id=run_id)
@@ -2321,6 +2458,7 @@ class ObserverRepository:
                 for item in activation_list
                 if item.package_version_ref == package.version_ref
                 and item.target_slave == report.target_slave
+                and item.instance_name == report.instance_name
             ),
             None,
         )
@@ -2344,6 +2482,7 @@ class ObserverRepository:
             if (
                 previous_report.get("package_digest") == report.package_digest
                 and previous_report.get("target_slave") == report.target_slave
+                and previous_report.get("instance_name") == report.instance_name
                 and previous_report.get("activation_revision")
                 == report.activation_revision
                 and previous_report.get("activation_state")
@@ -2389,7 +2528,8 @@ class ObserverRepository:
                 for item in activation_list
                 if not (
                     item.package_version_ref == package.version_ref
-                    and item.target_slave == report.target_slave
+                and item.target_slave == report.target_slave
+                and item.instance_name == report.instance_name
                 )
             ]
             activation_list.append(activation)
@@ -2399,7 +2539,8 @@ class ObserverRepository:
                 "report_id": report.report_id,
                 "package_ref": package.version_ref,
                 "package_digest": package.package_digest,
-                "target_slave": report.target_slave,
+                    "target_slave": report.target_slave,
+                    "instance_name": report.instance_name,
                 "desired_state": activation.desired_state,
                 "activation_revision": report.activation_revision,
                 "activation_state": report.activation_state,
@@ -2708,6 +2849,9 @@ class ObserverRepository:
                 else:
                     blockers.append({"code": "capability_package_not_found", "hole_id": hole.hole_id})
             elif package is not None:
+                if package.is_interface:
+                    blockers.append({"code": "capability_package_not_executable", "hole_id": hole.hole_id})
+                    continue
                 if run_id is not None and not self._package_visible_to_run(package, run_id):
                     blockers.append({"code": "capability_package_scope_mismatch", "hole_id": hole.hole_id, "source_run_ref": package.source_run_ref})
                 if package.publication_state == "abandoned":
@@ -3129,7 +3273,7 @@ class ObserverRepository:
                 header = dict(operation.get("value") or {})
                 if set(header) - {"package_id", "package_version", "package_type", "execution", "capability_exports", "body", "package_digest"}:
                     raise ValueError("capability_package_header_invalid")
-                required = {"package_type", "execution", "capability_exports", "body"}
+                required = {"package_type", "execution", "capability_exports"}
                 if not required.issubset(header):
                     raise ValueError("capability_package_header_invalid")
                 try:
@@ -3150,7 +3294,7 @@ class ObserverRepository:
                             CapabilityExport.model_validate(item)
                             for item in header["capability_exports"]
                         ],
-                        body=header["body"],
+                        body=header.get("body"),
                         package_digest=str(header.get("package_digest") or ""),
                         provenance=[{"source": "coding_agent", "run_id": record.run_id}],
                     )
@@ -3905,6 +4049,7 @@ class ObserverRepository:
             package_ref=intent.package_ref,
             capability_descriptor_ref=intent.capability_descriptor_ref,
             input_refs=intent.input_refs,
+            instance_name=intent.instance_name,
             state="accepted",
         )
         record.dynamic_nodes.append(node)
@@ -3921,6 +4066,7 @@ class ObserverRepository:
                     "package_ref": intent.package_ref.model_dump(mode="json"),
                     "capability_descriptor_ref": intent.capability_descriptor_ref.model_dump(mode="json"),
                     "input_refs": [item.model_dump(mode="json") for item in intent.input_refs],
+                    "instance_name": intent.instance_name,
                     "selected_target": target,
                     "reason": "capability_match",
                     "provenance": {

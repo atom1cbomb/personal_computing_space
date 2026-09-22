@@ -14,7 +14,8 @@ DRIVER_COMMANDS = frozenset({
     "message.append", "message.claim", "message.update", "message.release",
     "agent_signal.record", "thread.bind", "thread.get", "turn.state",
     "capability.list", "capability.get", "capability.health", "capability.desire",
-    "node.accept", "node.dispatch", "node.reassign", "node.result", "node.fail",
+    "node.accept", "node.dispatch", "node.execute", "node.reassign", "node.result", "node.fail",
+    "resource.register",
 })
 
 # Commands whose optional run_id is admitted before executing their handler.
@@ -23,7 +24,8 @@ DRIVER_RUN_SCOPED_COMMANDS = frozenset({
     "run.get", "run.begin", "run.patch", "run.commit", "run.start", "run.close",
     "run.cancel", "run.fail", "run.resolve", "run.readiness", "run.result",
     "message.append", "agent_signal.record", "capability.health", "capability.desire",
-    "node.accept", "node.dispatch", "node.reassign", "node.result", "node.fail",
+    "node.accept", "node.dispatch", "node.execute", "node.reassign", "node.result", "node.fail",
+    "resource.register",
 })
 
 

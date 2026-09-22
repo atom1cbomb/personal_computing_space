@@ -18,7 +18,7 @@ CapabilityPackageVersion {
     package_type: str
     execution: { kind: str, version: str }
     capability_exports: list[CapabilityExport]
-    body: JSON object
+    body: JSON object | null
     package_digest: sha256
 
     package_id / package_version
@@ -84,6 +84,19 @@ Schema 必须校验完整的执行 manifest：
 未知三元组、缺失字段、未知字段或 schema 不匹配都会拒绝。Registry 是 append-only；重复注册相同 schema 幂等，改绑为不同 schema 失败。
 
 这使新增普通 package contract 不需要给 `CapabilityPackageVersion`、Observer 或 Driver 增加类型分支。
+
+## 4.2 接口包与资源
+
+接口包是只描述“如何使用某个资源”的公共契约，不携带可执行实现。它使用保留的
+`(package_type="interface", execution.kind="none", execution.version="1")`，并且
+`body=null`、export 的 `runtime_binding={}`。`none/1` 不对应 runtime provider，接口包
+可以上传、发布和查询，但不能 provision、dispatch 或激活到 Slave。
+
+workspace 资源通过 `package_ref` 引用这个使用包；资源不重复保存 descriptor、IoContract
+或 runtime binding。资源的可用能力由查询该 package 的 `capability_exports` 得到。资源可
+以通过 `managed_by_ref` 指向同 workspace 的管理资源（例如 VM 由云资源管理），但管理包
+和使用包保持分离。资源登记使用 `POST /api/v1/resources`，重复登记同一绑定幂等，改变
+绑定返回冲突；资源状态单独持久化。
 
 ## 4. 引用与 digest
 

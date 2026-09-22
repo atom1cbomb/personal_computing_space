@@ -11,6 +11,7 @@ from jsonschema.exceptions import SchemaError, ValidationError
 
 
 PackageContractKey = tuple[str, str, str]
+INTERFACE_PACKAGE_KEY: PackageContractKey = ("interface", "none", "1")
 DRIVER_ORCHESTRATOR_KEY: PackageContractKey = (
     "function",
     "container:python_orchestrator",
@@ -175,6 +176,15 @@ PYTHON_ORCHESTRATOR_V1_SCHEMA = _contract_schema(
 )
 
 
+INTERFACE_PACKAGE_V1_SCHEMA = _contract_schema(
+    "interface",
+    "none",
+    "1",
+    {"type": "null"},
+    {"type": "object", "maxProperties": 0},
+)
+
+
 CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
     "service",
     "container:http",
@@ -199,13 +209,17 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
             "network_profile": {
                 "enum": ["internal", "egress"],
             },
-            "authentication": {
-                "type": "object",
-                "required": ["start_path", "status_path"],
-                "properties": {
-                    "start_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
-                    "status_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
-                },
+            "persistent_state": {
+                "type": "boolean",
+            },
+                "authentication": {
+                    "type": "object",
+                    "required": ["start_path", "status_path"],
+                    "properties": {
+                        "start_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                        "status_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                        "browser_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                    },
                 "additionalProperties": False,
             },
         },
@@ -355,6 +369,7 @@ package_contract_registry = PackageContractRegistry()
 package_contract_registry.register(("function", "process:json_stdio", "1"), PROCESS_JSON_STDIO_V1_SCHEMA)
 package_contract_registry.register(DRIVER_ORCHESTRATOR_KEY, PYTHON_ORCHESTRATOR_V1_SCHEMA)
 package_contract_registry.register(("service", "container:http", "1"), CONTAINER_HTTP_V1_SCHEMA)
+package_contract_registry.register(INTERFACE_PACKAGE_KEY, INTERFACE_PACKAGE_V1_SCHEMA)
 
 
 def load_operator_package_contracts(directory: str | Path) -> list[PackageContractKey]:
@@ -365,6 +380,7 @@ def load_operator_package_contracts(directory: str | Path) -> list[PackageContra
 __all__ = [
     "PackageContractKey",
     "DRIVER_ORCHESTRATOR_KEY",
+    "INTERFACE_PACKAGE_KEY",
     "PackageContractRegistry",
     "PROCESS_JSON_STDIO_V1_SCHEMA",
     "PYTHON_ORCHESTRATOR_V1_SCHEMA",

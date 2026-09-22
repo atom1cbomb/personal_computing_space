@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "content://sha256/e39fb87f3bbbd315609baea24434843b8884d3f393c375ae97fd589b7a3374df",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "content://sha256/a7a856659f5ca4addfc28b5d77f83754b82e198e716ed20678565c7b721a29fd",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

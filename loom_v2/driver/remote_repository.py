@@ -195,6 +195,40 @@ class RemoteObserverRepository:
         )
         return DynamicNode.model_validate(payload)
 
+    async def execute_dynamic_node(
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        target: str,
+        provision_payload: dict[str, Any],
+        dispatch_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Ask Observer to fence, execute and record one dynamic node.
+
+        The Driver supplies the immutable execution envelope it decided on;
+        Observer owns the Attempt transition and all Worker forwarding.
+        """
+        return dict(await self.control.command(
+            "node.execute",
+            {
+                "run_id": run_id,
+                "node_id": node_id,
+                "target": target,
+                "provision_payload": provision_payload,
+                "dispatch_payload": dispatch_payload,
+            },
+            request_id=f"node-execute:{run_id}:{node_id}:{dispatch_payload.get('attempt_id', '')}",
+        ))
+
+    async def register_resource(self, resource: dict[str, Any]) -> dict[str, Any]:
+        """Register a workspace resource through Observer's narrow command."""
+        return dict(await self.control.command(
+            "resource.register",
+            {"resource": resource},
+            request_id=f"resource-register:{resource.get('resource_ref', {}).get('resource_id', '')}",
+        ))
+
     async def record_capability_health(self, report: CapabilityHealthReport, *, run_id: str | None = None) -> CapabilityPackageActivation:
         payload = await self.control.command(
             "capability.health",
@@ -213,6 +247,7 @@ class RemoteObserverRepository:
         activation_closure_version_ref: str = "",
         compute_binding_ref: str = "",
         rebuild: bool = False,
+        instance_name: str = "default",
     ) -> CapabilityPackageActivation:
         ref = (
             package_ref.model_dump(mode="json")
@@ -230,6 +265,7 @@ class RemoteObserverRepository:
                 "activation_closure_version_ref": activation_closure_version_ref,
                 "compute_binding_ref": compute_binding_ref,
                 "rebuild": rebuild,
+                "instance_name": instance_name,
             },
             request_id=(
                 f"capability-desire:{target_slave}:{desired_state}:"

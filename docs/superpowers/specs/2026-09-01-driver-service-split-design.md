@@ -1,12 +1,17 @@
 # Driver 独立服务与 Codex 容器化设计
 
 **日期：** 2026-09-01  
-**状态：** 待评审  
+**状态：** 已被 `2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md` 取代（历史背景）
 **对应文档：** `docs/superpowers/specs/2026-08-26-distributed-analysis-e2e-design.md`
 
 **可靠性修订：** 消息投递、request receipt、turn 所有权和恢复状态机由
 `docs/superpowers/specs/2026-09-01-message-turn-reliability-redesign.md`
 进一步定义；该修订覆盖本文 4.1、5.2 和 5.3 中对应的消息异步与幂等语义。
+
+> 本文保留服务拆分的历史决策，不再定义生产执行拓扑。当前生产拓扑统一为
+> `Driver → Observer → Slave`：Observer 持有 Slave lease、创建 Attempt、转发固定
+> Worker 路径并接收结果。下文凡是“Driver 与 Slave 直连”或“Observer 不代理执行面”的
+> 描述均已失效，以 2026-09-22 spec 为准。
 
 ## 1. 目标与决策
 

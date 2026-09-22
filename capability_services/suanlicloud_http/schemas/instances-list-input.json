@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "ProjectId": {
+      "type": "string"
+    },
+    "InstanceIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "PageSpec": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "ProjectId",
+    "InstanceIds",
+    "Filters",
+    "PageSpec"
+  ]
+}

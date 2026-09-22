@@ -1,0 +1,10 @@
+default_provider: suanli
+providers:
+  - alias: suanli
+    issuer: https://connect.cs.ac.cn
+    client_id: 106efc4c-4547-4229-8609-a2af24b6e1ae
+    scopes: openid email profile offline_access
+    access_type: offline
+    prompt: consent
+    redirect_uris:
+      - http://localhost:3000/login-callback

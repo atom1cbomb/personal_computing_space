@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "instances_terminate"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "StateTransitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      "required": [
+        "StateTransitions"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "job": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "status",
+    "job"
+  ]
+}

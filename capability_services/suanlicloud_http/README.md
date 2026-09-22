@@ -36,3 +36,19 @@ the HTTP verifier's Host canonicalization. Image digest
 published as package `suanlicloud-http/v2` and activated on production
 `slave-a`. Standard signed requests from the running container have been
 verified against production for all six read-only operations.
+
+The exported operation boundaries are recorded under `schemas/` and
+`contracts/`. They describe the gateway's `{operation, result}` response
+envelope and the required OpenAPI request fields without copying the entire
+provider OpenAPI document. Regenerate and verify the content refs with:
+
+```bash
+python scripts/generate_service_contracts.py
+python scripts/generate_service_contracts.py --check
+```
+
+The IoContracts intentionally use `success_semantics: null`: provider HTTP/API
+errors are rejected by the gateway/runtime, and successful responses are
+checked by the operation output schemas. A future criterion about actual VM
+state must be paired with a deterministic validator; semantics alone would
+correctly enter attestation instead of being guessed as success.

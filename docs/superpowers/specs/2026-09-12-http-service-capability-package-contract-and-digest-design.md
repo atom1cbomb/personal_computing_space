@@ -66,6 +66,18 @@ Operator contract 以纯 JSON 文件安装到所有 Observer、Driver 和 Slave 
   只能选择 operator 预配置的 egress 网络，不能携带路径、网络名或任意 Docker 参数。
 - capability descriptor 在同一 package 内唯一，由公共 envelope 校验。JSON Schema 校验每个 HTTP path 的形状；需要跨数组比较的 path 唯一性和 health 冲突由 `container-http-v1` plugin 在 provision 前校验，Observer 不为此加入 HTTP 专用代码。
 
+### 2.2 service export 的成功语义
+
+本阶段 service export 的 `success_semantics` 保持为 `null`。`container-http-v1`
+只把 HTTP 2xx、合法 JSON 和对应 output schema 通过视为一次调用的结构化成功；
+网关负责把 provider 的认证、权限、限流和请求错误转换为失败响应。不要把
+`"provider accepted"` 之类的说明文字填入 `success_semantics`：该字段非空而没有
+`success_validator_ref` 时，运行时必须进入 `attestation_required`，不会自动完成。
+
+如果某个能力需要判断“资源已达到目标状态”等超出响应结构的业务标准，必须在同一
+IoContract 中同时提供确定性的 `success_validator_ref`，并让 validator 解释对应的
+`success_semantics`。没有这样的 validator，本阶段不猜测 provider 业务含义。
+
 ## 3. package digest
 
 ### 3.1 生成责任

@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "instances_list"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "Instances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "PageMeta": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "Instances",
+        "PageMeta"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

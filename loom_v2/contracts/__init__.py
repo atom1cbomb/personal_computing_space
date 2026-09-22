@@ -27,6 +27,7 @@ from .types import (
     TaskClosure,
     TypedHole,
     ResourceEventFrame,
+    ManagedResource,
 )
 
 __all__ = [
@@ -69,4 +70,5 @@ __all__ = [
     "TaskClosure",
     "TypedHole",
     "ResourceEventFrame",
+    "ManagedResource",
 ]

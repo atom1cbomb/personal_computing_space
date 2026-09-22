@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "InstanceIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "Filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "IncludeAllInstances": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "InstanceIds",
+    "Filters",
+    "IncludeAllInstances"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "nodes_list"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "Nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      "required": [
+        "Nodes"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

@@ -20,3 +20,17 @@ expose a generic command endpoint. Since Loom's default internal network has no
 egress, configure an operator-owned bridge network and set
 `LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK`; the package's `network_profile: egress`
 selects that configured network without accepting an arbitrary Docker network.
+
+The operation schemas and content-addressed IoContracts live in `schemas/` and
+`contracts/`. Regenerate their refs after changing an operation boundary with:
+
+```bash
+python scripts/generate_service_contracts.py
+python scripts/generate_service_contracts.py --check
+```
+
+These contracts intentionally leave `success_semantics` null: a 2xx JSON
+response that matches the operation output schema is the gateway's success
+criterion. A future domain-specific criterion must add a deterministic
+`success_validator_ref`; adding opaque semantics alone would require
+attestation.

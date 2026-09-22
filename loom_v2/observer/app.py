@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 import json
+import httpx
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,6 +21,7 @@ from loom_v2.contracts.api import (
     CapabilityActivationRequest,
     CapabilityHealthRequest,
     CapabilityPackageUploadRequest,
+    ResourceCreateRequest,
     CommitRequest,
     ContentPutRequest,
     IdempotencyRequest,
@@ -34,10 +36,13 @@ from loom_v2.contracts.api import (
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
 from loom_v2.contracts.refs import select_slave_agents
+from loom_v2.contracts.types import ResourceRef
 from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.gateway import ObserverDriverGateway
 from loom_v2.observer.dispatcher import ObserverMessageDispatcher
 from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
+from loom_v2.observer.browser_auth import BrowserAuth
+from loom_v2.observer.slave_gateway import ObserverSlaveGateway, SlaveForwardError
 from loom_v2.auth import InternalAuth
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
 
@@ -86,6 +91,12 @@ def create_app(
         internal_api_secret=settings.internal_api_secret,
         timeout=settings.worker_operation_timeout_seconds,
     )
+    app.state.slave_gateway = ObserverSlaveGateway(
+        app.state.repo,
+        workspace_id=settings.workspace_id,
+        token=settings.internal_api_secret,
+        timeout=settings.worker_operation_timeout_seconds,
+    )
     app.state.dispatcher = ObserverMessageDispatcher(
         app.state.repo,
         app.state.gateway,
@@ -96,6 +107,7 @@ def create_app(
     # dispatcher.  Embedded Driver/Slave/MCP wiring lives in
     # ``loom_v2.testing.observer`` and is never imported by this module.
     app.state.embedded = False
+    app.state.browser_auth = BrowserAuth(app, settings)
     app.state.repo.orchestrator_runtime_available = False
     app.state.provider = None
     app.state.slaves = {}
@@ -217,8 +229,141 @@ def create_app(
 
     @internal_router.post("/internal/v1/driver/commands")
     async def driver_command(payload: DriverCommand) -> dict[str, Any]:
+        async def execute_node_via_observer(
+            *,
+            workspace_id: str,
+            run_id: str,
+            node_id: str,
+            target: str,
+            provision_payload: dict[str, Any],
+            dispatch_payload: dict[str, Any],
+        ) -> dict[str, Any]:
+            """Fence one Attempt and keep the Worker data path Observer-owned."""
+            existing_run = await app.state.repo.get_run(run_id)
+            existing_node = next(
+                (item for item in existing_run.dynamic_nodes if item.node_id == node_id),
+                None,
+            )
+            if existing_node is not None and existing_node.state == "completed":
+                existing_attempt = next(
+                    (
+                        item for item in reversed(existing_run.attempts)
+                        if item.get("node_id") == node_id and item.get("state") == "completed"
+                    ),
+                    None,
+                )
+                if existing_attempt is None:
+                    raise RuntimeError("dynamic_node_result_missing")
+                if str(existing_attempt.get("target") or "") != target:
+                    raise RuntimeError("node_target_mismatch")
+                return {
+                    "node": existing_node.model_dump(mode="json"),
+                    "attempt": existing_attempt,
+                    "terminal_report": {
+                        "state": "completed",
+                        "attempt_id": existing_attempt.get("attempt_id"),
+                        "execution_id": existing_run.execution_id,
+                        "execution_epoch": existing_run.execution_epoch,
+                        "result": {
+                            "resource_ref": existing_attempt.get("result_ref"),
+                            "value": existing_attempt.get("value"),
+                        },
+                    },
+                }
+            # The Driver's orchestration runtime records the Attempt before
+            # asking Observer to execute the immutable Worker envelope.  Do
+            # not dispatch that same node a second time: a retry/re-entry may
+            # already have moved it to ``dispatched``.  Reuse the active
+            # fenced Attempt and keep the relay idempotent.
+            current = await app.state.repo.get_run(run_id)
+            current_node = next(
+                (item for item in current.dynamic_nodes if item.node_id == node_id),
+                None,
+            )
+            if current_node is None:
+                raise RuntimeError("dynamic_node_not_found")
+            if current_node.state == "accepted":
+                attempt = await app.state.repo.dispatch_dynamic_node(
+                    run_id, node_id, target=target
+                )
+            elif current_node.state == "dispatched":
+                active = next(
+                    (
+                        item for item in reversed(current.attempts)
+                        if item.get("node_id") == node_id
+                        and item.get("state") in {"created", "running"}
+                    ),
+                    None,
+                )
+                if active is None or str(active.get("target") or "") != target:
+                    raise RuntimeError("dynamic_node_attempt_missing")
+                attempt = active
+            else:
+                raise RuntimeError("dynamic_node_not_dispatchable")
+            try:
+                provision = await app.state.slave_gateway.forward(
+                    target, "/worker/v1/provision", provision_payload
+                )
+                raw_report = provision.get("health_report") or provision
+                report = CapabilityHealthReport.model_validate(raw_report)
+                await app.state.repo.record_capability_health(report, run_id=run_id)
+
+                run = await app.state.repo.get_run(run_id)
+                request = dict(dispatch_payload)
+                request.update(
+                    {
+                        "attempt_id": attempt["attempt_id"],
+                        "execution_id": run.execution_id,
+                        "execution_epoch": run.execution_epoch,
+                        "workspace_id": workspace_id,
+                    }
+                )
+                envelope = await app.state.slave_gateway.forward(
+                    target, "/worker/v1/dispatch", request
+                )
+                terminal = envelope.get("terminal_report")
+                if not isinstance(terminal, dict):
+                    raise RuntimeError("worker_dispatch_invalid_response")
+                result = terminal.get("result")
+                if not isinstance(result, dict) or "value" not in result:
+                    raise RuntimeError("worker_dispatch_result_missing")
+                completed = await app.state.repo.record_dynamic_node_result(
+                    run_id,
+                    node_id,
+                    {
+                        "attempt_id": attempt["attempt_id"],
+                        "execution_id": run.execution_id,
+                        "execution_epoch": run.execution_epoch,
+                        "value": result["value"],
+                        "terminal_state": terminal.get("state", "completed"),
+                        "terminal_error": terminal.get("error"),
+                        "validation_evidence": terminal.get("validation_evidence") or [],
+                    },
+                )
+                updated = await app.state.repo.get_run(run_id)
+                stored_attempt = next(
+                    item for item in updated.attempts
+                    if item.get("attempt_id") == attempt["attempt_id"]
+                )
+                return {
+                    "node": completed.model_dump(mode="json"),
+                    "attempt": stored_attempt,
+                    "terminal_report": terminal,
+                }
+            except Exception as exc:
+                with suppress(Exception):
+                    await app.state.repo.fail_dynamic_node(
+                        run_id, node_id,
+                        attempt_id=attempt.get("attempt_id"),
+                        error={"code": str(exc) or "node_execution_failed"},
+                    )
+                raise
+
         try:
-            result = await app.state.repo.execute_driver_command(payload)
+            result = await app.state.repo.execute_driver_command(
+                payload,
+                node_executor=execute_node_via_observer,
+            )
         except DomainError as exc:
             envelope = exc.envelope.model_dump(mode="json")
             raise HTTPException(status_code=409, detail=envelope) from exc
@@ -226,9 +371,32 @@ def create_app(
             code = str(exc)
             status = 400 if code == "driver_command_not_allowed" else 409
             raise HTTPException(status_code=status, detail=code) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=f"missing_field:{exc.args[0]}") from exc
         return result
+
+    @internal_router.post("/internal/v1/slaves/{slave_id}/forward")
+    async def forward_slave(slave_id: str, payload: dict[str, Any]) -> Response:
+        """Relay a fixed Worker operation through Observer's active lease."""
+        path = payload.get("path")
+        request_payload = payload.get("payload")
+        allowed = {
+            "/worker/v1/provision", "/worker/v1/dispatch",
+            "/worker/v1/deprovision", "/worker/v1/capability/auth/start",
+            "/worker/v1/capability/auth/browser", "/worker/v1/inspect",
+            "/worker/v1/reconcile",
+        }
+        if path not in allowed or not isinstance(request_payload, dict):
+            raise HTTPException(status_code=400, detail="slave_forward_request_invalid")
+        try:
+            body = await app.state.slave_gateway.forward(slave_id, path, request_payload)
+        except SlaveForwardError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.body)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(content=body)
 
     @internal_router.post("/driver-gateway/v1/registration-check")
     async def registration_check() -> dict[str, Any]:
@@ -665,6 +833,35 @@ def create_app(
             result.append(item)
         return result
 
+    @app.post("/api/v1/resources")
+    async def register_resource(payload: ResourceCreateRequest) -> dict[str, Any]:
+        try:
+            resource = await app.state.repo.register_resource(
+                settings.workspace_id,
+                payload.model_dump(mode="json"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource_reference_not_found") from exc
+        except ValueError as exc:
+            status = 409 if "conflict" in str(exc) or "digest" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return resource.model_dump(mode="json")
+
+    @app.get("/api/v1/resources")
+    async def list_resources() -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in await app.state.repo.list_resources(settings.workspace_id)
+        ]
+
+    @app.get("/api/v1/resources/{resource_id:path}")
+    async def get_resource(resource_id: str) -> dict[str, Any]:
+        try:
+            resource = await app.state.repo.get_resource(settings.workspace_id, resource_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource_not_found") from exc
+        return resource.model_dump(mode="json")
+
     @app.get("/api/v1/runs/{run_id}/capability-packages")
     async def run_capability_packages(run_id: str) -> list[dict[str, Any]]:
         try:
@@ -673,6 +870,20 @@ def create_app(
             raise HTTPException(status_code=404, detail="run_not_found") from exc
         record = await app.state.repo.get_run(run_id)
         return [{**package.model_dump(mode="json"), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]} for package in packages]
+
+    @app.get("/api/v1/capability-packages/{package_ref:path}")
+    async def capability_package(package_ref: str) -> dict[str, Any]:
+        try:
+            package = await app.state.repo.get_capability_package(package_ref, run_id=None)
+            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
+        item = package.model_dump(mode="json")
+        item["activations"] = [
+            activation.model_dump(mode="json")
+            for activation in await app.state.repo.list_package_activations(package)
+        ]
+        return item
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/promote")
     async def promote_capability_package(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
@@ -685,28 +896,10 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         targets = payload.target_slaves
-        if targets and not app.state.embedded:
-            try:
-                return {
-                    "package": package.model_dump(mode="json"),
-                    **await app.state.gateway.forward(
-                        "/driver/v1/capability/provision",
-                        {
-                            "package_ref": package.version_ref,
-                            "target_slaves": targets,
-                            "compute_binding": payload.compute_binding.model_dump(mode="json") if payload.compute_binding else None,
-                            "idempotency_key": payload.idempotency_key,
-                        },
-                    ),
-                }
-            except RuntimeError as exc:
-                return {
-                    "package": package.model_dump(mode="json"),
-                    "health_reports": [
-                        {"target_slave": target, "activation_state": "failed", "error": str(exc)}
-                        for target in targets
-                    ],
-                }
+        # Publishing an interface package is supported, but it has no runtime
+        # implementation and therefore can never be activated on a target.
+        if targets and package.is_interface:
+            raise HTTPException(status_code=409, detail="capability_package_not_executable")
         reports = await execute_activation_targets(
             app.state.repo,
             package,
@@ -717,6 +910,10 @@ def create_app(
             slaves=app.state.slaves,
             compute_binding=payload.compute_binding.model_dump(mode="json") if payload.compute_binding else None,
             idempotency_key=payload.idempotency_key,
+            instance_name=payload.instance_name,
+            target_resource_ref=payload.target_resource_ref.model_dump(mode="json") if payload.target_resource_ref else None,
+            instance_config=payload.instance_config,
+            slave_gateway=None if app.state.embedded else app.state.slave_gateway,
         )
         return {"package": package.model_dump(mode="json"), "health_reports": reports}
 
@@ -737,28 +934,6 @@ def create_app(
         targets = payload.target_slaves
         if not targets:
             raise HTTPException(status_code=400, detail="target_slave_required")
-        if not app.state.embedded:
-            try:
-                return {
-                    "package": package.model_dump(mode="json"),
-                    **await app.state.gateway.forward(
-                        "/driver/v1/capability/deprovision",
-                        {
-                            "package_ref": package.version_ref,
-                            "target_slaves": targets,
-                            "approved_digest": package.package_digest,
-                            "idempotency_key": payload.idempotency_key,
-                        },
-                    ),
-                }
-            except RuntimeError as exc:
-                return {
-                    "package": package.model_dump(mode="json"),
-                    "health_reports": [
-                        {"target_slave": target, "activation_state": "failed", "error": str(exc)}
-                        for target in targets
-                    ],
-                }
         reports = await execute_activation_targets(
             app.state.repo,
             package,
@@ -768,11 +943,15 @@ def create_app(
             workers=app.state.workers,
             slaves=app.state.slaves,
             idempotency_key=payload.idempotency_key,
+            instance_name=payload.instance_name,
+            target_resource_ref=payload.target_resource_ref.model_dump(mode="json") if payload.target_resource_ref else None,
+            instance_config=payload.instance_config,
+            slave_gateway=None if app.state.embedded else app.state.slave_gateway,
         )
         return {"package": package.model_dump(mode="json"), "health_reports": reports}
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/auth/start")
-    async def start_capability_auth(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
+    async def start_capability_auth(package_ref: str, request: Request, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
         payload = payload or CapabilityActivationRequest()
         try:
             package = await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
@@ -787,25 +966,10 @@ def create_app(
         targets = payload.target_slaves
         if not targets:
             raise HTTPException(status_code=400, detail="target_slave_required")
-        request = {
-            "package_ref": package.version_ref,
-            "target_slaves": targets,
-            "approved_digest": package.package_digest,
-        }
-        if not app.state.embedded:
-            try:
-                return {
-                    "package": package.model_dump(mode="json"),
-                    **await app.state.gateway.forward("/driver/v1/capability/auth/start", request),
-                }
-            except RuntimeError as exc:
-                return {
-                    "package": package.model_dump(mode="json"),
-                    "health_reports": [
-                        {"target_slave": target, "activation_state": "failed", "error": str(exc)}
-                        for target in targets
-                    ],
-                }
+        authentication = (package.body or {}).get("authentication") if isinstance(package.body, dict) else None
+        browser_path = authentication.get("browser_path") if isinstance(authentication, dict) else None
+        if browser_path:
+            return await app.state.browser_auth.start(request, package, targets, payload.instance_name)
         reports = await execute_auth_targets(
             app.state.repo,
             package,
@@ -814,8 +978,11 @@ def create_app(
             workers=app.state.workers,
             slaves=app.state.slaves,
             approved_digest=package.package_digest,
+            instance_name=payload.instance_name,
+            slave_gateway=None if app.state.embedded else app.state.slave_gateway,
         )
         return {"package": package.model_dump(mode="json"), "health_reports": reports}
+
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/abandon")
     async def abandon_capability_package(package_ref: str, payload: IdempotencyRequest | None = None) -> dict[str, Any]:

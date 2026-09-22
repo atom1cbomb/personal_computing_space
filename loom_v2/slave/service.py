@@ -129,11 +129,14 @@ class SlaveService:
                         activation_state=item.get("activation_state", "provisioning"),
                         evidence_refs=list(item.get("evidence_refs") or []),
                         runtime_profile=dict(item.get("runtime_profile") or {}),
+                        instance_name=str(item.get("instance_name") or "default"),
+                        target_resource_ref=(ResourceRef.model_validate(item["target_resource_ref"]) if item.get("target_resource_ref") else None),
+                        instance_config=dict(item.get("instance_config") or {}),
                     )
                 except (TypeError, ValueError):
                     continue
                 self._cache_package(package, package.version_ref)
-                self.activations[self._activation_key(package.version_ref)] = activation
+                self.activations[self._activation_key(package.version_ref, activation.instance_name)] = activation
         finally:
             if owns_session:
                 await session.__aexit__(None, None, None)
@@ -149,7 +152,7 @@ class SlaveService:
     ) -> None:
         if self.sessions is None:
             return
-        key = self._activation_key(activation.package_version_ref)
+        key = self._activation_key(activation.package_version_ref, activation.instance_name)
         now = datetime.now(timezone.utc)
         values = {
             "activation_key": key,
@@ -166,6 +169,9 @@ class SlaveService:
             "activation_revision": activation.activation_revision,
             "evidence_refs": list(activation.evidence_refs),
             "runtime_profile": dict(activation.runtime_profile),
+            "instance_name": activation.instance_name,
+            "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None,
+            "instance_config": dict(activation.instance_config),
             "runtime_handle": dict(runtime_handle or {}),
             "last_idempotency_key": activation.last_idempotency_key,
             "last_error_code": last_error_code,
@@ -200,7 +206,8 @@ class SlaveService:
                     # executors do not need reconciliation.
                     if not self._uses_runtime_plugin(package):
                         continue
-                    activation_key = self._activation_key(package.version_ref)
+                    instance_name = str(row.get("instance_name") or "default")
+                    activation_key = self._activation_key(package.version_ref, instance_name)
                     packages[activation_key] = package
                     entries.append({
                         "activation_key": activation_key,
@@ -215,13 +222,16 @@ class SlaveService:
                         "desired_state": row["desired_state"],
                         "activation_revision": row["activation_revision"],
                         "runtime_profile": row.get("runtime_profile") or {},
+                        "instance_name": instance_name,
+                        "target_resource_ref": row.get("target_resource_ref"),
+                        "instance_config": row.get("instance_config") or {},
                     })
         else:
             for key, activation in self.activations.items():
                 package = self._find_cached_package(activation.package_version_ref, activation.package_digest)
                 if package is None or not self._uses_runtime_plugin(package):
                     continue
-                entries.append({"activation_key": key, "workspace_id": self.workspace_id, "slave_id": self.slave_id, "target_slave": self.slave_id, "package_version_ref": package.version_ref, "package_digest": package.package_digest, "package_type": package.package_type, "execution": package.execution.model_dump(mode="json"), "package_payload": package.model_dump(mode="json"), "desired_state": activation.desired_state, "activation_revision": activation.activation_revision, "runtime_profile": activation.runtime_profile})
+                entries.append({"activation_key": key, "workspace_id": self.workspace_id, "slave_id": self.slave_id, "target_slave": self.slave_id, "package_version_ref": package.version_ref, "package_digest": package.package_digest, "package_type": package.package_type, "execution": package.execution.model_dump(mode="json"), "package_payload": package.model_dump(mode="json"), "desired_state": activation.desired_state, "activation_revision": activation.activation_revision, "runtime_profile": activation.runtime_profile, "instance_name": activation.instance_name, "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None, "instance_config": activation.instance_config})
         try:
             response = await self.runtime_plugin_host.reconcile(entries)
         except RuntimePluginError:
@@ -272,8 +282,8 @@ class SlaveService:
         return f"{package_ref}#digest:{package_digest.lower()}"
 
     @staticmethod
-    def _activation_key(package_ref: str) -> str:
-        return package_ref
+    def _activation_key(package_ref: str, instance_name: str = "default") -> str:
+        return f"{package_ref}#{instance_name}"
 
     @staticmethod
     def _package_aliases(package: CapabilityPackageVersion, command_ref: str) -> set[str]:
@@ -452,7 +462,7 @@ class SlaveService:
                 # A package coordinate is immutable.  Never start a second
                 # container for the same coordinate under another digest.
                 raise RuntimeError("capability_package_identity_conflict")
-        activation_key = self._activation_key(ref)
+        activation_key = self._activation_key(ref, command.instance_name)
         existing = self.activations.get(activation_key)
         retry = self._lifecycle_retry(
             existing,
@@ -468,6 +478,7 @@ class SlaveService:
                 package_version_ref=ref,
                 package_digest=package.package_digest,
                 target_slave=self.slave_id,
+                instance_name=command.instance_name,
                 activation_state="ready",
                 activation_revision=command.activation_revision,
                 evidence_refs=list(existing.evidence_refs),
@@ -485,6 +496,9 @@ class SlaveService:
             "activation_revision": command.activation_revision,
             "last_idempotency_key": command.idempotency_key,
             "activation_state": "provisioning",
+            "instance_name": command.instance_name,
+            "target_resource_ref": command.target_resource_ref,
+            "instance_config": dict(command.instance_config),
         }
         pending = (
             existing.model_copy(update=values)
@@ -536,6 +550,7 @@ class SlaveService:
             package_version_ref=ref,
             package_digest=package.package_digest,
             target_slave=self.slave_id,
+            instance_name=command.instance_name,
             activation_state=state,
             activation_revision=command.activation_revision,
             evidence_refs=activation.evidence_refs,
@@ -580,7 +595,9 @@ class SlaveService:
             package.execution.version,
         ) == DRIVER_ORCHESTRATOR_KEY:
             raise RuntimeError("driver_side_executor_required")
-        activation_key = self._activation_key(package.version_ref)
+        if package.is_interface:
+            raise RuntimeError("capability_package_not_executable")
+        activation_key = self._activation_key(package.version_ref, command.instance_name)
         lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
         async with lock:
             if self._uses_runtime_plugin(package):
@@ -588,7 +605,9 @@ class SlaveService:
             return await self._provision_executor_locked(command, package)
 
     async def auth_start(
-        self, package: CapabilityPackageVersion
+        self, package: CapabilityPackageVersion, *, instance_name: str = "default",
+        browser_auth: dict[str, Any] | None = None,
+        activation_revision: int | None = None,
     ) -> CapabilityHealthReport:
         """Restart authentication for an existing runtime activation."""
         if self.runtime_plugin_host is None:
@@ -597,7 +616,7 @@ class SlaveService:
             raise RuntimeError("service_authentication_unsupported")
         if package.workspace_id is not None and package.workspace_id != self.workspace_id:
             raise RuntimeError("workspace_binding_mismatch")
-        activation_key = self._activation_key(package.version_ref)
+        activation_key = self._activation_key(package.version_ref, instance_name)
         lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
         async with lock:
             activation = self.activations.get(activation_key)
@@ -605,9 +624,13 @@ class SlaveService:
                 raise RuntimeError("capability_activation_not_found")
             if activation.desired_state != "running" or activation.activation_state == "stopped":
                 raise RuntimeError("capability_activation_not_running")
+            if activation_revision is not None and activation.activation_revision != activation_revision:
+                raise RuntimeError("capability_activation_revision_stale")
             self._cache_package(package, package.version_ref)
             payload = activation.model_dump(mode="json")
             payload.update({"workspace_id": self.workspace_id, "slave_id": self.slave_id})
+            if browser_auth is not None:
+                payload["browser_auth"] = browser_auth
             try:
                 response = await self.runtime_plugin_host.auth_start(package, payload)
             except (RuntimePluginError, RuntimeError) as exc:
@@ -633,6 +656,7 @@ class SlaveService:
                 target_slave=self.slave_id,
                 activation_state=state,
                 activation_revision=activation.activation_revision,
+                instance_name=activation.instance_name,
                 evidence_refs=list(updated.evidence_refs),
                 details={
                     "runtime_plugin_id": str(response.get("runtime_plugin_id") or ""),
@@ -641,6 +665,28 @@ class SlaveService:
                 },
             )
             return self._remember_health_report(activation_key, report)
+
+    async def auth_browser(
+        self, package: CapabilityPackageVersion, *, instance_name: str, activation_revision: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self.runtime_plugin_host is None or not self._uses_runtime_plugin(package):
+            raise RuntimeError("service_browser_auth_unsupported")
+        if package.workspace_id is not None and package.workspace_id != self.workspace_id:
+            raise RuntimeError("workspace_binding_mismatch")
+        activation_key = self._activation_key(package.version_ref, instance_name)
+        lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
+        async with lock:
+            activation = self.activations.get(activation_key)
+            if activation is None or activation.desired_state != "running" or activation.activation_state == "stopped":
+                raise RuntimeError("capability_activation_not_running")
+            if activation.package_digest.lower() != package.package_digest.lower():
+                raise RuntimeError("capability_package_digest_mismatch")
+            if activation.activation_revision != activation_revision:
+                raise RuntimeError("capability_activation_revision_stale")
+            self._cache_package(package, package.version_ref)
+            context = activation.model_dump(mode="json")
+            context.update({"workspace_id": self.workspace_id, "slave_id": self.slave_id})
+            return await self.runtime_plugin_host.auth_browser(package, context, payload)
 
     async def _provision_executor_locked(
         self,
@@ -657,7 +703,7 @@ class SlaveService:
         if provider_fillable and (command.compute_binding is None or not command.compute_binding.runtime_profile):
             raise RuntimeError("provider_fillable_binding_required")
         ref = package.version_ref
-        activation_key = self._activation_key(ref)
+        activation_key = self._activation_key(ref, command.instance_name)
         existing_activation = self.activations.get(activation_key)
         retry = self._lifecycle_retry(
             existing_activation,
@@ -673,6 +719,7 @@ class SlaveService:
                 package_version_ref=ref,
                 package_digest=package.package_digest,
                 target_slave=self.slave_id,
+                instance_name=command.instance_name,
                 activation_state="ready",
                 activation_revision=command.activation_revision,
                 evidence_refs=list(existing_activation.evidence_refs),
@@ -688,6 +735,9 @@ class SlaveService:
             "activation_revision": command.activation_revision,
             "last_idempotency_key": command.idempotency_key,
             "activation_state": "provisioning",
+            "instance_name": command.instance_name,
+            "target_resource_ref": command.target_resource_ref,
+            "instance_config": dict(command.instance_config),
         }
         pending = (
             existing_activation.model_copy(update=pending_values)
@@ -730,6 +780,7 @@ class SlaveService:
             package_version_ref=ref,
             package_digest=package.package_digest,
             target_slave=self.slave_id,
+            instance_name=command.instance_name,
             activation_state="ready",
             activation_revision=command.activation_revision,
             evidence_refs=activation.evidence_refs,
@@ -764,7 +815,7 @@ class SlaveService:
             raise RuntimeError("capability_package_ref_mismatch")
         if not self._uses_runtime_plugin(package):
             raise RuntimeError("unsupported_deprovision_contract")
-        lock = self._activation_locks.setdefault(self._activation_key(package.version_ref), asyncio.Lock())
+        lock = self._activation_locks.setdefault(self._activation_key(package.version_ref, command.instance_name), asyncio.Lock())
         async with lock:
             return await self._deprovision_locked(command, package)
 
@@ -778,7 +829,7 @@ class SlaveService:
         if self.runtime_plugin_host is None:
             raise RuntimeError("runtime_plugin_not_found")
         ref = package.version_ref
-        activation_key = self._activation_key(ref)
+        activation_key = self._activation_key(ref, command.instance_name)
         existing = self.activations.get(activation_key)
         retry = self._lifecycle_retry(
             existing,
@@ -797,6 +848,9 @@ class SlaveService:
             "desired_state": "stopped",
             "activation_revision": command.activation_revision,
             "last_idempotency_key": command.idempotency_key,
+            "instance_name": command.instance_name,
+            "target_resource_ref": command.target_resource_ref,
+            "instance_config": dict(command.instance_config),
         }
         desired = (
             existing.model_copy(update=desired_values)
@@ -810,6 +864,9 @@ class SlaveService:
                 activation_state="not_installed",
                 evidence_refs=evidence_refs,
                 runtime_profile={},
+                instance_name=command.instance_name,
+                target_resource_ref=command.target_resource_ref,
+                instance_config=dict(command.instance_config),
                 **desired_values,
             )
         )
@@ -822,6 +879,7 @@ class SlaveService:
                 package_version_ref=ref,
                 package_digest=package.package_digest,
                 target_slave=self.slave_id,
+                instance_name=command.instance_name,
                 activation_state="stopped",
                 activation_revision=command.activation_revision,
                 evidence_refs=evidence_refs,
@@ -848,6 +906,7 @@ class SlaveService:
                 package_version_ref=ref,
                 package_digest=package.package_digest,
                 target_slave=self.slave_id,
+                instance_name=command.instance_name,
                 activation_state="stopped",
                 activation_revision=command.activation_revision,
                 evidence_refs=evidence_refs,
@@ -872,6 +931,7 @@ class SlaveService:
             package_version_ref=ref,
             package_digest=package.package_digest,
             target_slave=self.slave_id,
+            instance_name=command.instance_name,
             activation_state="stopped",
             activation_revision=command.activation_revision,
             evidence_refs=evidence_refs,
@@ -966,6 +1026,7 @@ class SlaveService:
                     package_version_ref=activation.package_version_ref,
                     package_digest=activation.package_digest,
                     target_slave=self.slave_id,
+                    instance_name=activation.instance_name,
                     activation_state=state,
                     activation_revision=activation.activation_revision,
                     evidence_refs=list(activation.evidence_refs),
@@ -1177,6 +1238,7 @@ class SlaveService:
         closure: TaskClosure | None = None,
         binding: ComputeBinding | None = None,
         execution_epoch: int = 1,
+        instance_name: str = "default",
     ) -> ExecutionResult:
         if not self.available or self.replica.state != "ready":
             raise RuntimeError("slave_unavailable")
@@ -1243,7 +1305,7 @@ class SlaveService:
         if capability_export is not None:
             await self._validate_input_payload(capability_export, payload)
         if package is not None and self._uses_runtime_plugin(package):
-            activation_key = self._activation_key(package.version_ref)
+            activation_key = self._activation_key(package.version_ref, instance_name)
             activation = self.activations.get(activation_key)
             if activation is None or activation.activation_state != "ready":
                 raise RuntimeError("capability_activation_not_ready")

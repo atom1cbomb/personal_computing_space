@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "manifest"
+  ]
+}

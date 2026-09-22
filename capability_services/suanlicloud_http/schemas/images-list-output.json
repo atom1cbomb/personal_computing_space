@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "const": "images_list"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "Images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      "required": [
+        "Images"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "result"
+  ]
+}

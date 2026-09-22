@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "collectionId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "collectionId",
+    "title"
+  ]
+}

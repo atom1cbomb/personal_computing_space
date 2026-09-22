@@ -39,6 +39,10 @@ def test_slave_project_uses_observer_url_and_isolated_database(tmp_path: Path):
     assert set(document["services"]) == {"slave", "postgres"}
     assert document["services"]["slave"]["environment"]["LOOM_OBSERVER_URL"] == "http://10.0.0.11:8080"
     assert document["services"]["postgres"]["volumes"] == ["worker-a-postgres-data:/var/lib/postgresql/data"]
+    slave = document["services"]["slave"]
+    state_dir = slave["environment"]["LOOM_RUNTIME_PLUGIN_INSTANCE_STATE_DIR"]
+    assert state_dir == "/var/lib/loom/runtime-plugin-state"
+    assert f"{state_dir}:{state_dir}" in slave["volumes"]
 
 
 def test_driver_project_wires_all_remote_services_and_docker_socket(tmp_path: Path):
@@ -117,6 +121,7 @@ def test_slave_mounts_operator_runtime_credentials_when_configured(tmp_path: Pat
             "workspace_id = \"workspace-default\"",
             "workspace_id = \"workspace-default\"\n"
             "runtime_credentials_dir = \"/var/lib/loom/runtime-credentials\"\n"
+            "runtime_plugin_state_dir = \"/srv/loom/instance-state\"\n"
             "runtime_plugin_egress_network = \"loom-egress\"",
         ),
         encoding="utf-8",
@@ -126,6 +131,8 @@ def test_slave_mounts_operator_runtime_credentials_when_configured(tmp_path: Pat
 
     assert app["environment"]["LOOM_RUNTIME_PLUGIN_CREDENTIAL_DIR"] == "/var/lib/loom/runtime-credentials"
     assert app["environment"]["LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK"] == "loom-egress"
+    assert app["environment"]["LOOM_RUNTIME_PLUGIN_INSTANCE_STATE_DIR"] == "/srv/loom/instance-state"
+    assert "/srv/loom/instance-state:/srv/loom/instance-state" in app["volumes"]
     assert "/var/lib/loom/runtime-credentials:/var/lib/loom/runtime-credentials:ro" in app["volumes"]
 
 

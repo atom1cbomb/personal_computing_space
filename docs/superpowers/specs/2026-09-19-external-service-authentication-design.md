@@ -3,6 +3,8 @@
 **日期：** 2026-09-19  
 **状态：** 实现设计
 
+浏览器 authorization-code 登录的增量协议与入口见 [远程回调代理设计](2026-09-22-browser-auth-redirect-proxy-design.md)。下文两个路径描述原有设备码/静态凭据握手；需要浏览器往返的包按增量设计增加可选 `browser_path`，并选择命名实例。
+
 ## 目标
 
 让需要用户认证的 `service + container:http/1` 能力包在安装后自动进入
