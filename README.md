@@ -220,4 +220,4 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
 - `loom_v2/content_store.py`、`loom_v2/db/`、`migrations/`：内容存储、数据库模型和 Alembic 迁移。
 - `deploy/`、`scripts/`、`tests/`：部署配置、运维脚本与验证。
 
-进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。
+进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。
