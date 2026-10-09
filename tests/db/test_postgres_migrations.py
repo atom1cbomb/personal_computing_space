@@ -90,7 +90,7 @@ async def test_failed_migration_rolls_back_schema_and_version(database, monkeypa
         assert (await connection.execute(text(f"SELECT to_regclass('{other_table}')"))).scalar() is None
         assert (await connection.execute(text(
             f"SELECT version_num FROM loom_{role}_alembic_version"
-        ))).scalar_one() == "003_workspace_resources"
+            ))).scalar_one() == "004_run_execution_requests"
 
 
 @pytest.mark.parametrize("role", ["observer", "slave"])
@@ -136,7 +136,7 @@ asyncio.run(main())
         async with engine.connect() as connection:
             assert (await connection.execute(text(
                 f"SELECT version_num FROM loom_{role}_alembic_version"
-                ))).scalars().all() == ["003_workspace_resources"]
+                ))).scalars().all() == ["004_run_execution_requests"]
     finally:
         for process in processes:
             if process.returncode is None:

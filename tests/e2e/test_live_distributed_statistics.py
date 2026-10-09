@@ -1,11 +1,11 @@
 """Live end-to-end test for the multi-node distributed-statistics app.
 
-Drives the running Observer (http://localhost:18080) over its public MCP
-JSON-RPC transport, then verifies the map-reduce application executed across
+Drives an explicitly configured Observer over the public submission API, then verifies the map-reduce application executed across
 both WorkspaceReplica Slaves (slave-a and slave-b) with a correct aggregate.
 """
 
 import json
+import os
 import math
 import time
 import importlib.util
@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-OBSERVER_URL = "http://localhost:18080"
+OBSERVER_URL = os.environ.get("LOOM_LIVE_OBSERVER_URL")
 APP_DIR = Path(__file__).resolve().parents[2] / "examples" / "distributed-statistics"
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "accept-bandgap.py"
 SCRIPT_SPEC = importlib.util.spec_from_file_location("accept_bandgap", SCRIPT_PATH)
@@ -80,33 +80,25 @@ def _read(name: str) -> str:
     return (APP_DIR / name).read_text(encoding="utf-8")
 
 
-def _mcp_call(
-    client: httpx.Client,
-    conversation_ref: str,
-    name: str,
-    arguments: dict,
-    *,
-    timeout: float = 30.0,
-) -> dict:
-    response = client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}},
-        headers={"X-Loom-Conversation-Ref": conversation_ref},
-        timeout=timeout,
-    )
+def _put(client, content, media_type: str) -> dict:
+    response = client.post("/api/v1/content", json={"content": content, "media_type": media_type})
     response.raise_for_status()
-    payload = response.json()
-    assert "result" in payload, payload
-    result = payload["result"]
-    text = (result.get("content") or [{}])[0].get("text") or "{}"
-    value = json.loads(text)
-    if result.get("isError"):
-        raise RuntimeError(f"{name} failed: {value}")
-    return value
+    return response.json()
 
 
-def _put(client: httpx.Client, conversation_ref: str, content, media_type: str) -> dict:
-    return _mcp_call(client, conversation_ref, "loom_put_content", {"content": content, "media_type": media_type})["resource_ref"]
+def _upload_package(client, package_id, descriptor, contract, program, *, orchestration_body=None):
+    response = client.post("/api/v1/capability-packages", json={
+        "package_id": package_id, "package_version": "v1", "package_type": "function",
+        "execution": {"kind": "container:python_orchestrator" if orchestration_body else "process:json_stdio", "version": "1"},
+        "capability_exports": [{"capability_descriptor_ref": descriptor, "io_contract_ref": contract,
+                                "effect_class": "Sandboxed", "permissions": [],
+                                "replay_safety": "DeterministicByEventLog" if orchestration_body else "DeclaredByPackage"}],
+        "body": {"program_content_ref": program, **(orchestration_body or {})},
+    })
+    response.raise_for_status()
+    package = response.json()
+    return {"resource_id": f"capability-package://{package['package_id']}/{package['package_version']}",
+            "version_or_digest": package["package_digest"]}
 
 
 def _get_run(client: httpx.Client, run_id: str) -> dict:
@@ -116,6 +108,7 @@ def _get_run(client: httpx.Client, run_id: str) -> dict:
 
 
 @pytest.mark.e2e
+@pytest.mark.skipif(not OBSERVER_URL, reason="set LOOM_LIVE_OBSERVER_URL to run against a deployed test stack")
 def test_live_distributed_statistics_across_both_slaves():
     conversation_ref = f"e2e-distributed-statistics-{uuid4().hex[:10]}"
     with httpx.Client(base_url=OBSERVER_URL) as client:
@@ -123,11 +116,11 @@ def test_live_distributed_statistics_across_both_slaves():
         assert health["ok"] is True
 
         # 1. Upload JSON Schema documents.
-        parent_input_schema = _put(client, conversation_ref, json.loads(_read("io/parent.input.schema.json")), "application/schema+json")
-        summarize_input_schema = _put(client, conversation_ref, json.loads(_read("io/summarize.input.schema.json")), "application/schema+json")
-        summarize_output_schema = _put(client, conversation_ref, json.loads(_read("io/summarize.output.schema.json")), "application/schema+json")
-        merge_input_schema = _put(client, conversation_ref, json.loads(_read("io/merge.input.schema.json")), "application/schema+json")
-        merge_output_schema = _put(client, conversation_ref, json.loads(_read("io/merge.output.schema.json")), "application/schema+json")
+        parent_input_schema = _put(client, json.loads(_read("io/parent.input.schema.json")), "application/schema+json")
+        summarize_input_schema = _put(client, json.loads(_read("io/summarize.input.schema.json")), "application/schema+json")
+        summarize_output_schema = _put(client, json.loads(_read("io/summarize.output.schema.json")), "application/schema+json")
+        merge_input_schema = _put(client, json.loads(_read("io/merge.input.schema.json")), "application/schema+json")
+        merge_output_schema = _put(client, json.loads(_read("io/merge.output.schema.json")), "application/schema+json")
 
         # 2. Upload io.v1 contract documents.
         def _contract(input_ref, output_ref) -> dict:
@@ -139,72 +132,26 @@ def test_live_distributed_statistics_across_both_slaves():
                 "success_validator_ref": None,
             }
 
-        parent_contract = _put(client, conversation_ref, _contract(parent_input_schema, merge_output_schema), "application/vnd.loom.io-contract+json")
-        summarize_contract = _put(client, conversation_ref, _contract(summarize_input_schema, summarize_output_schema), "application/vnd.loom.io-contract+json")
-        merge_contract = _put(client, conversation_ref, _contract(merge_input_schema, merge_output_schema), "application/vnd.loom.io-contract+json")
+        parent_contract = _put(client, _contract(parent_input_schema, merge_output_schema), "application/vnd.loom.io-contract+json")
+        summarize_contract = _put(client, _contract(summarize_input_schema, summarize_output_schema), "application/vnd.loom.io-contract+json")
+        merge_contract = _put(client, _contract(merge_input_schema, merge_output_schema), "application/vnd.loom.io-contract+json")
 
         # 3. Upload capability package programs and the reference-based dataset.
-        summarize_program = _put(client, conversation_ref, _read("programs/summarize.py"), "text/x-python")
-        merge_program = _put(client, conversation_ref, _read("programs/merge.py"), "text/x-python")
+        summarize_program = _put(client, _read("programs/summarize.py"), "text/x-python")
+        merge_program = _put(client, _read("programs/merge.py"), "text/x-python")
         partition_refs = [
-            _put(client, conversation_ref, json.loads(_read(f"data/partitions/p{i}.json")), "application/json")
+            _put(client, json.loads(_read(f"data/partitions/p{i}.json")), "application/json")
             for i in range(1, 5)
         ]
-        input_ref = _put(client, conversation_ref, {"partitions": partition_refs}, "application/json")
-        summarize_descriptor = _put(client, conversation_ref, {"schema_version": "operation.v1", "resource_id": "loom://summarize", "name": "summarize"}, "application/vnd.loom.operation-descriptor+json")
-        merge_descriptor = _put(client, conversation_ref, {"schema_version": "operation.v1", "resource_id": "loom://merge-summaries", "name": "merge-summaries"}, "application/vnd.loom.operation-descriptor+json")
-        orchestration_descriptor = _put(client, conversation_ref, {"schema_version": "operation.v1", "resource_id": "loom://orchestrate", "name": "orchestrate"}, "application/vnd.loom.operation-descriptor+json")
+        input_ref = _put(client, {"partitions": partition_refs}, "application/json")
+        summarize_descriptor = _put(client, {"schema_version": "operation.v1", "resource_id": "loom://summarize", "name": "summarize"}, "application/vnd.loom.operation-descriptor+json")
+        merge_descriptor = _put(client, {"schema_version": "operation.v1", "resource_id": "loom://merge-summaries", "name": "merge-summaries"}, "application/vnd.loom.operation-descriptor+json")
+        orchestration_descriptor = _put(client, {"schema_version": "operation.v1", "resource_id": "loom://orchestrate", "name": "orchestrate"}, "application/vnd.loom.operation-descriptor+json")
 
-        # 4. Open the Run with the high-level closure contract.
-        closure = json.loads(_read("closure.json"))
-        closure["body"]["program"]["io_contract_ref"] = parent_contract
-        opened = _mcp_call(client, conversation_ref, "loom_open_run", {"closure_contract": closure})
-        run_id = opened["run_id"]
+        # Register reusable packages before submitting the complete plan.
+        summarize_ref = _upload_package(client, f"summarize-{conversation_ref}", summarize_descriptor, summarize_contract, summarize_program)
+        merge_ref = _upload_package(client, f"merge-{conversation_ref}", merge_descriptor, merge_contract, merge_program)
 
-        # 5. Bind the execution payload and materialize the map/reduce packages.
-        _mcp_call(
-            client,
-            conversation_ref,
-            "loom_apply_plan_patch",
-            {
-                "ops": [
-                    {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": input_ref}},
-                    {
-                        "kind": "materialize_capability_package_candidate",
-                        "value": {
-                                     "package_id": "summarize",
-                                     "package_version": "v1",
-                                     "package_type": "function",
-                                     "execution": {"kind": "process:json_stdio", "version": "1"},
-                                     "capability_exports": [{"capability_descriptor_ref": summarize_descriptor, "io_contract_ref": summarize_contract, "effect_class": "Sandboxed", "permissions": [], "replay_safety": "DeclaredByPackage", "runtime_binding": {}}],
-                                     "body": {
-                                         "program_content_ref": summarize_program,
-                                     },
-                                 },
-                    },
-                    {
-                        "kind": "materialize_capability_package_candidate",
-                        "value": {
-                                     "package_id": "merge-summaries",
-                                     "package_version": "v1",
-                                     "package_type": "function",
-                                     "execution": {"kind": "process:json_stdio", "version": "1"},
-                                     "capability_exports": [{"capability_descriptor_ref": merge_descriptor, "io_contract_ref": merge_contract, "effect_class": "Sandboxed", "permissions": [], "replay_safety": "DeclaredByPackage", "runtime_binding": {}}],
-                                     "body": {
-                                         "program_content_ref": merge_program,
-                                     },
-                                 },
-                    },
-                ]
-            },
-        )
-        packages = _mcp_call(client, conversation_ref, "loom_list_run_capability_packages", {})["packages"]
-        summarize_package = next(item for item in packages if item["package_id"] == "summarize")
-        merge_package = next(item for item in packages if item["package_id"] == "merge-summaries")
-        summarize_ref = {"resource_id": f"capability-package://{summarize_package['package_id']}/{summarize_package['package_version']}", "version_or_digest": summarize_package["package_digest"]}
-        merge_ref = {"resource_id": f"capability-package://{merge_package['package_id']}/{merge_package['package_version']}", "version_or_digest": merge_package["package_digest"]}
-
-        # 6. Materialize the orchestration package (runs in Driver/Docker).
         orchestration_source = (
             _read("programs/orchestrate.py.tpl")
             .replace("SUMMARIZE_REF_PLACEHOLDER", json.dumps(summarize_ref))
@@ -212,42 +159,23 @@ def test_live_distributed_statistics_across_both_slaves():
             .replace("MERGE_REF_PLACEHOLDER", json.dumps(merge_ref))
             .replace("MERGE_DESCRIPTOR_REF_PLACEHOLDER", json.dumps(merge_descriptor))
         )
-        orchestration_program = _put(client, conversation_ref, orchestration_source, "text/x-python")
-        patched = _mcp_call(
-            client,
-            conversation_ref,
-            "loom_apply_plan_patch",
-            {
-                "ops": [
-                    {
-                        "kind": "materialize_capability_package_candidate",
-                        "value": {
-                                     "package_id": "orchestrate",
-                                     "package_version": "v1",
-                                     "package_type": "function",
-                                     "execution": {"kind": "container:python_orchestrator", "version": "1"},
-                                     "capability_exports": [{"capability_descriptor_ref": orchestration_descriptor, "io_contract_ref": parent_contract, "effect_class": "Sandboxed", "permissions": [], "replay_safety": "DeterministicByEventLog", "runtime_binding": {}}],
-                                     "body": {
-                                         "program_content_ref": orchestration_program,
-                                         "allowed_node_package_refs": [summarize_ref, merge_ref],
-                                         "max_nodes": 6,
-                                         "max_live_nodes": 2,
-                                     },
-                                 },
-                    }
-                ]
-            },
+        orchestration_program = _put(client, orchestration_source, "text/x-python")
+        orchestration_ref = _upload_package(
+            client, f"orchestrate-{conversation_ref}", orchestration_descriptor, parent_contract, orchestration_program,
+            orchestration_body={"allowed_node_package_refs": [summarize_ref, merge_ref], "max_nodes": 6, "max_live_nodes": 2},
         )
-        assert patched["readiness"]["ready"] is True, patched["readiness"].get("blockers")
-
-        # 7. Commit, then start (which executes the orchestration end-to-end).
-        committed = _mcp_call(client, conversation_ref, "loom_commit_plan", {})
-        try:
-            _mcp_call(client, conversation_ref, "loom_start_run", {"closure_version": committed["closure_version"]}, timeout=120.0)
-        except Exception:
-            # The Observer->Driver forward may time out before background
-            # execution finishes; keep polling the persisted Run state.
-            pass
+        closure = json.loads(_read("closure.json"))
+        closure["body"]["program"]["io_contract_ref"] = parent_contract
+        closure["body"]["program_systems"] = {
+            "execution": {"kind": "container:python_orchestrator", "version": "1"},
+            "package_ref": orchestration_ref,
+        }
+        closure["body"]["node_input_bindings"] = [{"node_id": "loom://orchestrate", "input_ref": input_ref}]
+        submitted = client.post("/api/v1/run-submissions", json={
+            "request_id": conversation_ref, "conversation_ref": conversation_ref, "plan": closure,
+        })
+        assert submitted.status_code == 202, submitted.text
+        run_id = submitted.json()["run_id"]
 
         run = _poll_run(client, run_id, timeout=300.0)
         assert run["state"] == "completed", run.get("outcome")
@@ -262,8 +190,8 @@ def test_live_distributed_statistics_across_both_slaves():
         assert {"slave-a", "slave-b"} <= targets, f"expected both slaves, got {targets}"
         assert len(run["dynamic_nodes"]) == 5, len(run["dynamic_nodes"])
 
-        summarize_version_ref = f"capability-package://{summarize_package['package_id']}/{summarize_package['package_version']}"
-        merge_version_ref = f"capability-package://{merge_package['package_id']}/{merge_package['package_version']}"
+        summarize_version_ref = summarize_ref["resource_id"]
+        merge_version_ref = merge_ref["resource_id"]
         summarize_nodes = [node for node in run["dynamic_nodes"] if node["package_ref"]["resource_id"] == summarize_version_ref]
         merge_nodes = [node for node in run["dynamic_nodes"] if node["package_ref"]["resource_id"] == merge_version_ref]
         assert len(summarize_nodes) == 4

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from datetime import datetime, timezone
 from contextlib import suppress
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
@@ -58,7 +59,7 @@ class DriverService:
     def __init__(
         self,
         repository: ObserverRepository,
-        provider: CodingAgentProvider,
+        provider: CodingAgentProvider | None,
         executor=None,
         slaves: dict[str, SlaveService] | None = None,
         workers: dict[str, WorkerSession] | None = None,
@@ -85,6 +86,9 @@ class DriverService:
         self.deadline_seconds = deadline_seconds if deadline_seconds is not None else self.settings.coding_agent_deadline_seconds
         self.active_turns: dict[str, ActiveTurn] = {}
         self._execution_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._execution_loop_stop = asyncio.Event()
+        self.execution_loop_active = False
+        self.execution_loop_task: asyncio.Task | None = None
         self.coordinator = DriverTurnCoordinator(
             provider,
             workspace_id=getattr(repository, "workspace_id", "workspace-default"),
@@ -100,6 +104,8 @@ class DriverService:
         return await self._run_prompt(context.conversation_ref, prompt, request_id=context.request_id)
 
     async def run_prompt(self, conversation_ref: str, prompt: str, request_id: str | None = None) -> dict[str, Any]:
+        if self.provider is None:
+            raise RuntimeError("coding_agent_disabled")
         if request_id is not None and (self.control_client is None or hasattr(self.control_client, "claim_message")):
             return await self.coordinator.submit(
                 {
@@ -158,12 +164,16 @@ class DriverService:
         }
 
     async def _run_prompt(self, conversation_ref: str, prompt: str, request_id: str | None = None) -> dict[str, Any]:
+        if self.provider is None:
+            raise RuntimeError("coding_agent_disabled")
+        owned_execution_loop = not self.execution_loop_active
+        if owned_execution_loop:
+            self.start_execution_loop()
         mcp = DriverMCP(
             self.repository,
             conversation_ref,
             request_id=request_id,
             prompt=prompt,
-            run_executor=self._execute_and_wait_local,
         )
         active = ActiveTurn(run_id=None)
         self.active_turns[conversation_ref] = active
@@ -325,9 +335,9 @@ class DriverService:
                     if current.state not in {"completed", "failed", "cancelled", "closed"}:
                         await self.repository.cancel_run(active.run_id)
                 elif active.deadline_exceeded:
-                    if current.state in {"thinking", "running"}:
+                    if current.state == "thinking":
                         await self.repository.fail_run(active.run_id, "coding_agent_deadline_exceeded")
-                elif current.state in {"thinking", "running"}:
+                elif current.state == "thinking":
                     await self.repository.fail_run(active.run_id, "driver_cancelled")
             raise
         except Exception as exc:
@@ -356,13 +366,16 @@ class DriverService:
                         response["resource_ref"] = response["resource_ref"].get("resource_id")
                     return response
                 reason_code = reason.get("code") if isinstance(reason, dict) else None
-                if current.state in {"thinking", "running"} and reason_code != "readiness_blocked":
+                if current.state == "thinking" and reason_code != "readiness_blocked":
                     await self.repository.fail_run(active.run_id, reason)
             raise
         finally:
             if self.active_turns.get(conversation_ref) is active:
                 self.active_turns.pop(conversation_ref, None)
-            await self.provider.close()
+            if self.provider is not None:
+                await self.provider.close()
+            if owned_execution_loop:
+                await self.stop_execution_loop()
 
     async def _run_prompt_remote(self, conversation_ref: str, prompt: str, *, request_id: str | None = None, claim_token: str | None = None, context: TurnContext | None = None) -> dict[str, Any]:
         """Run a turn through Observer's fenced command API.
@@ -372,6 +385,11 @@ class DriverService:
         """
         control = self.control_client
         assert control is not None
+        if self.provider is None:
+            raise RuntimeError("coding_agent_disabled")
+        owned_execution_loop = not self.execution_loop_active
+        if owned_execution_loop:
+            self.start_execution_loop()
         request_id = request_id or f"request-{uuid4().hex}"
         active = ActiveTurn(run_id=None)
         self.active_turns[conversation_ref] = active
@@ -406,16 +424,12 @@ class DriverService:
                     "assistant_text": "",
                 }
         set_tool_handler = getattr(self.provider, "set_tool_handler", None)
-        async def execute_remote(run_id: str, run_prompt: str) -> Any:
-            return await self._execute_and_wait_remote(run_id, run_prompt, expected_epoch=context.driver_epoch if context is not None else None)
-
         mcp = DriverMCP(
             control,
             conversation_ref,
             request_id=request_id,
             prompt=prompt,
             content_store=self.content_store,
-            run_executor=execute_remote,
         )
         begin_turn = getattr(self.provider, "begin_turn", None)
         provider_context: TurnContext | None = None
@@ -589,6 +603,8 @@ class DriverService:
                                 run_id=run_id,
                             )
                 elif event.kind == "turn_interrupted":
+                    if run_id or mcp.run_id:
+                        await control.command("run.cancel", {"run_id": run_id or mcp.run_id, "reason": "user_interrupt"})
                     await control.turn_state(conversation_ref, "interrupted", request_id=request_id, turn_id=turn_id)
                     result = {"run_id": run_id, "conversation_ref": conversation_ref, "status": "interrupted", "state": "cancelled", "assistant_text": "\n\n".join(assistant_parts)}
                     if claim_token:
@@ -605,6 +621,18 @@ class DriverService:
                         )
                 elif event.kind in {"agent_error", "agent_stalled"}:
                     raise CodingAgentError(dict(event.payload))
+            if run_id and not self.execution_loop_active:
+                claim = await control.command(
+                    "execution.claim_next",
+                    {},
+                    request_id=f"execution-claim:{request_id}",
+                )
+                if claim.get("run", {}).get("state") == "running":
+                    await self._execute_and_wait_remote(
+                        run_id,
+                        "",
+                        expected_epoch=int((claim.get("request") or {}).get("driver_epoch") or control.driver_epoch or 0),
+                    )
             await control.turn_state(conversation_ref, "completed", request_id=request_id, turn_id=turn_id)
             result = {"run_id": run_id, "conversation_ref": conversation_ref, "status": "completed", "state": "completed" if run_id else "idle", "assistant_text": "\n\n".join(assistant_parts), "thread_id": thread_id, "closure_version": committed_version, "patches": patches}
             if run_id:
@@ -633,7 +661,7 @@ class DriverService:
             if run_id:
                 with suppress(Exception):
                     current = await control.command("run.get", {"run_id": run_id})
-                    if current.get("state") not in {"completed", "failed", "cancelled", "closed"}:
+                    if current.get("state") == "thinking":
                         await control.command("run.cancel", {"run_id": run_id, "reason": "driver_cancelled"}, request_id=f"{request_id}:run-cancelled")
             if claim_token:
                 with suppress(Exception):
@@ -671,7 +699,7 @@ class DriverService:
                             "assistant_text": "\n\n".join(assistant_parts),
                             "agent_error": failure,
                         }
-                    if current.get("state") in {"thinking", "running"} and failure.get("code") != "readiness_blocked":
+                    if current.get("state") == "thinking" and failure.get("code") != "readiness_blocked":
                         await control.command("run.fail", {"run_id": run_id, "reason": failure}, request_id=f"{request_id}:run-failed")
             if claim_token:
                 with suppress(Exception):
@@ -685,6 +713,8 @@ class DriverService:
                     await self.provider.end_turn(provider_context)
             else:
                 await self.provider.close()
+            if owned_execution_loop:
+                await self.stop_execution_loop()
 
     @staticmethod
     def _assert_turn_epoch(context: TurnContext | None, control: Any, *, expected_epoch: int | None = None) -> None:
@@ -710,6 +740,79 @@ class DriverService:
         if orchestration and shutil.which("docker") is None:
             raise RuntimeError("orchestrator_runtime_unavailable")
 
+    def start_execution_loop(self) -> asyncio.Task:
+        if self.execution_loop_task is None or self.execution_loop_task.done():
+            self.execution_loop_task = asyncio.create_task(self.run_execution_loop())
+        return self.execution_loop_task
+
+    async def run_execution_loop(self) -> None:
+        """Claim and execute durable Observer queue items independently of planning."""
+        self._execution_loop_stop.clear()
+        self.execution_loop_active = True
+        try:
+            while not self._execution_loop_stop.is_set():
+                try:
+                    if self.control_client is not None:
+                        if getattr(self.control_client, "driver_epoch", None) is None:
+                            await asyncio.sleep(0.25)
+                            continue
+                        claim = await self.control_client.command(
+                            "execution.claim_next",
+                            {},
+                            request_id=f"execution-claim:{uuid4().hex}",
+                        )
+                    else:
+                        claim = await self.repository.claim_next_execution(
+                            workspace_id=getattr(self.repository, "settings", self.settings).workspace_id,
+                            driver_id=self.settings.agent_id,
+                            driver_instance_id=self.settings.agent_instance_id or "embedded-driver",
+                            driver_epoch=0,
+                        )
+                    if not claim or not claim.get("run"):
+                        await asyncio.sleep(0.25)
+                        continue
+                    run = claim["run"]
+                    if str(run.get("state") or "") != "running":
+                        continue
+                    run_id = str(run["run_id"])
+                    owner_epoch = (claim.get("request") or {}).get("driver_epoch")
+                    deadline = (claim.get("request") or {}).get("deadline_at")
+                    remaining = self.settings.execution_timeout_seconds
+                    if deadline:
+                        end = datetime.fromisoformat(str(deadline)).replace(tzinfo=timezone.utc)
+                        remaining = max(0, (end - datetime.now(timezone.utc)).total_seconds())
+                    try:
+                        async with asyncio.timeout(remaining):
+                            if self.control_client is not None:
+                                await self._execute_and_wait_remote(run_id, "", expected_epoch=int(owner_epoch or 0))
+                            else:
+                                await self._execute_and_wait_local(run_id, "")
+                    except TimeoutError:
+                        if self.control_client is not None:
+                            await self.control_client.command("run.fail", {"run_id": run_id, "reason": {"code": "execution_deadline_exceeded"}})
+                        else:
+                            await self.repository.fail_run(run_id, {"code": "execution_deadline_exceeded"})
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Lease fencing and temporary worker loss are retried by
+                    # the next poll. Terminal Run/outcome transitions are
+                    # written by the existing execution path.
+                    await asyncio.sleep(0.25 if str(exc) == "stale_driver_epoch" else 0.5)
+        finally:
+            self.execution_loop_active = False
+
+    async def stop_execution_loop(self) -> None:
+        self._execution_loop_stop.set()
+        if self.execution_loop_task is not None:
+            self.execution_loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.execution_loop_task
+        for task in list(self._execution_tasks.values()):
+            task.cancel()
+        await asyncio.gather(*self._execution_tasks.values(), return_exceptions=True)
+        self._execution_tasks.clear()
+
     async def _dispatch_remote_execution(self, run_id: str, prompt: str, *, expected_epoch: int | None = None) -> None:
         control = self.control_client
         if expected_epoch is not None:
@@ -720,6 +823,8 @@ class DriverService:
             await self._refresh_remote_workers()
         if not self.workers:
             raise RuntimeError("node_target_unavailable")
+        if expected_epoch is not None:
+            self._assert_turn_epoch(None, control, expected_epoch=expected_epoch)
         current = await control.command("run.get", {"run_id": run_id})
         execution_id = current.get("execution_id")
         if not execution_id:
@@ -790,6 +895,8 @@ class DriverService:
                 request_id=f"health:{execution_id}:{target}:{package.package_digest}",
             )
         result = await worker.dispatch(attempt_id=str(attempt["attempt_id"]), execution_id=str(execution_id), execution_epoch=execution_epoch, workspace_id=getattr(control, "workspace_id", "workspace-default"), operation=operation, payload=payload, closure=snapshot, binding=binding, driver_id=getattr(control, "driver_id", None), driver_epoch=getattr(control, "driver_epoch", None))
+        if expected_epoch is not None:
+            self._assert_turn_epoch(None, control, expected_epoch=expected_epoch)
         await control.command("run.result", {"run_id": run_id, "result": {"attempt_id": attempt["attempt_id"], "execution_id": execution_id, "execution_epoch": execution_epoch, "resource_ref": result.resource_ref.model_dump(mode="json"), "value": result.value, "terminal_state": result.terminal_state, "terminal_error": result.terminal_error, "validation_evidence": result.validation_evidence, "provenance": result.provenance}}, request_id=f"execution:{execution_id}:{execution_epoch}")
 
     async def _refresh_remote_workers(self) -> None:

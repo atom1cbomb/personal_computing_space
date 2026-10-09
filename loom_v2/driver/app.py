@@ -17,7 +17,6 @@ from loom_v2.content_store import ContentStore
 from .control_client import ObserverControlClient
 from .service import DriverService
 from .worker import WorkerSession
-from .mcp_server import DriverMCPServer
 from loom_v2.auth import InternalAuth
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
 
@@ -32,7 +31,7 @@ def create_app(
     settings = settings or Settings()
     load_operator_package_contracts(settings.package_contract_dir)
     if provider is None:
-        provider = (
+        provider = None if settings.coding_agent_backend.lower() == "none" else (
             FakeCodingAgentProvider()
             if settings.coding_agent_backend.lower() == "fake"
             else CodexAppServerProvider(
@@ -46,6 +45,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         app.state.heartbeat_task = asyncio.create_task(registration_loop())
+        app.state.execution_task = app.state.service.start_execution_loop()
         # Give the first registration a scheduling opportunity so health probes
         # observe a lease immediately when Observer is up.
         await asyncio.sleep(0)
@@ -57,13 +57,20 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            execution_task = app.state.execution_task
+            if execution_task is not None:
+                await app.state.service.stop_execution_loop()
+                execution_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await execution_task
             if app.state.lease is not None:
                 with suppress(Exception):
                     await control.release()
             with suppress(Exception):
                 await app.state.service.coordinator.shutdown()
-            with suppress(Exception):
-                await provider.force_shutdown()
+            if provider is not None:
+                with suppress(Exception):
+                    await provider.force_shutdown()
             with suppress(Exception):
                 await control.close()
             for worker in workers.values():
@@ -87,13 +94,9 @@ def create_app(
     app.state.provider = provider
     content_store = ContentStore.from_settings(settings)
     app.state.service = DriverService(cast(Any, control), provider, workers=workers, deadline_seconds=settings.coding_agent_deadline_seconds, content_store=content_store, settings=settings)
-    app.state.mcp_server = DriverMCPServer(
-        cast(Any, control),
-        content_store=content_store,
-        run_executor=app.state.service._execute_and_wait_remote,
-    )
     app.state.lease = None
     app.state.heartbeat_task = None
+    app.state.execution_task = None
 
     require_internal = InternalAuth(settings.internal_api_secret)
 
@@ -112,6 +115,8 @@ def create_app(
                 app.state.lease = await control.register(registration)
                 app.state.service.coordinator.driver_epoch = app.state.lease.epoch
                 with suppress(Exception):
+                    await control.command("execution.recover", {"workspace_id": settings.workspace_id})
+                with suppress(Exception):
                     await control.command("run.recovery.list", {"workspace_id": settings.workspace_id})
                 break
             except Exception:
@@ -123,9 +128,12 @@ def create_app(
             except Exception:
                 # A later registration obtains a new epoch and fences this
                 # instance if another Driver has taken ownership.
+                await app.state.service.stop_execution_loop()
                 try:
                     app.state.lease = await control.register()
                     app.state.service.coordinator.driver_epoch = app.state.lease.epoch
+                    await control.command("execution.recover", {})
+                    app.state.execution_task = app.state.service.start_execution_loop()
                 except Exception:
                     continue
 
@@ -136,6 +144,8 @@ def create_app(
 
     @app.post("/driver/v1/messages", dependencies=[Depends(require_internal)])
     async def message(payload: DriverMessageRequest) -> dict[str, Any]:
+        if provider is None:
+            raise HTTPException(status_code=503, detail="coding_agent_disabled")
         if not isinstance(payload.text, str) or not payload.text.strip():
             raise HTTPException(status_code=422, detail="text_required")
         if not str(payload.request_id or "").strip():
@@ -163,13 +173,6 @@ def create_app(
             return await app.state.service.interrupt(conversation_ref)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.post("/driver/v1/mcp", dependencies=[Depends(require_internal)])
-    async def mcp(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-        conversation_ref = request.headers.get("x-loom-conversation-ref", "")
-        if not conversation_ref:
-            raise HTTPException(status_code=400, detail="conversation_ref_required")
-        return await app.state.mcp_server.handle(payload, conversation_ref)
 
     return app
 

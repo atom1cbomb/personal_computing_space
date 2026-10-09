@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 
 from loom_v2.coding_agents.codex import CodexAppServerProvider
 from loom_v2.coding_agents.fake import FakeCodingAgentProvider
-from loom_v2.driver.mcp_server import DriverMCPServer
 from loom_v2.driver.service import DriverService
 from loom_v2.driver.worker import WorkerSession
 from loom_v2.observer.app import create_app as create_observer_app
@@ -109,7 +108,7 @@ def create_embedded_app(
         ),
     }
     workers: dict[str, WorkerSession] = {}
-    provider = (
+    provider = None if settings.coding_agent_backend == "none" else (
         FakeCodingAgentProvider()
         if settings.coding_agent_backend == "fake"
         else CodexAppServerProvider(
@@ -131,10 +130,6 @@ def create_embedded_app(
         workers=workers,
         deadline_seconds=settings.coding_agent_deadline_seconds,
         settings=settings,
-    )
-    app.state.mcp_server = DriverMCPServer(
-        app.state.repo,
-        run_executor=app.state.driver._execute_and_wait_local,
     )
     # Preserve repositories supplied by a test (including intentionally
     # expired leases); only seed a fresh repository with the default topology.

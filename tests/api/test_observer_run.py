@@ -10,27 +10,24 @@ from loom_v2.testing.observer import create_embedded_app as create_app
 from loom_v2.observer.repository import ObserverRepository
 
 
-def test_draft_patch_commit_and_start_are_explicit():
+def test_complete_submission_is_queued_and_queryable():
     client = TestClient(create_app())
-    run = client.post("/api/v1/runs", json={"task_ref": "task-1", "goal": "validate result"}).json()
-    patch = client.post(
-        f"/api/v1/runs/{run['run_id']}/patches",
+    response = client.post(
+        "/api/v1/run-submissions",
         json={
-            "operation_id": "op-1",
-            "base_draft_version": run["draft_version"],
-            "base_snapshot_digest": run["draft_digest"],
-            "ops": [{"kind": "set_result_expectation", "value": {"kind": "content"}}],
+            "request_id": "request-1",
+            "conversation_ref": "task-1",
+            "plan": {"closure_id": "closure-1", "goal": "validate result", "body": {"closure_id": "closure-1"}},
         },
-    ).json()
-    assert patch["kind"] == "draft"
-    assert client.post(f"/api/v1/runs/{run['run_id']}/start", json={"closure_version": "draft"}).status_code == 409
-    assert client.post(
-        f"/api/v1/runs/{run['run_id']}/commit",
-        json={"draft_version": patch["draft_version"], "draft_digest": patch["draft_digest"]},
-    ).status_code == 200
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["execution_request_state"] == "queued"
+    assert payload["current_run_state"] == "committed"
+    assert client.get("/api/v1/run-submissions/request-1").json()["run_id"] == payload["run_id"]
 
 
-def test_open_run_persists_complete_closure_contract():
+def test_submission_persists_complete_closure_contract():
     client = TestClient(create_app())
     contract = {
         "closure_id": "closure-transform",
@@ -43,33 +40,30 @@ def test_open_run_persists_complete_closure_contract():
         "declared_constraints": [],
         "body": {
             "closure_id": "closure-transform",
-            "program": {"operation_ref": "loom://test_transform"},
-            "compute": {"operation_ref": "loom://test_transform"},
         },
     }
     response = client.post(
-        "/api/v1/runs",
-        json={"task_ref": "conversation-contract", "closure_contract": contract},
+        "/api/v1/run-submissions",
+        json={"request_id": "conversation-contract-request", "conversation_ref": "conversation-contract", "plan": contract},
     )
-    assert response.status_code == 200
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["goal"] == "transform numbers"
+    assert payload["closure_contract"]["goal"] == "transform numbers"
     assert payload["closure_contract"]["required_success_criteria"][0]["criterion_id"] == "ordered"
     assert payload["closure_contract"]["resource_budget"]["max_attempts"] == 2
 
 
-def test_duplicate_patch_returns_same_receipt():
+def test_duplicate_submission_returns_same_run():
     client = TestClient(create_app())
-    run = client.post("/api/v1/runs", json={"task_ref": "task-2", "goal": "validate result"}).json()
     body = {
-        "operation_id": "same-op",
-        "base_draft_version": run["draft_version"],
-        "base_snapshot_digest": run["draft_digest"],
-        "ops": [],
+        "request_id": "same-request",
+        "conversation_ref": "task-2",
+        "plan": {"closure_id": "closure-2", "goal": "validate result", "body": {"closure_id": "closure-2"}},
     }
-    first = client.post(f"/api/v1/runs/{run['run_id']}/patches", json=body).json()
-    second = client.post(f"/api/v1/runs/{run['run_id']}/patches", json=body).json()
-    assert second["receipt"] == first["receipt"]
+    first = client.post("/api/v1/run-submissions", json=body)
+    second = client.post("/api/v1/run-submissions", json=body)
+    assert first.status_code == second.status_code == 202
+    assert second.json()["run_id"] == first.json()["run_id"]
 
 
 @pytest.mark.asyncio

@@ -427,10 +427,11 @@ class DockerContainerHTTPRuntimeV1:
             raise RuntimeError("service_container_not_ready")
         if not isinstance(payload, dict) or payload.get("action") not in {"open", "callback"}:
             raise RuntimeError("service_browser_request_invalid")
+        host = await self._http_host(name, container)
         try:
             async with httpx.AsyncClient(transport=self.http_transport, timeout=self.request_timeout,
                                          follow_redirects=False, trust_env=False) as client:
-                async with client.stream("POST", f"http://{name}:{port}{browser_path}", json=payload) as response:
+                async with client.stream("POST", f"http://{host}:{port}{browser_path}", json=payload) as response:
                     if response.status_code != 200:
                         raise RuntimeError("service_browser_proxy_failed")
                     raw = bytearray()
@@ -587,7 +588,21 @@ class DockerContainerHTTPRuntimeV1:
         )
         return inspected.returncode == 0 and inspected.stdout.strip() == actual
 
+    async def _http_host(self, container_name: str, container: dict[str, Any] | None = None) -> str:
+        # Docker accepts names longer than a DNS label. Its embedded DNS also
+        # registers the short container ID, so retain lifecycle names and use
+        # that alias for HTTP when the name cannot be resolved by DNS clients.
+        if all(len(label) <= 63 for label in container_name.split(".")):
+            return container_name
+        if container is None:
+            container = await self._inspect_container(container_name)
+        container_id = str((container or {}).get("Id") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+            raise RuntimeError("service_container_identity_conflict")
+        return container_id[:12]
+
     async def _health(self, container_name: str, port: int, path: str) -> bool:
+        host = await self._http_host(container_name)
         try:
             async with httpx.AsyncClient(
                 transport=self.http_transport,
@@ -595,7 +610,7 @@ class DockerContainerHTTPRuntimeV1:
                 follow_redirects=False,
             ) as client:
                 async with client.stream(
-                    "GET", f"http://{container_name}:{port}{path}"
+                    "GET", f"http://{host}:{port}{path}"
                 ) as response:
                     return 200 <= response.status_code < 300
         except (httpx.HTTPError, TimeoutError):
@@ -605,6 +620,7 @@ class DockerContainerHTTPRuntimeV1:
         self, container_name: str, port: int, path: str,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        host = await self._http_host(container_name)
         try:
             async with httpx.AsyncClient(
                 transport=self.http_transport,
@@ -612,7 +628,7 @@ class DockerContainerHTTPRuntimeV1:
                 follow_redirects=False,
             ) as client:
                 response = await client.post(
-                    f"http://{container_name}:{port}{path}", json=payload or {}
+                    f"http://{host}:{port}{path}", json=payload or {}
                 )
             if not 200 <= response.status_code < 300:
                 return {"status": "auth_failed"}
@@ -919,6 +935,8 @@ class DockerContainerHTTPRuntimeV1:
         if not bool((container.get("State") or {}).get("Running")):
             raise RuntimeError("service_activation_not_ready")
 
+        host = await self._http_host(container_name, container)
+
         capacity_timeout = (
             min(self.request_timeout, float(deadline_seconds))
             if deadline_seconds is not None
@@ -943,7 +961,7 @@ class DockerContainerHTTPRuntimeV1:
                 ) as client:
                     async with client.stream(
                         "POST",
-                        f"http://{container_name}:{container_port}{path}",
+                        f"http://{host}:{container_port}{path}",
                         json=payload,
                         headers={
                             "Content-Type": "application/json",

@@ -10,6 +10,11 @@ from loom_v2.coding_agents.fake import FakeCodingAgentProvider
 from loom_v2.driver.mcp import DriverMCP
 from loom_v2.driver.service import DriverService
 from loom_v2.observer.repository import ObserverRepository
+from loom_v2.settings import Settings
+from loom_v2.slave.executor import ExecutionResult
+from loom_v2.contracts.types import ResourceRef, ClosureContract
+from loom_v2.content_store import canonical_json_bytes
+import hashlib
 
 
 @pytest.fixture(params=["local", "remote"])
@@ -101,3 +106,70 @@ async def test_dispatch_failure_cleans_up_and_preserves_error(execution_lane):
         await wait("run", "prompt")
     failure.assert_awaited_once_with("run", {"code": "worker_unavailable", "message": "worker_unavailable"})
     assert driver._execution_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_execution_loop_claims_durable_submission_and_settles_outcome():
+    repo = ObserverRepository()
+    item = await repo.submit_run_plan(
+        workspace_id="workspace-default",
+        request_id="execution-loop-request",
+        conversation_ref="execution-loop-conversation",
+        plan=ClosureContract(closure_id="execution-loop-closure", goal="execute", body={"closure_id": "execution-loop-closure"}),
+    )
+
+    async def executor(_operation: str, payload: dict) -> ExecutionResult:
+        value = {"payload": payload}
+        digest = hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+        return ExecutionResult(
+            resource_ref=ResourceRef(resource_id=f"content://sha256/{digest}", identity_criterion="content_digest"),
+            value=value,
+            replay_safety="Idempotent",
+            terminal_state="completed",
+        )
+
+    driver = DriverService(
+        repo,
+        provider=None,
+        executor=executor,
+        settings=Settings(agent_id="execution-loop-driver", agent_instance_id="execution-loop-instance"),
+    )
+    driver.start_execution_loop()
+    try:
+        for _ in range(100):
+            current = await repo.get_run(item.run_id)
+            if current.state == "completed":
+                break
+            await asyncio.sleep(0.01)
+        current = await repo.get_run(item.run_id)
+        assert current.state == "completed"
+        queued = await repo.get_execution_request("workspace-default", item.request_id)
+        assert queued.state == "settled"
+        assert queued.outcome["value"]["payload"] == {}
+    finally:
+        await driver.stop_execution_loop()
+
+
+@pytest.mark.asyncio
+async def test_recovered_execution_is_claimed_by_new_driver_owner():
+    repo = ObserverRepository()
+    item = await repo.submit_run_plan(
+        workspace_id="workspace-default",
+        request_id="recovery-request",
+        conversation_ref="recovery-conversation",
+        plan=ClosureContract(closure_id="recovery-closure", goal="recover", body={"closure_id": "recovery-closure"}),
+    )
+    first = await repo.claim_next_execution(
+        workspace_id="workspace-default", driver_id="driver-a", driver_instance_id="instance-a", driver_epoch=1
+    )
+    assert first is not None
+    await repo.recover_execution_requests_for_driver(
+        "workspace-default", driver_id="driver-b", driver_instance_id="instance-b", driver_epoch=2
+    )
+    second = await repo.claim_next_execution(
+        workspace_id="workspace-default", driver_id="driver-b", driver_instance_id="instance-b", driver_epoch=2
+    )
+    assert second is not None
+    assert second["request"]["driver_id"] == "driver-b"
+    assert second["request"]["driver_instance_id"] == "instance-b"
+    assert second["request"]["driver_epoch"] == 2

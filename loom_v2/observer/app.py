@@ -22,16 +22,15 @@ from loom_v2.contracts.api import (
     CapabilityHealthRequest,
     CapabilityPackageUploadRequest,
     ResourceCreateRequest,
-    CommitRequest,
     ContentPutRequest,
     IdempotencyRequest,
-    OpenRunRequest,
-    PatchRequest,
     PublicMessageRequest,
     PublicSlave,
     PublicSlaveList,
     ResolveRequest,
-    StartRequest,
+    RunCancelRequest,
+    RunResubmitRequest,
+    RunSubmissionRequest,
 )
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
@@ -114,7 +113,6 @@ def create_app(
     app.state.workers = {}
     app.state.driver = None
     app.state.forward_tasks = {}
-    app.state.mcp_server = None
     static_dir = Path(__file__).resolve().parents[1] / "web" / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -458,36 +456,93 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return ref.model_dump(mode="json")
 
-    @app.post("/mcp")
-    async def mcp(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-        conversation_ref = request.headers.get("x-loom-conversation-ref", "")
-        if not app.state.embedded:
-            try:
-                return await app.state.gateway.forward(
-                    "/driver/v1/mcp",
-                    payload,
-                    extra_headers={"X-Loom-Conversation-Ref": conversation_ref},
-                )
-            except RuntimeError as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return await app.state.mcp_server.handle(payload, conversation_ref)
+    def _execution_submission_view(item: Any, run: Any) -> dict[str, Any]:
+        return {
+            "request_id": item.request_id,
+            "run_id": item.run_id,
+            "closure_version": item.closure_version,
+            "snapshot_digest": item.snapshot_digest,
+            "closure_contract": item.closure_contract,
+            "current_run_state": run.state,
+            "state": (item.outcome or {}).get("disposition", run.state) if item.state == "settled" else run.state,
+            "execution_request_state": item.state,
+            "source": item.source,
+            "conversation_ref": item.conversation_ref,
+            "execution_id": item.execution_id,
+            "execution_epoch": item.execution_epoch,
+            "started_at": item.started_at.isoformat() if item.started_at else None,
+            "deadline_at": item.deadline_at.isoformat() if item.deadline_at else None,
+            "outcome": item.outcome,
+        }
 
-    @app.post("/api/v1/runs")
-    async def open_run(payload: OpenRunRequest) -> dict[str, Any]:
-        if not payload.task_ref:
-            raise HTTPException(status_code=400, detail="task_ref_required")
-        contract = payload.closure_contract
-        goal = contract.goal if contract is not None else payload.goal or ""
-        record = await app.state.repo.open_run(
-            payload.run_id,
-            payload.task_ref,
-            goal,
-            payload.allow_reassignment,
-            contract,
-            user_id=payload.user_id or "user-default",
-            workspace_id=payload.workspace_id or settings.workspace_id,
-        )
-        return _run_view(record)
+    @app.post("/api/v1/run-submissions", status_code=202)
+    async def submit_run_plan(payload: RunSubmissionRequest) -> JSONResponse:
+        try:
+            item = await app.state.repo.submit_run_plan(
+                workspace_id=settings.workspace_id,
+                request_id=payload.request_id,
+                plan=payload.plan,
+                conversation_ref=payload.conversation_ref,
+                source="external",
+            )
+            run = await app.state.repo.get_run(item.run_id)
+            return JSONResponse(status_code=202, content=_execution_submission_view(item, run))
+        except DomainError as exc:
+            raise HTTPException(status_code=409, detail=exc.envelope.model_dump(mode="json")) from exc
+        except ValueError as exc:
+            code = str(exc)
+            status = 409 if code in {"request_id_reused", "workspace_binding_mismatch", "readiness_blocked"} else 422
+            detail = exc.args[0] if code != "readiness_blocked" else code
+            raise HTTPException(status_code=status, detail=detail) from exc
+
+    @app.get("/api/v1/run-submissions/{request_id}")
+    async def get_run_submission(request_id: str) -> dict[str, Any]:
+        try:
+            item = await app.state.repo.get_execution_request(settings.workspace_id, request_id)
+            run = await app.state.repo.get_run(item.run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run_submission_not_found") from exc
+        return _execution_submission_view(item, run)
+
+    @app.post("/api/v1/runs/{run_id}/cancel")
+    async def cancel_submitted_run(run_id: str, payload: RunCancelRequest) -> dict[str, Any]:
+        try:
+            run = await app.state.repo._assert_run_workspace(run_id, settings.workspace_id)
+            if payload.request_id:
+                item = await app.state.repo.get_execution_request(settings.workspace_id, payload.request_id)
+                if item.run_id != run_id:
+                    raise ValueError("request_run_mismatch")
+            run = await app.state.repo.cancel_run(run_id, payload.reason)
+            return run_record_payload(run, include_snapshots=False)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run_not_found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/runs/{run_id}/resubmit", status_code=202)
+    async def resubmit_submitted_run(run_id: str, payload: RunResubmitRequest) -> JSONResponse:
+        try:
+            item = await app.state.repo.resubmit_run_plan(
+                workspace_id=settings.workspace_id,
+                run_id=run_id,
+                request_id=payload.request_id,
+                base_closure_version=payload.base_closure_version,
+                plan=payload.plan,
+            )
+            run = await app.state.repo.get_run(run_id)
+            return JSONResponse(status_code=202, content=_execution_submission_view(item, run))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run_not_found") from exc
+        except DomainError as exc:
+            raise HTTPException(status_code=409, detail=exc.envelope.model_dump(mode="json")) from exc
+        except ValueError as exc:
+            code = str(exc)
+            status = 409 if code in {
+                "request_id_reused", "version_conflict", "resubmit_not_repairable",
+                "planning_source_mismatch", "workspace_binding_mismatch", "success_contract_changed",
+                "constraints_changed", "execution_policy_changed", "closure_goal_mismatch",
+            } else 422
+            raise HTTPException(status_code=status, detail=code) from exc
 
     @app.post("/api/v1/messages", response_model=dict[str, Any])
     async def message(payload: PublicMessageRequest) -> dict[str, Any] | JSONResponse:
@@ -621,70 +676,20 @@ def create_app(
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
-    @app.post("/api/v1/runs/{run_id}/patches")
-    async def apply_patch(run_id: str, payload: PatchRequest) -> dict[str, Any]:
-        for field_name in ("base_draft_version", "base_snapshot_digest", "operation_id"):
-            if getattr(payload, field_name) is None:
-                raise HTTPException(status_code=400, detail=f"missing_field:{field_name}")
-        try:
-            receipt = await app.state.repo.apply_patch(
-                run_id,
-                payload.base_draft_version,
-                payload.base_snapshot_digest,
-                payload.operation_id,
-                payload.ops,
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=400, detail=f"missing_field:{exc.args[0]}") from exc
-        except ValueError as exc:
-            code = str(exc)
-            raise HTTPException(status_code=409 if code == "version_conflict" else 422, detail=code) from exc
-        return {
-            "receipt": receipt.receipt,
-            "run_id": receipt.run_id,
-            "kind": receipt.kind,
-            "draft_version": receipt.draft_version,
-            "draft_digest": receipt.draft_digest,
-            "patch_cursor": receipt.patch_cursor,
-            "readiness": receipt.readiness,
-        }
-
     @app.get("/api/v1/runs/{run_id}/readiness")
     async def readiness(run_id: str) -> dict[str, Any]:
         try:
+            await app.state.repo._assert_run_workspace(run_id, settings.workspace_id)
             return await app.state.repo.inspect_readiness(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/v1/runs/{run_id}/commit")
-    async def commit(run_id: str, payload: CommitRequest) -> dict[str, Any]:
-        for field_name in ("draft_version", "draft_digest"):
-            if getattr(payload, field_name) is None:
-                raise HTTPException(status_code=400, detail=f"missing_field:{field_name}")
-        try:
-            version = await app.state.repo.commit(run_id, payload.draft_version, payload.draft_digest)
-        except DomainError as exc:
-            raise HTTPException(status_code=409, detail=exc.envelope.model_dump(mode="json")) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"closure_version": version.version_id, "snapshot_digest": version.snapshot_digest, "state": "committed"}
-
-    @app.post("/api/v1/runs/{run_id}/start")
-    async def start(run_id: str, payload: StartRequest) -> dict[str, Any]:
-        if payload.closure_version is None:
-            raise HTTPException(status_code=400, detail="missing_field:closure_version")
-        try:
-            return await app.state.repo.start(run_id, payload.closure_version)
-        except DomainError as exc:
-            raise HTTPException(status_code=409, detail=exc.envelope.model_dump(mode="json")) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
     @app.post("/api/v1/runs/{run_id}/close")
     async def close_run(run_id: str) -> dict[str, Any]:
         try:
+            await app.state.repo._assert_run_workspace(run_id, settings.workspace_id)
             return _run_view(await app.state.repo.close_run(run_id))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -695,6 +700,7 @@ def create_app(
         if decision not in {"accept", "abandon"}:
             raise HTTPException(status_code=422, detail="invalid_decision")
         try:
+            await app.state.repo._assert_run_workspace(run_id, settings.workspace_id)
             return _run_view(await app.state.repo.resolve_run(run_id, decision))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
@@ -704,7 +710,10 @@ def create_app(
     @app.get("/api/v1/runs/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:
         try:
+            await app.state.repo._assert_run_workspace(run_id, settings.workspace_id)
             return _run_view(await app.state.repo.get_run(run_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
 

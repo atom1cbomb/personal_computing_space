@@ -8,9 +8,10 @@ from .types import ContractModel
 
 
 DRIVER_COMMANDS = frozenset({
-    "run.open", "run.begin", "run.get", "run.patch", "run.commit", "run.start",
+    "run.open", "run.begin", "run.get", "run.patch", "run.commit",
     "run.close", "run.cancel", "run.fail", "run.resolve", "run.readiness",
     "run.recovery.list", "run.recovery.mark", "run.result",
+    "execution.enqueue", "execution.claim_next", "execution.get", "execution.recover",
     "message.append", "message.claim", "message.update", "message.release",
     "agent_signal.record", "thread.bind", "thread.get", "turn.state",
     "capability.list", "capability.get", "capability.health", "capability.desire",
@@ -21,8 +22,9 @@ DRIVER_COMMANDS = frozenset({
 # Commands whose optional run_id is admitted before executing their handler.
 # Recovery and capability listing enforce their own collection scope.
 DRIVER_RUN_SCOPED_COMMANDS = frozenset({
-    "run.get", "run.begin", "run.patch", "run.commit", "run.start", "run.close",
+    "run.get", "run.begin", "run.patch", "run.commit", "run.close",
     "run.cancel", "run.fail", "run.resolve", "run.readiness", "run.result",
+    "execution.enqueue", "execution.claim_next", "execution.get", "execution.recover",
     "message.append", "agent_signal.record", "capability.health", "capability.desire",
     "node.accept", "node.dispatch", "node.execute", "node.reassign", "node.result", "node.fail",
     "resource.register",

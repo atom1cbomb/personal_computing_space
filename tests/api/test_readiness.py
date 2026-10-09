@@ -18,150 +18,66 @@ def _binding(operation: str = "run_code", target: str = "slave-a", *, package_re
     }
 
 
-def _add_run_code_hole(client: TestClient, suffix: str = "default") -> tuple[dict, dict]:
-    run = client.post("/api/v1/runs", json={"task_ref": "task-readiness", "goal": "run test code"}).json()
-    patch = client.post(
-        f"/api/v1/runs/{run['run_id']}/patches",
-        json={
-            "operation_id": f"run-code-plan-{suffix}",
-            "base_draft_version": run["draft_version"],
-            "base_snapshot_digest": run["draft_digest"],
-            "ops": [
-                {"kind": "set_program_ref", "value": "loom://run_code"},
-                {"kind": "set_compute_spec", "value": {"operation_ref": "loom://run_code"}},
-                {"kind": "add_typed_hole", "value": {"hole_id": "h_run_code"}},
-            ],
+def _add_run_code_hole(client: TestClient, suffix: str = "default"):
+    plan = {
+        "closure_id": f"closure-readiness-{suffix}",
+        "goal": "run test code",
+        "body": {
+            "closure_id": f"closure-readiness-{suffix}",
+            "program": {"operation_ref": "loom://run_code"},
+            "compute": {"operation_ref": "loom://run_code", "typed_holes": [{"hole_id": "h_run_code"}]},
         },
-    ).json()
-    return run, patch
-
-
-def test_unbound_typed_hole_blocks_commit_and_reports_readiness():
-    client = TestClient(create_app())
-    run, patch = _add_run_code_hole(client, "unbound")
-
-    assert patch["readiness"]["ready"] is False
-    assert patch["readiness"]["blockers"] == [{"code": "typed_hole_unbound", "hole_id": "h_run_code"}]
+    }
     response = client.post(
-        f"/api/v1/runs/{run['run_id']}/commit",
-        json={"draft_version": patch["draft_version"], "draft_digest": patch["draft_digest"]},
+        "/api/v1/run-submissions",
+        json={"request_id": f"run-code-{suffix}", "conversation_ref": "task-readiness", "plan": plan},
     )
+    return plan, response
 
+
+def test_unbound_typed_hole_blocks_submission_and_reports_readiness():
+    client = TestClient(create_app())
+    _, response = _add_run_code_hole(client, "unbound")
     assert response.status_code == 409
-    detail = response.json()["detail"]
-    assert detail["code"] == "readiness_blocked"
-    assert detail["details"]["blockers"][0]["code"] == "typed_hole_unbound"
+    assert response.json()["detail"]["code"] == "readiness_blocked"
+    assert response.json()["detail"]["details"]["blockers"] == [{"code": "typed_hole_unbound", "hole_id": "h_run_code"}]
 
 
-def test_run_code_binding_requires_package_and_then_allows_start():
-    repository = ObserverRepository()
-    client = TestClient(create_app(repository))
-    run, patch = _add_run_code_hole(client, "blocked")
-    blocked = client.post(
-        f"/api/v1/runs/{run['run_id']}/patches",
-        json={
-            "operation_id": "run-code-binding-without-package",
-            "base_draft_version": patch["draft_version"],
-            "base_snapshot_digest": patch["draft_digest"],
-            "ops": [{"kind": "bind_compute_hole", "value": _binding()}],
-        },
-    ).json()
-    commit = client.post(
-        f"/api/v1/runs/{run['run_id']}/commit",
-        json={"draft_version": blocked["draft_version"], "draft_digest": blocked["draft_digest"]},
-    )
+def test_run_code_binding_requires_package_and_then_allows_submission():
+    client = TestClient(create_app())
+    plan, _ = _add_run_code_hole(client, "package")
+    body = plan["body"]
+    body["compute"]["typed_holes"][0].update(status="bound", binding_ref="binding-run_code")
+    body["compute_bindings"] = [_binding()]
+    request = {"request_id": "package-required", "plan": plan}
+    blocked = client.post("/api/v1/run-submissions", json=request)
+    assert blocked.status_code == 409
+    assert any(b["code"] == "capability_package_required" for b in blocked.json()["detail"]["details"]["blockers"])
 
-    assert commit.status_code == 409
-    detail = commit.json()["detail"]
-    assert detail["code"] == "readiness_blocked"
-    assert detail["details"]["blockers"][0]["code"] == "capability_package_required"
+    def put(content, media_type):
+        response = client.post("/api/v1/content", json={"content": content, "media_type": media_type})
+        assert response.status_code == 200, response.text
+        return response.json()
 
-    program_ref = client.post(
-        "/api/v1/content",
-        json={"media_type": "text/x-python", "content": "import json,sys; print(json.dumps(json.load(sys.stdin)))"},
-    ).json()
-    contract_ref = client.post(
-        "/api/v1/content",
-        json={
-            "media_type": "application/vnd.loom.io-contract+json",
-            "content": {
-                "schema_version": "io.v1",
-                "input_schema_ref": None,
-                "output_schema_ref": None,
-                "success_semantics": None,
-                "success_validator_ref": None,
-            },
-        },
-    ).json()
-    descriptor_ref = client.post(
-        "/api/v1/content",
-        json={
-            "media_type": "application/vnd.loom.operation-descriptor+json",
-            "content": {"schema_version": "operation.v1", "resource_id": "loom://run_code", "name": "run_code"},
-        },
-    ).json()
-    run2, patch2 = _add_run_code_hole(client, "valid")
-    packaged = client.post(
-        f"/api/v1/runs/{run2['run_id']}/patches",
-        json={
-            "operation_id": "run-code-package",
-            "base_draft_version": patch2["draft_version"],
-            "base_snapshot_digest": patch2["draft_digest"],
-            "ops": [
-                {"kind": "set_io_contract_ref", "value": contract_ref},
-                {
-                    "kind": "materialize_capability_package_candidate",
-                    "value": {
-                                 "package_id": "readiness-run-code",
-                                 "package_version": "v1",
-                                 "package_type": "function",
-                                 "execution": {"kind": "process:json_stdio", "version": "1"},
-                                 "capability_exports": [{
-                                     "capability_descriptor_ref": descriptor_ref,
-                                     "io_contract_ref": contract_ref,
-                                     "effect_class": "Sandboxed",
-                                     "permissions": [],
-                                     "replay_safety": "DeclaredByPackage",
-                                     "runtime_binding": {},
-                                 }],
-                                 "body": {
-                                     "program_content_ref": program_ref,
-                                 },
-                             },
-                },
-            ],
-        },
-    ).json()
-    bound = client.post(
-        f"/api/v1/runs/{run2['run_id']}/patches",
-        json={
-            "operation_id": "run-code-binding-valid",
-            "base_draft_version": packaged["draft_version"],
-            "base_snapshot_digest": packaged["draft_digest"],
-            "ops": [
-                {
-                    "kind": "bind_compute_hole",
-                    "value": {
-                        **_binding(
-                            package_ref={
-                                "resource_id": "capability-package://readiness-run-code/v1",
-                            },
-                            descriptor_ref=descriptor_ref,
-                        ),
-                    },
-                }
-            ],
-        },
-    ).json()
-    commit2 = client.post(
-        f"/api/v1/runs/{run2['run_id']}/commit",
-        json={"draft_version": bound["draft_version"], "draft_digest": bound["draft_digest"]},
-    )
-
-    assert commit2.status_code == 200
-    started = client.post(f"/api/v1/runs/{run2['run_id']}/start", json={"closure_version": commit2.json()["closure_version"]})
-    assert started.status_code == 200
-    assert client.get(f"/api/v1/runs/{run2['run_id']}/readiness").json()["ready"] is True
+    program = put("import json,sys; print(json.dumps(json.load(sys.stdin)))", "text/x-python")
+    io = put({"schema_version": "io.v1"}, "application/vnd.loom.io-contract+json")
+    descriptor = put({"schema_version": "operation.v1", "resource_id": "loom://run_code", "name": "run_code"}, "application/vnd.loom.operation-descriptor+json")
+    package = client.post("/api/v1/capability-packages", json={
+        "package_id": "readiness-run-code", "package_version": "v1",
+        "capability_exports": [{"capability_descriptor_ref": descriptor, "io_contract_ref": io,
+                                "effect_class": "Sandboxed", "replay_safety": "DeclaredByPackage"}],
+        "body": {"program_content_ref": program},
+    })
+    assert package.status_code == 200, package.text
+    body["program"]["io_contract_ref"] = io
+    body["compute_bindings"] = [_binding(
+        descriptor_ref=descriptor,
+        package_ref={"resource_id": "capability-package://readiness-run-code/v1",
+                     "version_or_digest": package.json()["package_digest"]},
+    )]
+    submitted = client.post("/api/v1/run-submissions", json=request)
+    assert submitted.status_code == 202, submitted.text
+    assert client.get(f"/api/v1/runs/{submitted.json()['run_id']}/readiness").json()["ready"] is True
 
 
 @pytest.mark.asyncio

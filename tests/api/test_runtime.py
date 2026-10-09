@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from loom_v2.testing.observer import create_embedded_app as create_app
 from loom_v2.observer.app import create_app as create_production_app
+from loom_v2.settings import Settings
 
 
 def test_runtime_reports_codex_backend_and_model(monkeypatch):
@@ -38,3 +39,16 @@ def test_runtime_reports_driver_unavailable_in_split_deployment(monkeypatch):
 
     assert response.status_code == 503
     assert response.json() == {"code": "driver_unavailable", "retryable": True}
+
+
+def test_none_backend_keeps_external_submission_available_without_provider():
+    app = create_app(settings=Settings(coding_agent_backend="none"))
+    assert app.state.provider is None
+    response = TestClient(app).post(
+        "/api/v1/run-submissions",
+        json={
+            "request_id": "none-backend-request",
+            "plan": {"closure_id": "none-backend-closure", "goal": "execute uploaded plan", "body": {"closure_id": "none-backend-closure"}},
+        },
+    )
+    assert response.status_code == 202

@@ -20,6 +20,46 @@ from runtime_plugins.container_http_v1.runtime import (
 IMAGE_REF = "registry.example/loom/http-test@sha256:" + "d" * 64
 
 
+@pytest.mark.asyncio
+async def test_long_container_name_uses_docker_dns_id_for_health_auth_and_execution():
+    package = _package(["/v1/echo"])
+    runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="loom-internal")
+    instance = "vm-ssh-e2e-fixed3"
+    name = runtime._container_name("workspace-default", package.package_digest, instance)
+    assert len(name) > 63
+    container_id = "123456789abc" + "0" * 52
+
+    class Runner:
+        async def run(self, args, *, timeout):
+            assert args == ["inspect", name]
+            return DockerCommandResult(0, json.dumps([{
+                "Id": container_id,
+                "Config": {"Labels": runtime._labels("workspace-default", package.version_ref, package.package_digest, instance), "Image": IMAGE_REF},
+                "State": {"Running": True},
+            }]))
+
+    paths = []
+
+    async def respond(request):
+        assert request.url.host == container_id[:12]
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"status": "authenticated"})
+
+    runtime.runner = Runner()
+    runtime.http_transport = httpx.MockTransport(respond)
+    assert await runtime._health(name, 8080, "/healthz")
+    assert await runtime._authentication_probe(name, 8080, "/v1/auth/status") == {"status": "authenticated"}
+    result = await runtime.invoke(
+        package.model_dump(mode="json"), package.capability_exports[0].model_dump(mode="json"), {},
+        activation={"workspace_id": "workspace-default", "target_slave": "slave-a",
+                    "package_version_ref": package.version_ref, "package_digest": package.package_digest,
+                    "instance_name": instance, "runtime_profile": {"container_name": name}},
+        attempt_id="long-name-attempt",
+    )
+    assert result["value"] == {"status": "authenticated"}
+    assert paths == ["/healthz", "/v1/auth/status", "/v1/echo"]
+
+
 def _ref(resource_id: str, *, descriptor_digest: str | None = None) -> dict[str, Any]:
     return ResourceRef(
         resource_id=resource_id,

@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "required": [
+    "command"
+  ],
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "timeout_seconds": {
+      "type": "number"
+    }
+  }
+}

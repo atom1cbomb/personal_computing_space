@@ -5,21 +5,27 @@ description: Use when a coding agent needs to submit, monitor, continue, resolve
 
 # Personal Computing Space
 
-Use the Observer as the only external entry point. Act as a user of the
-workspace; let the Driver's coding agent refine the closure, invoke its internal
-tools, orchestrate work, and dispatch nodes to Slaves.
+Use the Observer as the only external entry point. A coding agent may either
+send a natural-language request to the built-in Driver planner or submit a
+complete `ClosureContract` directly. Direct planning still goes through
+Observer validation, commit, persistence, and the Driver execution queue.
 
 ## Boundary
 
-- Submit work with `POST /api/v1/messages`.
+- Submit natural-language work with `POST /api/v1/messages`, or a complete plan
+  with `POST /api/v1/run-submissions`.
+- For a plan submission, provide a stable `request_id`, optional
+  `conversation_ref`, and the complete `plan`. HTTP `202` means queued, not
+  executed. Poll `GET /api/v1/run-submissions/{request_id}` or
+  `GET /api/v1/runs/{run_id}`.
 - Observe work with `/api/v1/conversations/*` and `/api/v1/runs/*` reads.
 - Use `POST /api/v1/conversations/{conversation_ref}/interrupt` only to cancel.
 - Resolve `awaiting_decision` only after presenting the evidence and obtaining
   the user's explicit `accept` or `abandon` decision.
 - Never call Observer `/mcp`, Driver `/driver/v1/*`, Observer `/internal/v1/*`,
   or Slave `/worker/v1/*`. Those are internal control surfaces.
-- Never use direct Run mutation endpoints to open, patch, commit, or start a
-  Run. The Driver's coding agent owns those decisions.
+- Do not use internal Driver or Slave endpoints. Direct plan submission is the
+  supported public planning path; the Observer owns Run mutation and enqueue.
 - Treat `ResourceRef` and digest fields as server-owned facts. Do not calculate,
   invent, or overwrite content/package/draft digests; obtain immutable refs from
   the Observer data plane or persisted Run outcome.
@@ -57,8 +63,10 @@ not mean that a Kubernetes credential profile is configured.
 7. On `completed`, verify the requested acceptance criteria from the outcome.
    On `awaiting_decision`, follow the decision rules in the protocol reference.
    On `failed` or `interrupted`, report the structured reason without hiding it.
-8. For corrections or repair, send a new message in the same conversation with
-   a new `request_id`; do not mutate internal Run state directly.
+8. For `awaiting_decision` with `outcome.decision=repair`, submit a complete
+   replacement with `POST /api/v1/runs/{run_id}/resubmit`, using a new
+   `request_id` and the returned `base_closure_version`. Preserve the accepted
+   success contract and execution policy.
 
 Retries after an uncertain HTTP result must reuse the same `request_id` with
 the exact same `conversation_ref` and text. Reusing it with different content is

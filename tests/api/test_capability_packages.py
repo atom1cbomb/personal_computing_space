@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
-from loom_v2.contracts.types import ClosureContract, ComputeBinding, ResourceRef, TaskClosure
+from loom_v2.contracts.types import CapabilityHealthReport, ClosureContract, ComputeBinding, ResourceRef, TaskClosure
 from loom_v2.observer.repository import ObserverRepository
 from loom_v2.testing.observer import create_embedded_app
 from loom_v2.testing.observer import seed_embedded_slaves
@@ -103,6 +103,42 @@ async def test_uploaded_workspace_package_can_be_activated_without_run(resource_
             activation["package_version_ref"] == f"capability-package://{uploaded['package_id']}/{uploaded['package_version']}"
             for activation in slave_a["activations"]
         )
+
+
+@pytest.mark.asyncio
+async def test_failed_activation_can_retry_without_cleanup():
+    repo = ObserverRepository()
+    io_ref = await _empty_io_contract_ref(repo)
+    descriptor = register_test_descriptor(repo, "loom://retryable-service/exec")
+    package = await repo.register_workspace_package("workspace-default", {
+        "package_type": "service",
+        "package_id": "retryable-service",
+        "package_version": "v1",
+        "execution": {"kind": "container:http", "version": "1"},
+        "capability_exports": [capability_export(descriptor, io_ref, effect_class="RemoteExecution", replay_safety="NotReplaySafe", runtime_binding={"path": "/v1/exec"})],
+        "body": {"image_ref": "registry.example/service@sha256:" + "a" * 64, "container_port": 8080, "health_path": "/healthz"},
+    })
+    first = await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="attempt-1", instance_name="retry")
+    assert first.activation_revision == 1
+    await repo.record_capability_health(CapabilityHealthReport(
+        report_id="failed-1", package_version_ref=package.version_ref, package_digest=package.package_digest,
+        target_slave="slave-a", activation_state="failed", activation_revision=1, instance_name="retry",
+    ))
+
+    second = await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="attempt-2", instance_name="retry")
+    assert second.activation_revision == 2
+    assert second.activation_state == "provisioning"
+    assert any(event["phase"] == "capability_activation_superseded" for event in repo.workspace_package_events[("workspace-default", package.version_ref)])
+    with pytest.raises(ValueError, match="stale_activation_revision"):
+        await repo.record_capability_health(CapabilityHealthReport(
+            report_id="late-old", package_version_ref=package.version_ref, package_digest=package.package_digest,
+            target_slave="slave-a", activation_state="ready", activation_revision=1, instance_name="retry",
+        ))
+    ready = await repo.record_capability_health(CapabilityHealthReport(
+        report_id="ready-2", package_version_ref=package.version_ref, package_digest=package.package_digest,
+        target_slave="slave-a", activation_state="ready", activation_revision=2, instance_name="retry",
+    ))
+    assert ready.activation_state == "ready"
 
 
 @pytest.mark.asyncio

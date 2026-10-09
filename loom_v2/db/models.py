@@ -25,6 +25,45 @@ class RunRow(Base):
     dynamic_nodes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
 
+class RunExecutionRequestRow(Base):
+    """Durable execution queue item owned by Observer."""
+
+    __tablename__ = "run_execution_requests"
+    __table_args__ = (
+        Index("idx_run_execution_requests_queue", "workspace_id", "state", "created_at"),
+        Index("idx_run_execution_requests_run", "workspace_id", "run_id"),
+        Index(
+            "uq_run_execution_request_active",
+            "workspace_id",
+            "run_id",
+            unique=True,
+            postgresql_where=text("state IN ('queued', 'claimed', 'recovering')"),
+            sqlite_where=text("state IN ('queued', 'claimed', 'recovering')"),
+        ),
+    )
+
+    workspace_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    request_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    run_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    closure_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    closure_contract: Mapped[dict] = mapped_column(JSON, nullable=False)
+    snapshot_digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="external")
+    conversation_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    driver_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    driver_instance_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    driver_epoch: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
+    execution_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    execution_epoch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deadline_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class WorkspaceCapabilityPackageRow(Base):
     """Package and activation state not owned by a Run."""
 

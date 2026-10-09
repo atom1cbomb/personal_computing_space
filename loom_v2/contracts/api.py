@@ -86,14 +86,31 @@ class ResourceCreateRequest(PublicRequest):
     state: str = "unknown"
 
 
-class OpenRunRequest(PublicRequest):
-    run_id: str | None = None
-    task_ref: str | None = None
-    goal: str | None = None
-    closure_contract: ClosureContract | None = None
-    allow_reassignment: bool = False
-    user_id: str | None = None
-    workspace_id: str | None = None
+class RunSubmissionRequest(BaseModel):
+    """Complete immutable plan submitted by an external planning agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=256)
+    conversation_ref: str | None = Field(default=None, min_length=1, max_length=256)
+    plan: ClosureContract
+
+
+class RunResubmitRequest(BaseModel):
+    """Complete replacement plan for a repairable Run outcome."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=256)
+    base_closure_version: str = Field(min_length=1, max_length=128)
+    plan: ClosureContract
+
+
+class RunCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=256)
+    reason: str | dict[str, Any] = "user_cancel"
 
 
 class PublicMessageRequest(PublicRequest):
@@ -104,22 +121,6 @@ class PublicMessageRequest(PublicRequest):
     request_id: Any = None
     conversation_ref: Any = None
     workspace_id: str | None = None
-
-
-class PatchRequest(PublicRequest):
-    base_draft_version: str | None = None
-    base_snapshot_digest: str | None = None
-    operation_id: str | None = None
-    ops: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class CommitRequest(PublicRequest):
-    draft_version: str | None = None
-    draft_digest: str | None = None
-
-
-class StartRequest(PublicRequest):
-    closure_version: str | None = None
 
 
 class ResolveRequest(PublicRequest):
@@ -214,18 +215,17 @@ __all__ = [
     "CapabilityActivationRequest",
     "CapabilityPackageUploadRequest",
     "ResourceCreateRequest",
-    "CommitRequest",
     "ContentPutRequest",
     "DriverMessageRequest",
     "IdempotencyRequest",
-    "OpenRunRequest",
-    "PatchRequest",
+    "RunSubmissionRequest",
+    "RunResubmitRequest",
+    "RunCancelRequest",
     "PublicMessageRequest",
     "ResolveRequest",
     "SlaveDeprovisionRequest",
     "SlaveAuthStartRequest",
     "SlaveDispatchRequest",
     "SlaveProvisionRequest",
-    "StartRequest",
     "WorkspaceRequest",
 ]

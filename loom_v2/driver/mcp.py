@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -30,7 +30,6 @@ class DriverMCP:
         content_store: ContentStore | None = None,
         request_id: str | None = None,
         prompt: str | None = None,
-        run_executor: Callable[[str, str], Awaitable[Any]] | None = None,
     ) -> None:
         self.repository = repository
         self.control = repository if hasattr(repository, "command") and not hasattr(repository, "get_run") else None
@@ -40,7 +39,6 @@ class DriverMCP:
         self.content_store = content_store
         self.request_id = request_id
         self.prompt = prompt or ""
-        self.run_executor = run_executor
         self.active_run_id: str | None = None
         self.tools = DriverTools(repository)
 
@@ -107,28 +105,31 @@ class DriverMCP:
             if self.control is not None:
                 run = await self.control.command("run.get", {"run_id": self.active_run_id})
                 version_id = arguments.get("closure_version") or run.get("committed_version")
-                if not version_id:
-                    raise ValueError("closure_not_committed")
-                await self.control.command(
-                    "run.start",
-                    {"run_id": self.active_run_id, "version_id": version_id},
-                    request_id=f"{self.request_id}:start" if self.request_id else None,
-                )
-                if self.run_executor is not None:
-                    await self.run_executor(self.active_run_id, self.prompt)
-                result = self._decorate_run_payload(await self.control.command("run.get", {"run_id": self.active_run_id}))
-                result["success"] = True
-                return result
-            run = await self.repository.get_run(self.active_run_id)
-            version_id = arguments.get("closure_version") or (run.committed.version_id if run.committed else None)
+            else:
+                run = await self.repository.get_run(self.active_run_id)
+                version_id = arguments.get("closure_version") or (run.committed.version_id if run.committed else None)
             if not version_id:
                 raise ValueError("closure_not_committed")
-            await self.tools.start_run(self.active_run_id, version_id)
-            if self.run_executor is not None:
-                await self.run_executor(self.active_run_id, self.prompt)
-            result = self.run_view(await self.repository.get_run(self.active_run_id))
-            result["success"] = True
-            return result
+            request_id = f"execution:{self.active_run_id}:{version_id}"
+            args = {"run_id": self.active_run_id, "closure_version": version_id,
+                    "request_id": request_id, "conversation_ref": self.conversation_ref}
+            if self.control is not None:
+                await self.control.command("execution.enqueue", args)
+            else:
+                await self.repository.enqueue_committed_run(workspace_id=self.workspace_id, **args)
+            # Waiting is only a view of the durable execution. Cancelling the
+            # model's tool call does not cancel the Driver execution lane.
+            while True:
+                if self.control is not None:
+                    item = await self.control.command("execution.get", {"request_id": request_id})
+                    run = await self.control.command("run.get", {"run_id": self.active_run_id})
+                    result = self._decorate_run_payload(run)
+                else:
+                    item = (await self.repository.get_execution_request(self.workspace_id, request_id)).model_dump()
+                    result = self.run_view(await self.repository.get_run(self.active_run_id))
+                if item["state"] == "settled":
+                    return {**result, "success": True, "request_id": request_id}
+                await asyncio.sleep(0.05)
         if tool_name == "loom_get_run_status":
             if self.control is not None:
                 return self._decorate_run_payload(await self.control.command("run.get", {"run_id": self.active_run_id}))

@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 import asyncio
 from dataclasses import dataclass, field
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from functools import wraps
 from datetime import datetime, timezone
 from copy import deepcopy
 import json
@@ -12,7 +15,7 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from loom_v2.contracts.constraints import Constraint
@@ -43,6 +46,7 @@ from loom_v2.db.models import (
     DriverThreadRow,
     IdempotencyRow,
     MessageReceiptRow,
+    RunExecutionRequestRow,
     RunRow,
     RuntimeAgentRow,
     WorkspaceCapabilityPackageRow,
@@ -75,6 +79,14 @@ from loom_v2.observer.orchestration_preflight import (
 )
 
 
+def execution_transaction(method):
+    @wraps(method)
+    async def wrapped(self, *args, **kwargs):
+        async with self._execution_transaction():
+            return await method(self, *args, **kwargs)
+    return wrapped
+
+
 @dataclass
 class PatchReceipt:
     receipt: str
@@ -100,6 +112,8 @@ class RunRecord:
     execution_epoch: int = 1
     state: str = "opened"
     outcome: dict[str, Any] | None = None
+    started_at: datetime | None = None
+    deadline_at: datetime | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     attempts: list[dict[str, Any]] = field(default_factory=list)
     capability_packages: list[CapabilityPackageVersion] = field(default_factory=list)
@@ -115,10 +129,62 @@ class RunRecord:
         return self.draft.snapshot_digest
 
 
+@dataclass
+class ExecutionRequest:
+    workspace_id: str
+    request_id: str
+    request_payload: dict[str, Any]
+    run_id: str
+    closure_version: str
+    closure_contract: dict[str, Any] = field(default_factory=dict)
+    snapshot_digest: str = ""
+    source: str = "external"
+    conversation_ref: str | None = None
+    state: str = "queued"
+    driver_id: str | None = None
+    driver_instance_id: str | None = None
+    driver_epoch: int | None = None
+    execution_id: str | None = None
+    execution_epoch: int | None = None
+    outcome: dict[str, Any] | None = None
+    started_at: datetime | None = None
+    deadline_at: datetime | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def model_dump(self) -> dict[str, Any]:
+        return {
+            "workspace_id": self.workspace_id,
+            "request_id": self.request_id,
+            "request_payload": deepcopy(self.request_payload),
+            "run_id": self.run_id,
+            "closure_version": self.closure_version,
+            "source": self.source,
+            "closure_contract": deepcopy(self.closure_contract),
+            "snapshot_digest": self.snapshot_digest,
+            "conversation_ref": self.conversation_ref,
+            "state": self.state,
+            "driver_id": self.driver_id,
+            "driver_instance_id": self.driver_instance_id,
+            "driver_epoch": self.driver_epoch,
+            "execution_id": self.execution_id,
+            "execution_epoch": self.execution_epoch,
+            "outcome": deepcopy(self.outcome),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "deadline_at": self.deadline_at.isoformat() if self.deadline_at else None,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
 RUN_TRANSITIONS: dict[str, dict[str, str]] = {
     "opened": {"refinement_started": "thinking", "run_cancelled": "cancelled"},
     "thinking": {"committed": "committed", "run_failed": "failed", "run_cancelled": "cancelled"},
-    "committed": {"execution_started": "running", "run_cancelled": "cancelled"},
+    "committed": {
+        "execution_started": "running",
+        "run_needs_decision": "awaiting_decision",
+        "run_cancelled": "cancelled",
+    },
     "running": {
         "run_succeeded": "completed",
         "run_needs_decision": "awaiting_decision",
@@ -243,6 +309,54 @@ class ObserverRepository:
         self.message_receipts: dict[tuple[str, str], MessageReceipt] = {}
         self.message_receipt_events: list[dict[str, Any]] = []
         self._message_receipt_lock = asyncio.Lock()
+        self.execution_requests: dict[tuple[str, str], ExecutionRequest] = {}
+        self._execution_queue_lock = asyncio.Lock()
+        self._execution_session = ContextVar("execution_session", default=None)
+        self._execution_in_transaction = ContextVar("execution_in_transaction", default=False)
+
+    @asynccontextmanager
+    async def _execution_transaction(self):
+        if self._execution_in_transaction.get():
+            yield
+            return
+        async with self._execution_queue_lock:
+            before_runs = deepcopy(self.runs)
+            before_requests = deepcopy(self.execution_requests)
+            token = self._execution_in_transaction.set(True)
+            try:
+                if self.sessions is None:
+                    yield
+                else:
+                    async with self.sessions() as session, session.begin():
+                        if session.bind.dialect.name == "postgresql":
+                            # The initial deployment has one execution lane.
+                            # Serialize its handoff across Observer processes.
+                            await session.execute(text("SELECT pg_advisory_xact_lock(729413806)"))
+                        session_token = self._execution_session.set(session)
+                        try:
+                            rows = (await session.scalars(select(RunRow).with_for_update())).all()
+                            self.runs.update({row.run_id: self._record_from_row(row) for row in rows})
+                            rows = (await session.scalars(select(RunExecutionRequestRow).with_for_update())).all()
+                            self.execution_requests = {(row.workspace_id, row.request_id): self._execution_request_from_row(row) for row in rows}
+                            yield
+                        finally:
+                            self._execution_session.reset(session_token)
+            except BaseException:
+                self.runs = before_runs
+                self.execution_requests = before_requests
+                raise
+            finally:
+                self._execution_in_transaction.reset(token)
+
+    @asynccontextmanager
+    async def _execution_write_session(self):
+        session = self._execution_session.get()
+        if session is not None:
+            yield session
+            await session.flush()
+        else:
+            async with self.sessions() as session, session.begin():
+                yield session
 
     def register_operation_descriptor(self, resource_id: str, descriptor: Any, *, digest: str | None = None) -> str:
         """Register an immutable descriptor and return its canonical digest."""
@@ -1301,8 +1415,33 @@ class ObserverRepository:
         elif command.command == "run.commit":
             result_version = await self.commit(str(args["run_id"]), str(args["version_id"]), str(args["digest"]))
             result = {"closure_version": result_version.version_id, "snapshot_digest": result_version.snapshot_digest}
-        elif command.command == "run.start":
-            result = await self.start(str(args["run_id"]), str(args["version_id"]))
+        elif command.command == "execution.enqueue":
+            item = await self.enqueue_committed_run(
+                workspace_id=workspace_id,
+                request_id=str(args["request_id"]),
+                run_id=str(args["run_id"]),
+                closure_version=str(args["closure_version"]),
+                conversation_ref=args.get("conversation_ref"),
+            )
+            result = item.model_dump()
+        elif command.command == "execution.claim_next":
+            result = await self.claim_next_execution(
+                workspace_id=workspace_id,
+                driver_id=command.driver_id,
+                driver_instance_id=command.instance_id,
+                driver_epoch=command.driver_epoch,
+            ) or {}
+        elif command.command == "execution.get":
+            result = (await self.get_execution_request(workspace_id, str(args["request_id"]))).model_dump()
+        elif command.command == "execution.recover":
+            result = {
+                "recovered": await self.recover_execution_requests_for_driver(
+                    workspace_id,
+                    driver_id=command.driver_id,
+                    driver_instance_id=command.instance_id,
+                    driver_epoch=command.driver_epoch,
+                )
+            }
         elif command.command == "run.result":
             reported = dict(args["result"])
             final_ref = reported.pop("orchestration_final_ref", None)
@@ -1850,7 +1989,7 @@ class ObserverRepository:
     async def _persist(self, record: RunRecord) -> None:
         if self.sessions is None:
             return
-        async with self.sessions() as session:
+        async with self._execution_write_session() as session:
             row = await session.get(RunRow, record.run_id)
             values = {
                 "run_id": record.run_id,
@@ -1876,7 +2015,6 @@ class ObserverRepository:
             else:
                 for key, value in values.items():
                     setattr(row, key, value)
-            await session.commit()
 
     async def _load(self, run_id: str) -> RunRecord:
         if run_id in self.runs:
@@ -1904,6 +2042,461 @@ class ObserverRepository:
                 self.runs[row.run_id] = record
             records.append(record)
         return records
+
+    @staticmethod
+    def _execution_request_from_row(row: RunExecutionRequestRow) -> ExecutionRequest:
+        created = row.created_at
+        updated = row.updated_at
+        if not isinstance(created, datetime):
+            created = datetime.now(timezone.utc)
+        if not isinstance(updated, datetime):
+            updated = created
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        return ExecutionRequest(
+            workspace_id=row.workspace_id,
+            request_id=row.request_id,
+            request_payload=deepcopy(row.request_payload),
+            run_id=row.run_id,
+            closure_version=row.closure_version,
+            closure_contract=deepcopy(row.closure_contract),
+            snapshot_digest=row.snapshot_digest,
+            source=row.source,
+            conversation_ref=row.conversation_ref,
+            state=row.state,
+            driver_id=row.driver_id,
+            driver_instance_id=row.driver_instance_id,
+            driver_epoch=row.driver_epoch,
+            execution_id=row.execution_id,
+            execution_epoch=row.execution_epoch,
+            outcome=deepcopy(row.outcome),
+            started_at=row.started_at,
+            deadline_at=row.deadline_at,
+            created_at=created,
+            updated_at=updated,
+        )
+
+    async def _load_execution_request(self, workspace_id: str, request_id: str) -> ExecutionRequest | None:
+        key = (workspace_id, request_id)
+        cached = self.execution_requests.get(key)
+        if cached is not None:
+            return cached
+        if self.sessions is None:
+            return None
+        async with self.sessions() as session:
+            row = await session.get(RunExecutionRequestRow, key)
+        if row is None:
+            return None
+        item = self._execution_request_from_row(row)
+        self.execution_requests[key] = item
+        return item
+
+    async def _persist_execution_request(self, item: ExecutionRequest) -> None:
+        item.updated_at = datetime.now(timezone.utc)
+        self.execution_requests[(item.workspace_id, item.request_id)] = item
+        if self.sessions is None:
+            return
+        values = {
+            "workspace_id": item.workspace_id,
+            "request_id": item.request_id,
+            "request_payload": deepcopy(item.request_payload),
+            "run_id": item.run_id,
+            "closure_version": item.closure_version,
+            "source": item.source,
+            "closure_contract": deepcopy(item.closure_contract),
+            "snapshot_digest": item.snapshot_digest,
+            "conversation_ref": item.conversation_ref,
+            "state": item.state,
+            "driver_id": item.driver_id,
+            "driver_instance_id": item.driver_instance_id,
+            "driver_epoch": item.driver_epoch,
+            "execution_id": item.execution_id,
+            "execution_epoch": item.execution_epoch,
+            "outcome": deepcopy(item.outcome),
+            "started_at": item.started_at,
+            "deadline_at": item.deadline_at,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+        }
+        async with self._execution_write_session() as session:
+            row = await session.get(RunExecutionRequestRow, (item.workspace_id, item.request_id))
+            if row is None:
+                session.add(RunExecutionRequestRow(**values))
+            else:
+                for key, value in values.items():
+                    setattr(row, key, value)
+
+    async def list_execution_requests(self, workspace_id: str, *, states: set[str] | None = None) -> list[ExecutionRequest]:
+        if self.sessions is not None and not self._execution_in_transaction.get():
+            async with self.sessions() as session:
+                statement = select(RunExecutionRequestRow).where(RunExecutionRequestRow.workspace_id == workspace_id).order_by(RunExecutionRequestRow.created_at)
+                if states:
+                    statement = statement.where(RunExecutionRequestRow.state.in_(states))
+                rows = (await session.scalars(statement)).all()
+            items = [self._execution_request_from_row(row) for row in rows]
+            for item in items:
+                self.execution_requests[(item.workspace_id, item.request_id)] = item
+            return items
+        items = [item for item in self.execution_requests.values() if item.workspace_id == workspace_id]
+        if states:
+            items = [item for item in items if item.state in states]
+        return sorted(items, key=lambda item: item.created_at)
+
+    async def submit_run_plan(
+        self,
+        *,
+        workspace_id: str,
+        request_id: str,
+        plan: ClosureContract,
+        conversation_ref: str | None = None,
+        source: str = "external",
+    ) -> ExecutionRequest:
+        """Validate, commit and enqueue one complete plan idempotently."""
+        payload = {
+            "conversation_ref": conversation_ref,
+            "source": source,
+            "plan": plan.model_dump(mode="json"),
+        }
+        async with self._execution_transaction():
+            existing = await self._load_execution_request(workspace_id, request_id)
+            if existing is not None:
+                if canonical_json_bytes(existing.request_payload) != canonical_json_bytes(payload):
+                    raise ValueError("request_id_reused")
+                return existing
+            if plan.workspace_id not in {workspace_id, ""}:
+                raise ValueError("workspace_binding_mismatch")
+            task_ref = conversation_ref or ""
+            normalized = plan.model_copy(update={
+                "workspace_id": workspace_id,
+                "origin_conversation_ref": conversation_ref or "",
+            }, deep=True)
+            record = await self.open_run(
+                None,
+                task_ref,
+                normalized.goal,
+                bool(normalized.recovery_policy.get("allow_reassignment", False)),
+                normalized,
+                user_id=normalized.user_id,
+                workspace_id=workspace_id,
+            )
+            await self.begin_refinement(record.run_id)
+            committed = await self.commit(record.run_id, record.draft_version, record.draft_digest)
+            item = ExecutionRequest(
+                workspace_id=workspace_id,
+                request_id=request_id,
+                request_payload=payload,
+                run_id=record.run_id,
+                closure_version=committed.version_id,
+                closure_contract=record.closure_contract.model_dump(mode="json"),
+                snapshot_digest=committed.snapshot_digest,
+                source=source,
+                conversation_ref=conversation_ref,
+            )
+            await self._persist_execution_request(item)
+            record.events.append({
+                "phase": "execution_submission",
+                "request_id": request_id,
+                "source": source,
+                "execution_request_state": item.state,
+                "conversation_ref": conversation_ref,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            await self._persist(record)
+            return item
+
+    async def get_execution_request(self, workspace_id: str, request_id: str) -> ExecutionRequest:
+        item = await self._load_execution_request(workspace_id, request_id)
+        if item is None:
+            raise KeyError(request_id)
+        return item
+
+    async def claim_next_execution(
+        self,
+        *,
+        workspace_id: str,
+        driver_id: str,
+        driver_instance_id: str,
+        driver_epoch: int,
+    ) -> dict[str, Any] | None:
+        """Claim one queued plan and create its execution attempt."""
+        async with self._execution_transaction():
+            items = await self.list_execution_requests(workspace_id, states={"queued", "recovering"})
+            for item in items:
+                record = await self._load(item.run_id)
+                if record.state in {"cancelled", "failed", "completed", "closed"}:
+                    item.state = "settled"
+                    item.outcome = deepcopy(record.outcome)
+                    await self._persist_execution_request(item)
+                    continue
+                if record.state == "running" and item.state == "recovering" and item.execution_id == record.execution_id:
+                    item.state = "claimed"
+                    item.driver_id = driver_id
+                    item.driver_instance_id = driver_instance_id
+                    item.driver_epoch = driver_epoch
+                    await self._persist_execution_request(item)
+                    return {"request": item.model_dump(), "run": run_record_payload(record)}
+                if record.state != "committed" or item.closure_version != (record.committed.version_id if record.committed else None):
+                    continue
+                readiness = await self._evaluate_readiness(record.committed.snapshot, run_id=record.run_id) if record.committed else {"ready": False, "blockers": [{"code": "closure_not_committed"}]}
+                if not readiness.get("ready"):
+                    reason = {"code": "readiness_blocked", "blockers": deepcopy(readiness.get("blockers", []))}
+                    _transition(record, "run_needs_decision", reason=reason)
+                    record.outcome = {
+                        "disposition": "awaiting_decision",
+                        "decision": "repair",
+                        "terminal_state": "failed",
+                        "terminal_error": reason,
+                        "execution_id": None,
+                        "execution_epoch": record.execution_epoch,
+                    }
+                    await self._persist(record)
+                    item.state = "settled"
+                    item.outcome = deepcopy(record.outcome)
+                    await self._persist_execution_request(item)
+                    return {"request": item.model_dump(), "run": run_record_payload(record)}
+                started = await self.start(record.run_id, item.closure_version)
+                record = await self._load(record.run_id)
+                item.state = "claimed"
+                item.driver_id = driver_id
+                item.driver_instance_id = driver_instance_id
+                item.driver_epoch = driver_epoch
+                item.execution_id = str(started["execution_id"])
+                item.execution_epoch = int(started["execution_epoch"])
+                item.started_at = datetime.now(timezone.utc)
+                timeout_value = (record.closure_contract.resource_budget if record.closure_contract else {}).get(
+                    "execution_timeout_seconds",
+                    self.settings.execution_timeout_seconds,
+                )
+                try:
+                    timeout_seconds = max(1.0, float(timeout_value))
+                except (TypeError, ValueError):
+                    timeout_seconds = self.settings.execution_timeout_seconds
+                item.deadline_at = datetime.fromtimestamp(item.started_at.timestamp() + timeout_seconds, tz=timezone.utc)
+                if record.attempts:
+                    record.attempts[-1].update({
+                        "driver_id": driver_id,
+                        "driver_instance_id": driver_instance_id,
+                        "driver_epoch": driver_epoch,
+                    })
+                    await self._persist(record)
+                await self._persist_execution_request(item)
+                record.events.append({
+                    "phase": "execution_claimed",
+                    "request_id": item.request_id,
+                    "driver_id": driver_id,
+                    "driver_instance_id": driver_instance_id,
+                    "driver_epoch": driver_epoch,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+                await self._persist(record)
+                return {"request": item.model_dump(), "run": run_record_payload(record)}
+            return None
+
+    async def recover_execution_requests_for_driver(
+        self,
+        workspace_id: str,
+        *,
+        driver_id: str,
+        driver_instance_id: str,
+        driver_epoch: int,
+    ) -> int:
+        """Fence queue ownership from an older Driver lease."""
+        async with self._execution_transaction():
+            recovered = 0
+            for item in await self.list_execution_requests(workspace_id, states={"claimed"}):
+                if item.driver_id == driver_id and item.driver_instance_id == driver_instance_id and item.driver_epoch == driver_epoch:
+                    continue
+                item.state = "recovering"
+                item.driver_id = None
+                item.driver_instance_id = None
+                item.driver_epoch = None
+                await self._persist_execution_request(item)
+                recovered += 1
+            return recovered
+
+    async def _settle_execution_request(self, run_id: str, *, execution_id: str | None = None, outcome: dict[str, Any] | None = None) -> None:
+        # Resolve the workspace from the Run rather than the process default.
+        # This keeps settlement correct when a repository serves more than one
+        # workspace and also lets claim-time failures (which have no
+        # execution_id yet) settle their queue item.
+        try:
+            record = await self._load(run_id)
+        except KeyError:
+            return
+        workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else self.settings.workspace_id
+        items = await self.list_execution_requests(workspace_id)
+        for item in items:
+            if item.run_id != run_id or item.state == "settled":
+                continue
+            if execution_id is not None and item.execution_id not in {None, execution_id}:
+                continue
+            item.state = "settled"
+            item.outcome = deepcopy(outcome)
+            await self._persist_execution_request(item)
+            record.events.append({
+                "phase": "execution_settled",
+                "request_id": item.request_id,
+                "execution_request_state": item.state,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            await self._persist(record)
+
+    async def enqueue_committed_run(
+        self,
+        *,
+        workspace_id: str,
+        request_id: str,
+        run_id: str,
+        closure_version: str,
+        source: str = "builtin",
+        conversation_ref: str | None = None,
+    ) -> ExecutionRequest:
+        """Create an execution queue item for an already committed Run.
+
+        Built-in Driver planning has already performed the open/refine/commit
+        sequence.  It uses this method to enter the same durable queue as an
+        external submission without creating a second Run.
+        """
+        async with self._execution_transaction():
+            existing = await self._load_execution_request(workspace_id, request_id)
+            record = await self._assert_run_workspace(run_id, workspace_id)
+            if record.committed is None or record.committed.version_id != closure_version:
+                raise ValueError("closure_not_committed")
+            payload = {
+                "run_id": run_id,
+                "closure_version": closure_version,
+                "source": source,
+                "conversation_ref": conversation_ref,
+            }
+            if existing is not None:
+                if canonical_json_bytes(existing.request_payload) != canonical_json_bytes(payload):
+                    raise ValueError("request_id_reused")
+                return existing
+            # A committed Run may have been enqueued by a retried turn with a
+            # different command id.  Reuse the active item instead of creating
+            # a second schedulable request.
+            active = [
+                item for item in await self.list_execution_requests(workspace_id, states={"queued", "claimed", "recovering"})
+                if item.run_id == run_id
+            ]
+            if active:
+                return active[0]
+            item = ExecutionRequest(
+                workspace_id=workspace_id,
+                request_id=request_id,
+                request_payload=payload,
+                run_id=run_id,
+                closure_version=closure_version,
+                closure_contract=record.closure_contract.model_copy(update={"body": record.committed.snapshot}).model_dump(mode="json"),
+                snapshot_digest=record.committed.snapshot_digest,
+                source=source,
+                conversation_ref=conversation_ref,
+            )
+            await self._persist_execution_request(item)
+            return item
+
+    async def resubmit_run_plan(
+        self,
+        *,
+        workspace_id: str,
+        run_id: str,
+        request_id: str,
+        base_closure_version: str,
+        plan: ClosureContract,
+    ) -> ExecutionRequest:
+        """Replace a repairable plan and enqueue a new execution request."""
+        payload = {
+            "run_id": run_id,
+            "base_closure_version": base_closure_version,
+            "plan": plan.model_dump(mode="json"),
+        }
+        async with self._execution_transaction():
+            existing = await self._load_execution_request(workspace_id, request_id)
+            if existing is not None:
+                if canonical_json_bytes(existing.request_payload) != canonical_json_bytes(payload):
+                    raise ValueError("request_id_reused")
+                return existing
+            record = await self._assert_run_workspace(run_id, workspace_id)
+            if record.state != "awaiting_decision" or not isinstance(record.outcome, dict) or record.outcome.get("decision") != "repair":
+                raise ValueError("resubmit_not_repairable")
+            if record.committed is None or record.committed.version_id != base_closure_version:
+                raise ValueError("version_conflict")
+            previous_requests = [item for item in await self.list_execution_requests(workspace_id) if item.run_id == run_id]
+            if not previous_requests or previous_requests[0].source != "external":
+                raise ValueError("planning_source_mismatch")
+            if record.closure_contract is None or plan.goal != record.goal:
+                raise ValueError("closure_goal_mismatch")
+            # Repair may change the executable body and resource selection, but
+            # it cannot silently weaken the accepted success contract.
+            old_contract = record.closure_contract.model_dump(mode="json")
+            new_contract = plan.model_dump(mode="json")
+            for field_name in ("required_success_criteria", "result_expectations"):
+                if canonical_json_bytes(new_contract[field_name]) != canonical_json_bytes(old_contract[field_name]):
+                    raise ValueError("success_contract_changed")
+            if not set(new_contract["allowed_effects"]).issubset(set(old_contract["allowed_effects"])):
+                raise ValueError("success_contract_changed")
+            old_constraints = {canonical_json_bytes(item) for item in old_contract["declared_constraints"]}
+            new_constraints = {canonical_json_bytes(item) for item in new_contract["declared_constraints"]}
+            if not old_constraints.issubset(new_constraints):
+                raise ValueError("success_contract_changed")
+            if plan.workspace_id not in {workspace_id, ""}:
+                raise ValueError("workspace_binding_mismatch")
+            old_body_constraints = {canonical_json_bytes(item.model_dump(mode="json")) for item in record.committed.snapshot.constraints}
+            new_body_constraints = {canonical_json_bytes(item.model_dump(mode="json")) for item in plan.body.constraints}
+            if not old_body_constraints.issubset(new_body_constraints):
+                raise ValueError("constraints_changed")
+            for key, old_value in record.closure_contract.resource_budget.items():
+                new_value = plan.resource_budget.get(key, old_value)
+                if isinstance(old_value, (int, float)) and isinstance(new_value, (int, float)) and new_value > old_value:
+                    raise ValueError("execution_policy_changed")
+            if plan.recovery_policy != record.closure_contract.recovery_policy:
+                raise ValueError("execution_policy_changed")
+            normalized = plan.model_copy(update={
+                "workspace_id": workspace_id,
+                "origin_conversation_ref": record.closure_contract.origin_conversation_ref,
+                "user_id": record.closure_contract.user_id,
+            }, deep=True)
+            readiness = await self._evaluate_readiness(normalized.body, run_id=run_id)
+            if not readiness.get("ready"):
+                raise self._readiness_error(readiness)
+            previous_version = record.committed
+            previous_outcome = deepcopy(record.outcome)
+            _transition(record, "refinement_started", reason={"base_closure_version": base_closure_version})
+            record.closure_contract = normalized
+            record.draft = ClosureVersion(
+                version_id=f"draft-{uuid4().hex[:12]}",
+                closure_id=normalized.closure_id,
+                snapshot=normalized.body.model_copy(deep=True),
+                snapshot_digest=normalized.body.canonical_digest(),
+                patch_cursor=previous_version.patch_cursor + 1,
+            )
+            record.committed = None
+            record.outcome = None
+            record.events.append({
+                "phase": "plan_resubmitted",
+                "request_id": request_id,
+                "base_closure_version": base_closure_version,
+                "previous_committed": previous_version.model_dump(mode="json"),
+                "previous_outcome": previous_outcome,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            await self._persist(record)
+            committed = await self.commit(record.run_id, record.draft.version_id, record.draft.snapshot_digest)
+            item = ExecutionRequest(
+                workspace_id=workspace_id,
+                request_id=request_id,
+                request_payload=payload,
+                run_id=run_id,
+                closure_version=committed.version_id,
+                closure_contract=record.closure_contract.model_dump(mode="json"),
+                snapshot_digest=committed.snapshot_digest,
+                source="external",
+                conversation_ref=normalized.origin_conversation_ref or None,
+            )
+            await self._persist_execution_request(item)
+            return item
 
     @staticmethod
     def _record_order_key(record: RunRecord) -> str:
@@ -2348,6 +2941,24 @@ class ObserverRepository:
                 return current
 
             revision = 1 if current is None else current.activation_revision + 1
+            if current is not None:
+                # Keep the failed/stale attempt in the event log for audit,
+                # while replacing the live projection with a new fenced
+                # revision. Retrying a coordinate must not require deleting
+                # its history first.
+                event_list.append(
+                    {
+                        "phase": "capability_activation_superseded",
+                        "package_ref": package.version_ref,
+                        "package_digest": package.package_digest,
+                        "target_slave": target_slave,
+                        "instance_name": instance_name,
+                        "old_activation_revision": current.activation_revision,
+                        "old_activation_state": current.activation_state,
+                        "new_activation_revision": revision,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
             actual_state = (
                 "provisioning"
                 if desired_state == "running"
@@ -2372,9 +2983,11 @@ class ObserverRepository:
                 desired_state=desired_state,
                 activation_revision=revision,
                 last_idempotency_key=idempotency_key,
-                evidence_refs=list(current.evidence_refs) if current is not None else [],
+                # Evidence belongs to one activation revision. Never carry a
+                # failed attempt's container identity into its retry.
+                evidence_refs=[],
                 activation_state=actual_state,
-                runtime_profile=dict(current.runtime_profile) if current is not None else {},
+                runtime_profile={},
                 instance_name=instance_name,
                 target_resource_ref=target_resource_ref if target_resource_ref is not None else (current.target_resource_ref if current is not None else None),
                 instance_config=dict(instance_config or (current.instance_config if current is not None else {})),
@@ -3025,6 +3638,7 @@ class ObserverRepository:
         await self._persist(record)
         return {"run_id": run_id, "version": inspected_version, **readiness}
 
+    @execution_transaction
     async def cancel_run(self, run_id: str, reason: str | dict[str, Any] = "user_interrupt") -> RunRecord:
         record = await self._load(run_id)
         if record.state in {"completed", "closed", "failed", "cancelled"}:
@@ -3040,8 +3654,10 @@ class ObserverRepository:
             "execution_epoch": record.execution_epoch,
         }
         await self._persist(record)
+        await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
+    @execution_transaction
     async def fail_run(self, run_id: str, reason: str | dict[str, Any]) -> RunRecord:
         record = await self._load(run_id)
         if record.state in {"completed", "closed", "cancelled", "failed"}:
@@ -3057,6 +3673,7 @@ class ObserverRepository:
             "execution_epoch": record.execution_epoch,
         }
         await self._persist(record)
+        await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
     async def record_agent_signal(self, run_id: str, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -3076,7 +3693,8 @@ class ObserverRepository:
     async def list_conversations(self, workspace_id: str = "workspace-default") -> list[dict[str, Any]]:
         groups: dict[str, list[RunRecord]] = {}
         for record in await self._all_records():
-            groups.setdefault(record.task_ref, []).append(record)
+            if record.task_ref and (record.closure_contract is None or record.closure_contract.workspace_id == workspace_id):
+                groups.setdefault(record.task_ref, []).append(record)
         receipts = await self.list_message_receipts(workspace_id)
         receipt_groups: dict[str, list[MessageReceipt]] = {}
         for receipt in receipts:
@@ -3108,7 +3726,11 @@ class ObserverRepository:
         return [summary for _, summary in sorted(summaries, key=lambda item: item[0])]
 
     async def get_conversation(self, conversation_ref: str, workspace_id: str = "workspace-default") -> dict[str, Any]:
-        records = [record for record in await self._all_records() if record.task_ref == conversation_ref]
+        records = [
+            record for record in await self._all_records()
+            if record.task_ref == conversation_ref
+            and (record.closure_contract is None or record.closure_contract.workspace_id == workspace_id)
+        ]
         receipts = await self.list_message_receipts(workspace_id, conversation_ref)
         if not records and not receipts:
             raise KeyError(conversation_ref)
@@ -3116,6 +3738,11 @@ class ObserverRepository:
         messages: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
         run_summaries: list[dict[str, Any]] = []
+        execution_items = await self.list_execution_requests(workspace_id)
+        execution_by_run: dict[str, ExecutionRequest] = {}
+        for item in execution_items:
+            if item.conversation_ref == conversation_ref or item.run_id in {record.run_id for record in records}:
+                execution_by_run[item.run_id] = item
         receipt_run_ids = {receipt.run_id for receipt in receipts if receipt.run_id}
         receipts_by_run = {receipt.run_id: receipt for receipt in receipts if receipt.run_id}
         for receipt in receipts:
@@ -3191,8 +3818,28 @@ class ObserverRepository:
                     "dynamic_nodes": [node.model_dump(mode="json") for node in record.dynamic_nodes],
                     "capability_packages": [package.model_dump(mode="json") for package in record.capability_packages],
                     "capability_activations": [activation.model_dump(mode="json") for activation in record.capability_activations],
+                    "execution_request": (
+                        {
+                            "request_id": execution_by_run[record.run_id].request_id,
+                            "source": execution_by_run[record.run_id].source,
+                            "state": execution_by_run[record.run_id].state,
+                            "conversation_ref": execution_by_run[record.run_id].conversation_ref,
+                        }
+                        if record.run_id in execution_by_run else None
+                    ),
                 }
             )
+            execution_item = execution_by_run.get(record.run_id)
+            if execution_item is not None:
+                events.append({
+                    "phase": "execution_request",
+                    "request_id": execution_item.request_id,
+                    "run_id": record.run_id,
+                    "source": execution_item.source,
+                    "conversation_ref": execution_item.conversation_ref,
+                    "state": execution_item.state,
+                    "created_at": execution_item.created_at.isoformat(),
+                })
         messages.sort(key=lambda item: str(item.get("_projection_order") or ""))
         for message in messages:
             message.pop("_projection_order", None)
@@ -3506,6 +4153,7 @@ class ObserverRepository:
     async def get_run(self, run_id: str) -> RunRecord:
         return await self._load(run_id)
 
+    @execution_transaction
     async def record_result(self, run_id: str, result: dict[str, Any]) -> RunRecord:
         record = await self._load(run_id)
         if record.state != "running":
@@ -3773,6 +4421,7 @@ class ObserverRepository:
                 }
             )
         await self._persist(record)
+        await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
     async def close_run(self, run_id: str) -> RunRecord:
@@ -4604,6 +5253,7 @@ class ObserverRepository:
         await self._persist(record)
         return node
 
+    @execution_transaction
     async def complete_orchestration(self, run_id: str, final_ref: ResourceRef) -> RunRecord:
         record = await self._load(run_id)
         if record.state != "running" or record.execution_id is None:
@@ -4766,6 +5416,7 @@ class ObserverRepository:
                 }
             )
             await self._persist(record)
+            await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
             return record
         if requires_attestation:
             _transition(record, "run_needs_decision")
@@ -4793,6 +5444,7 @@ class ObserverRepository:
                 }
             )
             await self._persist(record)
+            await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
             return record
         _transition(record, "run_succeeded")
         record.outcome = {
@@ -4820,4 +5472,5 @@ class ObserverRepository:
             }
         )
         await self._persist(record)
+        await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record

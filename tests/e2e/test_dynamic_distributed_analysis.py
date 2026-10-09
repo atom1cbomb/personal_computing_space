@@ -148,7 +148,20 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
     )
     assert patched["readiness"]["ready"] is True
     committed = await mcp.call("loom_commit_plan")
-    await mcp.call("loom_start_run", {"closure_version": committed["closure_version"]})
+    queued = await repo.enqueue_committed_run(
+        workspace_id="workspace-default",
+        request_id=f"execution:{run_id}:{committed['closure_version']}",
+        run_id=run_id,
+        closure_version=committed["closure_version"],
+        conversation_ref="conversation-dynamic-analysis",
+    )
+    claim = await repo.claim_next_execution(
+        workspace_id="workspace-default",
+        driver_id="test-driver",
+        driver_instance_id="test-instance",
+        driver_epoch=0,
+    )
+    assert claim is not None and claim["request"]["request_id"] == queued.request_id
     workers = {
         slave_id: WorkerSession(slave_id, f"http://{slave_id}", transport=httpx.ASGITransport(app=create_slave_app(slave_id)))
         for slave_id in ("slave-a", "slave-b")

@@ -267,12 +267,8 @@ async def test_start_run_returns_repair_outcome_as_successful_tool_call():
         )
 
     service = DriverService(repo, FakeCodingAgentProvider(), executor=failing_executor)
-    mcp = DriverMCP(
-        repo,
-        "conversation-mcp-repair",
-        prompt="run failure",
-        run_executor=service._execute_and_wait_local,
-    )
+    service.start_execution_loop()
+    mcp = DriverMCP(repo, "conversation-mcp-repair", prompt="run failure")
     await mcp.call(
         "loom_open_run",
         {
@@ -297,6 +293,7 @@ async def test_start_run_returns_repair_outcome_as_successful_tool_call():
     assert result["decision"] == "repair"
     assert result["terminal_error"] == {"code": "worker_failed"}
     assert result["decision_hint"] == "repair_plan_and_retry"
+    await service.stop_execution_loop()
 
 
 @pytest.mark.asyncio
@@ -314,12 +311,8 @@ async def test_start_run_wakes_when_run_is_cancelled():
             raise
 
     service = DriverService(repo, FakeCodingAgentProvider(), executor=blocking_executor)
-    mcp = DriverMCP(
-        repo,
-        "conversation-mcp-cancelled",
-        prompt="wait",
-        run_executor=service._execute_and_wait_local,
-    )
+    service.start_execution_loop()
+    mcp = DriverMCP(repo, "conversation-mcp-cancelled", prompt="wait")
     await mcp.call(
         "loom_open_run",
         {
@@ -347,4 +340,5 @@ async def test_start_run_wakes_when_run_is_cancelled():
     assert result["state"] == "cancelled"
     assert result["disposition"] == "cancelled"
     assert result["decision"] is None
-    assert executor_cancelled.is_set()
+    await asyncio.wait_for(executor_cancelled.wait(), timeout=1)
+    await service.stop_execution_loop()

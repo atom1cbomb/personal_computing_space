@@ -2,7 +2,7 @@
 
 **把分散的计算资源和外部服务，组织成 AI 可以发现、调用和协作使用的个人计算工作空间。**
 
-你描述要完成的任务，Loom 中的 coding agent 负责选择能力、准备程序并生成执行计划；运行时负责检查计划、把任务交给实际资源执行，再保存结果和执行证据。
+你可以提交自然语言目标，也可以由自己的 coding agent 生成完整执行计划提交给 Loom。Observer 负责校验、冻结计划并排队；Driver 负责领取和执行，再保存结果和执行证据。
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
@@ -22,6 +22,7 @@
 | [Kubernetes](capability_services/kubernetes_http/README.md) | 接入集群，查询和操作包内声明的 Kubernetes 资源 |
 | [Suanli Cloud](capability_services/suanlicloud_http/README.md) | 查询区域、节点、镜像和实例，创建及管理 VM |
 | [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | 为单台 VM 提供浏览器认证和 SSH 命令执行的 HTTP 接口 |
+| [普通 VM SSH](capability_services/vm_ssh_http/README.md) | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行受限命令 |
 | [Outline](capability_services/outline_http/README.md) | 查询、检索、创建和更新文档等受限操作 |
 
 ## 带来什么好处
@@ -59,7 +60,7 @@
 
 **Observer 是唯一公共入口和状态权威。** 它保存会话、Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。
 
-**Driver 负责决策与编排。** 它承载 coding agent，把需求细化成可执行任务，并运行已提交的编排程序。当前有 Codex app-server 后端，以及用于确定性测试的 Fake 后端。Driver 不拥有独立业务数据库，线程绑定和请求去重记录由 Observer 持久化；coding-agent 本地状态还需要持久卷保存。
+**Driver 负责执行与编排。** 它可以承载内置 coding agent，也可以关闭模型规划，仅领取 Observer 已提交的执行队列项并运行编排程序。当前有 Codex app-server、Fake 和 `none` 后端。Driver 不拥有独立业务数据库，线程绑定、提交和执行队列记录由 Observer 持久化；coding-agent 本地状态还需要持久卷保存。
 
 **Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
 
@@ -165,6 +166,10 @@ fi
 | API | 用途 |
 | --- | --- |
 | `POST /api/v1/messages` | 提交消息并获得持久化收据 |
+| `POST /api/v1/run-submissions` | 提交外部 coding agent 生成的完整计划并排队执行 |
+| `GET /api/v1/run-submissions/{request_id}` | 查询提交、队列和执行结果 |
+| `POST /api/v1/runs/{run_id}/resubmit` | 根据 repair outcome 提交完整替换计划 |
+| `POST /api/v1/runs/{run_id}/cancel` | 取消已提交执行 |
 | `GET /api/v1/conversations` | 查询历史会话 |
 | `GET /api/v1/runtime` | 查询 Driver 和模型运行信息 |
 | `GET /api/v1/slaves` | 查询当前 Workspace 已注册的执行节点 |

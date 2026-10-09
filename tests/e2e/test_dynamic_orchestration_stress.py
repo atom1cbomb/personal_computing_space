@@ -108,7 +108,20 @@ async def test_dynamic_orchestration_single_node_stress_and_admission():
     )
     assert patched["readiness"]["ready"] is True
     committed = await mcp.call("loom_commit_plan")
-    await mcp.call("loom_start_run", {"closure_version": committed["closure_version"]})
+    await repo.enqueue_committed_run(
+        workspace_id="workspace-default",
+        request_id=f"execution:{run_id}:{committed['closure_version']}",
+        run_id=run_id,
+        closure_version=committed["closure_version"],
+        conversation_ref="conversation-dynamic-stress",
+    )
+    claim = await repo.claim_next_execution(
+        workspace_id="workspace-default",
+        driver_id="test-driver",
+        driver_instance_id="test-instance",
+        driver_epoch=0,
+    )
+    assert claim is not None
     slave_app = create_slave_app("slave-a")
     driver = DriverService(
         repo,

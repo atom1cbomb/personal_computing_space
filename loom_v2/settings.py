@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     codex_model: str = "deepseek-v4-flash"
     codex_message_limit_bytes: int = 16 * 1024 * 1024
     coding_agent_deadline_seconds: float = 86400.0
+    execution_timeout_seconds: float = 86400.0
     coding_agent_poll_interval_seconds: float = 5.0
     coding_agent_protocol_failure_seconds: float = 60.0
     worker_operation_timeout_seconds: float = 90.0

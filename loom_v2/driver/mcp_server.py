@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .mcp import DriverMCP
@@ -22,11 +21,9 @@ class DriverMCPServer:
         self,
         repository: ObserverRepository,
         content_store: ContentStore | None = None,
-        run_executor: Callable[[str, str], Awaitable[Any]] | None = None,
     ) -> None:
         self.repository = repository
         self.content_store = content_store
-        self.run_executor = run_executor
         self.sessions: dict[str, DriverMCP] = {}
 
     def session(self, conversation_ref: str) -> DriverMCP:
@@ -37,7 +34,6 @@ class DriverMCPServer:
                 self.repository,
                 conversation_ref,
                 content_store=self.content_store,
-                run_executor=self.run_executor,
             )
         return self.sessions[conversation_ref]
 
