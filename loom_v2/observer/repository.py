@@ -4480,6 +4480,12 @@ class ObserverRepository:
                     snapshot.program.io_contract_ref = ResourceRef.model_validate(value)
                 except Exception as exc:
                     raise ValueError("io_contract_ref_required") from exc
+                # The content-addressed IoContract is the sole executable
+                # contract. Clear legacy inline fields so a repair patch can
+                # recover a draft that initially included them.
+                snapshot.program.input_schema = None
+                snapshot.program.output_schema = None
+                snapshot.program.success_semantics = None
             elif kind == "add_typed_hole":
                 hole = TypedHole.model_validate(action["value"])
                 if any(existing.hole_id == hole.hole_id for existing in snapshot.compute.typed_holes):

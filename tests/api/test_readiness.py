@@ -205,3 +205,50 @@ async def test_program_inline_io_fields_are_not_an_executable_contract() -> None
         "code": "inline_io_contract_forbidden",
         "fields": ["input_schema", "output_schema", "success_semantics"],
     }
+
+
+@pytest.mark.asyncio
+async def test_setting_io_contract_ref_clears_legacy_inline_fields() -> None:
+    repo = ObserverRepository()
+    contract_ref = await repo.put_content(
+        {
+            "schema_version": "io.v1",
+            "input_schema_ref": None,
+            "output_schema_ref": None,
+            "success_semantics": None,
+            "success_validator_ref": None,
+        },
+        media_type="application/vnd.loom.io-contract+json",
+    )
+    contract = ClosureContract(
+        closure_id="closure-clear-inline-schema",
+        goal="repair input contract",
+        body=TaskClosure(
+            closure_id="closure-clear-inline-schema",
+            program={
+                "operation_ref": "loom://test_input_validation",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "success_semantics": {"criterion": "validated"},
+            },
+        ),
+    )
+    record = await repo.open_run(
+        "run-clear-inline-schema",
+        "task-clear-inline-schema",
+        "repair input contract",
+        closure_contract=contract,
+    )
+    patched = await repo.apply_patch(
+        record.run_id,
+        record.draft.version_id,
+        record.draft.snapshot_digest,
+        "set-io-contract-clears-inline",
+        [{"kind": "set_io_contract_ref", "value": contract_ref.model_dump(mode="json")}],
+    )
+
+    snapshot = (await repo.get_run(record.run_id)).draft.snapshot
+    assert snapshot.program.io_contract_ref == contract_ref
+    assert snapshot.program.input_schema is None
+    assert snapshot.program.output_schema is None
+    assert snapshot.program.success_semantics is None
