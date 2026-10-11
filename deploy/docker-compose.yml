@@ -88,24 +88,12 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.driver
-      args:
-        CODEX_VERSION: ${CODEX_VERSION:-0.151.0}
     environment:
       LOOM_SERVICE_NAME: driver
       LOOM_OBSERVER_URL: http://observer:8080
       LOOM_WORKSPACE_ID: workspace-default
       LOOM_WORKSPACE_ROOT: /workspace
       LOOM_AGENT_ID: driver-default
-      LOOM_CODING_AGENT_BACKEND: codex
-      LOOM_CODEX_MODEL: deepseek-v4-flash
-      LOOM_CODEX_PROVIDER: proxy
-      LOOM_CODEX_BASE_URL: ${LOOM_CODEX_BASE_URL:-http://host.docker.internal:8787}
-      LOOM_CODEX_MODEL_REASONING_EFFORT: xhigh
-      LOOM_CODEX_APPROVALS_REVIEWER: guardian_subagent
-      LOOM_CODEX_SANDBOX_MODE: danger-full-access
-      LOOM_CODEX_MODEL_CATALOG_JSON: /var/lib/loom/codex/model_catalog.json
-      LOOM_CODEX_API_KEY_ENV: OPENAI_API_KEY
-      LOOM_CODEX_WIRE_API: responses
       LOOM_S3_ENDPOINT_URL: http://minio:9000
       LOOM_S3_BUCKET: loom-content
       LOOM_S3_ACCESS_KEY: loom
@@ -117,8 +105,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${LOOM_WORKSPACE_PATH:-..}:/workspace
-      - driver-codex-state:/var/lib/loom/codex
-      - ${LOOM_CODEX_MODEL_CATALOG_PATH:-../../.codex/model_catalog.json}:/var/lib/loom/codex/model_catalog.json:ro
       - ../package_contracts:/opt/loom/package-contracts:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -195,7 +181,6 @@ volumes:
   slave-a-db-data:
   slave-b-db-data:
   minio-data:
-  driver-codex-state:
   slave-a-runtime-plugin-sockets:
   slave-b-runtime-plugin-sockets:
 

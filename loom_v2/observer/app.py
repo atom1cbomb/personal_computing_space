@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-import json
-import httpx
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from loom_v2.db.session import make_engine
@@ -24,7 +19,6 @@ from loom_v2.contracts.api import (
     ResourceCreateRequest,
     ContentPutRequest,
     IdempotencyRequest,
-    PublicMessageRequest,
     PublicSlave,
     PublicSlaveList,
     ResolveRequest,
@@ -38,7 +32,6 @@ from loom_v2.contracts.refs import select_slave_agents
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.gateway import ObserverDriverGateway
-from loom_v2.observer.dispatcher import ObserverMessageDispatcher
 from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
 from loom_v2.observer.browser_auth import BrowserAuth
 from loom_v2.observer.slave_gateway import ObserverSlaveGateway, SlaveForwardError
@@ -62,11 +55,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         await app.state.repo.init_db()
-        await app.state.dispatcher.start()
         try:
             yield
         finally:
-            await app.state.dispatcher.stop()
             await app.state.gateway.close()
             for worker in app.state.workers.values():
                 with suppress(Exception):
@@ -96,23 +87,14 @@ def create_app(
         token=settings.internal_api_secret,
         timeout=settings.worker_operation_timeout_seconds,
     )
-    app.state.dispatcher = ObserverMessageDispatcher(
-        app.state.repo,
-        app.state.gateway,
-        workspace_id=settings.workspace_id,
-        forward_timeout=settings.observer_forward_timeout_seconds,
-    )
-    # Observer production composition only owns the repository, gateway and
-    # dispatcher.  Embedded Driver/Slave/MCP wiring lives in
+    # Observer production composition only owns the repository and gateways.
+    # Embedded Driver/Slave wiring lives in
     # ``loom_v2.testing.observer`` and is never imported by this module.
     app.state.embedded = False
     app.state.browser_auth = BrowserAuth(app, settings)
     app.state.repo.orchestrator_runtime_available = False
-    app.state.provider = None
     app.state.slaves = {}
     app.state.workers = {}
-    app.state.driver = None
-    app.state.forward_tasks = {}
     static_dir = Path(__file__).resolve().parents[1] / "web" / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -408,34 +390,21 @@ def create_app(
 
     app.include_router(internal_router)
 
-    @app.get("/api/v1/runtime", response_model=dict[str, str | None])
-    async def runtime() -> dict[str, str | None] | JSONResponse:
+    @app.get("/api/v1/runtime", response_model=dict[str, Any])
+    async def runtime() -> dict[str, Any] | JSONResponse:
         active_driver = await app.state.gateway.active_driver()
         if active_driver is not None:
-            capabilities = active_driver.get("capabilities") or {}
             return {
-                "coding_agent_backend": str(capabilities.get("backend") or "codex"),
-                "coding_agent_label": str(capabilities.get("label") or "Codex app-server"),
-                "model": capabilities.get("model") or settings.codex_model,
+                "execution": True,
+                "orchestration": True,
                 "driver_id": active_driver.get("agent_id"),
                 "driver_epoch": str(active_driver.get("epoch")),
             }
         if not app.state.embedded:
             return JSONResponse(status_code=503, content={"code": "driver_unavailable", "retryable": True})
-        backend = settings.coding_agent_backend.strip().lower()
-        if backend == "codex":
-            label = "Codex app-server"
-            model = settings.codex_model
-        elif backend == "fake":
-            label = "Fake coding agent"
-            model = None
-        else:
-            label = backend or "Unknown coding agent"
-            model = settings.codex_model or None
         return {
-            "coding_agent_backend": backend,
-            "coding_agent_label": label,
-            "model": model,
+            "execution": True,
+            "orchestration": True,
         }
 
     @app.get("/api/v1/content/{digest}")
@@ -457,7 +426,7 @@ def create_app(
         return ref.model_dump(mode="json")
 
     def _execution_submission_view(item: Any, run: Any) -> dict[str, Any]:
-        return {
+        payload = {
             "request_id": item.request_id,
             "run_id": item.run_id,
             "closure_version": item.closure_version,
@@ -474,6 +443,10 @@ def create_app(
             "deadline_at": item.deadline_at.isoformat() if item.deadline_at else None,
             "outcome": item.outcome,
         }
+        if run.state == "awaiting_auth":
+            waiting = next((event for event in reversed(run.events) if event.get("phase") == "activation_wait"), None)
+            payload["waiting"] = dict((waiting or {}).get("waiting") or {})
+        return payload
 
     @app.post("/api/v1/run-submissions", status_code=202)
     async def submit_run_plan(payload: RunSubmissionRequest) -> JSONResponse:
@@ -544,138 +517,6 @@ def create_app(
             } else 422
             raise HTTPException(status_code=status, detail=code) from exc
 
-    @app.post("/api/v1/messages", response_model=dict[str, Any])
-    async def message(payload: PublicMessageRequest) -> dict[str, Any] | JSONResponse:
-        if not isinstance(payload.text, str) or not payload.text.strip():
-            raise HTTPException(status_code=422, detail="text_required")
-        if not app.state.embedded and not str(payload.request_id or "").strip():
-            raise HTTPException(status_code=422, detail="request_id_required")
-        if not app.state.embedded and not str(payload.conversation_ref or "").strip():
-            raise HTTPException(status_code=422, detail="conversation_ref_required")
-        if not app.state.embedded and (payload.workspace_id or settings.workspace_id) != settings.workspace_id:
-            raise HTTPException(status_code=403, detail="workspace_binding_mismatch")
-        conversation_ref = payload.conversation_ref or "conversation-default"
-        supplied_request_id = bool(payload.request_id)
-        request_id = payload.request_id or f"request-{uuid4().hex}"
-        if not app.state.embedded:
-            # A standalone Observer without an internal control-plane secret
-            # has no safe way to deliver work when no Driver is registered.
-            # Keep the synchronous failure contract for local deployments;
-            # split deployments with a secret may durably queue the receipt
-            # for a Driver that will register later.
-            if not settings.internal_api_secret.strip() and await app.state.gateway.active_driver() is None:
-                return JSONResponse(status_code=503, content={"code": "driver_unavailable", "retryable": True})
-            try:
-                existing = await app.state.repo.get_message_receipt(settings.workspace_id, request_id)
-                receipt = await app.state.repo.create_or_get_message_receipt(
-                    settings.workspace_id,
-                    request_id,
-                    conversation_ref,
-                    payload.text,
-                )
-            except ValueError as exc:
-                if str(exc) == "request_id_reused":
-                    raise HTTPException(status_code=409, detail="request_id_reused") from exc
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            if existing is not None and receipt.state == "accepted":
-                receipt = await app.state.repo.queue_message_receipt(settings.workspace_id, request_id)
-            app.state.dispatcher.wake()
-            body = {"accepted": True, "conversation_ref": conversation_ref, "request_id": request_id, "status": receipt.state}
-            return JSONResponse(status_code=202, content=body)
-        active_driver = await app.state.gateway.active_driver()
-        if active_driver is not None:
-            pending = app.state.forward_tasks.get(request_id)
-            if pending is not None and not pending.done():
-                return JSONResponse(status_code=202, content={"accepted": True, "conversation_ref": conversation_ref, "request_id": request_id, "status": "in_flight"})
-
-            async def _forward_legacy() -> dict[str, Any] | None:
-                try:
-                    return await app.state.gateway.forward(
-                        "/driver/v1/messages",
-                        {
-                            **payload.model_dump(exclude_none=True),
-                            "conversation_ref": conversation_ref,
-                            "request_id": request_id,
-                            "workspace_id": settings.workspace_id,
-                        },
-                        timeout=settings.observer_forward_timeout_seconds,
-                    )
-                except Exception:
-                    return None
-
-            task = asyncio.create_task(_forward_legacy())
-            app.state.forward_tasks[request_id] = task
-            task.add_done_callback(lambda done, rid=request_id: app.state.forward_tasks.pop(rid, None) if app.state.forward_tasks.get(rid) is done else None)
-            return JSONResponse(status_code=202, content={"accepted": True, "conversation_ref": conversation_ref, "request_id": request_id, "status": "accepted"})
-        if supplied_request_id:
-            return JSONResponse(status_code=503, content={"code": "driver_unavailable", "retryable": True})
-        if app.state.driver is None:
-            return JSONResponse(status_code=503, content={"code": "driver_unavailable", "retryable": True})
-        try:
-            return await app.state.driver.run_prompt(conversation_ref, payload.text)
-        except (RuntimeError, FileNotFoundError) as exc:
-            reason = getattr(exc, "reason", None)
-            if isinstance(reason, dict):
-                reason = dict(reason)
-                code = str(reason.get("code") or "coding_agent_error")
-                retryable = code not in {"coding_agent_blocked", "coding_agent_usage_limited", "coding_agent_budget_limited"}
-                return JSONResponse(status_code=503, content={"code": code, "retryable": retryable, "details": reason})
-            return JSONResponse(status_code=503, content={"code": str(exc), "retryable": True})
-
-    @app.get("/api/v1/conversations")
-    async def conversations() -> list[dict[str, Any]]:
-        return await app.state.repo.list_conversations(settings.workspace_id)
-
-    @app.get("/api/v1/conversations/{conversation_ref}")
-    async def conversation(conversation_ref: str) -> dict[str, Any]:
-        try:
-            return await app.state.repo.get_conversation(conversation_ref, settings.workspace_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="conversation_not_found") from exc
-
-    @app.post("/api/v1/conversations/{conversation_ref}/interrupt")
-    async def interrupt_conversation(conversation_ref: str) -> dict[str, Any]:
-        if not app.state.embedded:
-            receipts = await app.state.repo.list_message_receipts(settings.workspace_id, conversation_ref)
-            pending = next((item for item in reversed(receipts) if item.state in {"accepted", "queued", "retryable", "in_flight"}), None)
-            if pending is None:
-                raise HTTPException(status_code=409, detail="conversation_not_active")
-            if pending.state != "in_flight":
-                interrupted = await app.state.repo.interrupt_message_receipt(settings.workspace_id, pending.request_id)
-                return {"conversation_ref": conversation_ref, "request_id": interrupted.request_id, "status": "interrupted"}
-            try:
-                return await app.state.gateway.forward(
-                    f"/driver/v1/conversations/{conversation_ref}/interrupt",
-                    {"conversation_ref": conversation_ref, "workspace_id": settings.workspace_id, "request_id": pending.request_id},
-                )
-            except RuntimeError as exc:
-                code = str(exc)
-                raise HTTPException(status_code=409 if code == "stale_driver_epoch" else 503, detail=code) from exc
-        active_driver = await app.state.gateway.active_driver()
-        if active_driver is not None:
-            try:
-                return await app.state.gateway.forward(f"/driver/v1/conversations/{conversation_ref}/interrupt", {"conversation_ref": conversation_ref, "workspace_id": settings.workspace_id})
-            except RuntimeError as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if app.state.driver is None:
-            raise HTTPException(status_code=503, detail="driver_unavailable")
-        try:
-            return await app.state.driver.interrupt(conversation_ref)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.get("/api/v1/conversations/{conversation_ref}/stream")
-    async def stream(conversation_ref: str) -> StreamingResponse:
-        async def events() -> AsyncIterator[str]:
-            try:
-                conversation_view = await app.state.repo.get_conversation(conversation_ref, settings.workspace_id)
-            except KeyError:
-                return
-            for event in conversation_view["events"]:
-                yield f"data: {json.dumps(event, sort_keys=True, ensure_ascii=False)}\n\n"
-
-        return StreamingResponse(events(), media_type="text/event-stream")
-
     @app.get("/api/v1/runs/{run_id}/readiness")
     async def readiness(run_id: str) -> dict[str, Any]:
         try:
@@ -722,7 +563,7 @@ def create_app(
         available_only: bool = False, workspace_id: str | None = None,
     ) -> PublicSlaveList:
         # Public access is bound to this Observer's workspace, not an arbitrary
-        # caller-supplied registry scope. Do not mutate the dispatcher's cache.
+        # caller-supplied registry scope. Do not mutate the registry cache.
         if workspace_id is not None and workspace_id != settings.workspace_id:
             raise HTTPException(status_code=403, detail="workspace_binding_mismatch")
         agents = await app.state.repo.list_agents(settings.workspace_id, role="slave")
@@ -842,10 +683,24 @@ def create_app(
         packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=include_abandoned, workspace_id=settings.workspace_id)
         result = []
         for package in packages:
-            item = package.model_dump(mode="json")
+            item = await app.state.repo.public_package_payload(package)
             item["activations"] = [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]
             result.append(item)
         return result
+
+    @app.get("/api/v1/capability-descriptors")
+    async def capability_descriptor(resource_id: str, version_or_digest: str) -> dict[str, Any]:
+        """Resolve an operation descriptor through the public data plane."""
+        try:
+            ref = ResourceRef(
+                resource_id=resource_id,
+                version_or_digest=version_or_digest,
+                identity_criterion="descriptor_digest",
+            )
+            descriptor = await app.state.repo.get_operation_descriptor(ref)
+        except (FileNotFoundError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc) or "operation_descriptor_not_found") from exc
+        return {"resource_ref": ref.model_dump(mode="json"), "descriptor": descriptor}
 
     @app.post("/api/v1/resources")
     async def register_resource(payload: ResourceCreateRequest) -> dict[str, Any]:
@@ -868,6 +723,27 @@ def create_app(
             for item in await app.state.repo.list_resources(settings.workspace_id)
         ]
 
+    @app.get("/api/v1/resources/{resource_id:path}/activations")
+    async def resource_activations(
+        resource_id: str,
+        package_ref: str | None = None,
+        instance_name: str | None = None,
+        activation_state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            activations = await app.state.repo.list_resource_activations(
+                settings.workspace_id,
+                resource_id,
+                package_ref=package_ref,
+                instance_name=instance_name,
+                activation_state=activation_state,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="resource_not_found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return [item.model_dump(mode="json") for item in activations]
+
     @app.get("/api/v1/resources/{resource_id:path}")
     async def get_resource(resource_id: str) -> dict[str, Any]:
         try:
@@ -883,7 +759,7 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
         record = await app.state.repo.get_run(run_id)
-        return [{**package.model_dump(mode="json"), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]} for package in packages]
+        return [{**(await app.state.repo.public_package_payload(package)), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]} for package in packages]
 
     @app.get("/api/v1/capability-packages/{package_ref:path}")
     async def capability_package(package_ref: str) -> dict[str, Any]:
@@ -892,7 +768,7 @@ def create_app(
             await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
-        item = package.model_dump(mode="json")
+        item = await app.state.repo.public_package_payload(package)
         item["activations"] = [
             activation.model_dump(mode="json")
             for activation in await app.state.repo.list_package_activations(package)
@@ -980,6 +856,16 @@ def create_app(
         targets = payload.target_slaves
         if not targets:
             raise HTTPException(status_code=400, detail="target_slave_required")
+        activations = await app.state.repo.list_package_activations(package)
+        for target in targets:
+            activation = next(
+                (item for item in activations if item.target_slave == str(target) and item.instance_name == payload.instance_name),
+                None,
+            )
+            if activation is None:
+                raise HTTPException(status_code=409, detail="activation_not_found")
+            if payload.activation_revision is not None and activation.activation_revision != payload.activation_revision:
+                raise HTTPException(status_code=409, detail="activation_revision_conflict")
         authentication = (package.body or {}).get("authentication") if isinstance(package.body, dict) else None
         browser_path = authentication.get("browser_path") if isinstance(authentication, dict) else None
         if browser_path:

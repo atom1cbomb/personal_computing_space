@@ -38,4 +38,4 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["loom_v2*"]
+include = ["loom_v2*", "loom_orchestration*"]

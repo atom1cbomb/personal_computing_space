@@ -43,11 +43,10 @@
 
 ```text
 用户 / Web UI / 外部 agent
-            │ 公共 API、消息与状态订阅
+            │ 公共 API、提交与状态查询
             ▼
         Observer ◀──────────▶ Driver
-            │                 ├─ coding agent：理解需求、生成和修正计划
-            │                 └─ 编排沙箱：运行已提交的编排程序
+            │                 └─ 执行服务：运行已提交的普通/编排程序
             │ 中继执行命令、接收结果与健康报告
             ├───────────────▶ Slave A
             │                 └─ 执行器 / runtime plugin
@@ -58,9 +57,9 @@
 内容：Observer / Driver / Slave → 共享的 MinIO / S3 内容存储
 ```
 
-**Observer 是唯一公共入口和状态权威。** 它保存会话、Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。
+**Observer 是唯一公共入口和状态权威。** 它保存 Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。
 
-**Driver 负责执行与编排。** 它可以承载内置 coding agent，也可以关闭模型规划，仅领取 Observer 已提交的执行队列项并运行编排程序。当前有 Codex app-server、Fake 和 `none` 后端。Driver 不拥有独立业务数据库，线程绑定、提交和执行队列记录由 Observer 持久化；coding-agent 本地状态还需要持久卷保存。
+**外部 agent 负责编排，Driver 只负责执行。** Driver 仅领取 Observer 已冻结的执行队列项，并在沙箱中运行普通程序或 `container:python_orchestrator/1`。它不接收 prompt、不维护会话，也不持有模型 secret。
 
 **Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
 
@@ -68,14 +67,14 @@
 
 ### 从需求到结果
 
-1. **提交需求。** 用户发送消息，Observer 先持久化收据，再交给 Driver。收据表示“已收到”，不表示任务已执行成功。
-2. **形成任务闭包。** coding agent 创建 Run，明确目标和验收标准，准备输入、程序与契约，选择能力包及计算资源。这组执行所需的信息称为 Task Closure，可以理解为一份完整的任务执行说明。
-3. **检查并提交计划。** Observer 检查引用、能力绑定、契约和资源就绪条件；通过后生成不可变的已提交版本。执行使用该版本，后续修改不会偷偷替换正在运行的计划。
-4. **执行和编排。** 普通任务经 Observer 派发到 Slave。多步骤任务由 Driver 的隔离编排沙箱产生动态节点，每个节点选择一个包中的一个导出能力，交给 Observer 记录并中继执行。
+1. **形成任务闭包。** 外部 agent 明确目标和验收标准，准备输入、程序与契约，选择能力包及计算资源。
+2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 提交完整闭包；Observer 检查引用、能力绑定、契约和资源就绪条件并冻结版本。
+3. **排队执行。** Driver 领取不可变执行请求，沙箱产生动态节点并交给 Observer 记录和中继执行。
+4. **执行和编排。** 普通任务经 Observer 派发到 Slave；编排沙箱只执行外部 agent 提交的源码，并通过受控原语产生动态节点、资源登记和 activation。
 5. **记录结果并验收。** Slave 返回输出、状态和验证证据，结果写入内容存储。Observer 更新 Run；无法自动确认的成功语义会要求人工验收，失败则保留结构化原因。
 6. **复用或清理。** 用户可显式发布任务产生的能力包。外部资源的回收应纳入任务流程；关闭 Run 不意味着自动销毁云 VM。
 
-编排程序通过受限的 `read_json`、`emit_node`、`result` 接口读取内容、发出任务和等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 是 Driver 保留的特殊执行类型；普通能力包的业务调用仍在 Slave 一侧完成。
+编排程序通过受限的 `read_json`、`materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、`emit_node`、`result` 接口读取内容、管理资源并等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 是 Driver 保留的特殊执行类型；普通能力包的业务调用仍在 Slave 一侧完成。
 
 ## 能力包、资源和实例
 
@@ -140,7 +139,7 @@
 
 ### 本地启动
 
-需要 Docker Engine、Docker Compose，以及 Driver 可访问的模型服务。先准备内部服务密钥；已有密钥请复用，不要在升级时覆盖：
+需要 Docker Engine、Docker Compose，以及共享 ContentStore。先准备内部服务密钥；已有密钥请复用，不要在升级时覆盖：
 
 ```bash
 mkdir -p secrets
@@ -149,15 +148,13 @@ if [ ! -s secrets/internal_api_secret ]; then
 fi
 ```
 
-检查 [Compose 配置](deploy/docker-compose.yml) 中 Driver 的模型、provider 和模型目录挂载。当前开发默认连接 `http://host.docker.internal:8787`，使用 `deepseek-v4-flash`；这只是开发默认值，不代表会自动启动模型服务。按实际提供方配置端点、模型元数据及凭据后启动：
+检查 [Compose 配置](deploy/docker-compose.yml) 中 Observer、Driver、Slave 和 ContentStore 配置后启动：
 
 ```bash
 ./scripts/dev-up.sh
 ```
 
-打开 **http://localhost:18080**。该栈包含 Observer、Driver、两个 Slave、三个独立 PostgreSQL 和 MinIO；Driver 与 Slave 不发布公共端口。
-
-在界面中新建会话，描述任务，例如：“把输入数据分成多份，在两个执行节点上分别统计，再汇总均值和标准差。”完整示例见 [分布式统计](examples/distributed-statistics/README.md)。外部 agent 的使用流程见 [personal-computing-space](skills/personal-computing-space/SKILL.md)。
+打开 **http://localhost:18080**。该栈包含 Observer、Driver、两个 Slave、三个独立 PostgreSQL 和 MinIO；Driver 与 Slave 不发布公共端口。外部 agent 的使用流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。
 
 ### 常用查询入口
 
@@ -165,16 +162,15 @@ fi
 
 | API | 用途 |
 | --- | --- |
-| `POST /api/v1/messages` | 提交消息并获得持久化收据 |
 | `POST /api/v1/run-submissions` | 提交外部 coding agent 生成的完整计划并排队执行 |
 | `GET /api/v1/run-submissions/{request_id}` | 查询提交、队列和执行结果 |
 | `POST /api/v1/runs/{run_id}/resubmit` | 根据 repair outcome 提交完整替换计划 |
 | `POST /api/v1/runs/{run_id}/cancel` | 取消已提交执行 |
-| `GET /api/v1/conversations` | 查询历史会话 |
-| `GET /api/v1/runtime` | 查询 Driver 和模型运行信息 |
+| `GET /api/v1/runtime` | 查询 Driver 执行运行信息 |
 | `GET /api/v1/slaves` | 查询当前 Workspace 已注册的执行节点 |
 | `GET /api/v1/capability-packages` | 查询能力包及其激活情况 |
 | `GET /api/v1/resources` | 查询已登记资源及其使用包、管理关系 |
+| `GET /api/v1/resources/{resource_id}/activations` | 反查明确绑定资源的 capability activation |
 | `GET /api/v1/runs/{run_id}` | 查询任务状态、结果和执行记录 |
 | `GET /api/v1/content/{digest}` | 取回实际内容，核验 `X-Content-Digest` |
 

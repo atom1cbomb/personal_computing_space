@@ -139,6 +139,7 @@ class CapabilityActivationRequest(PublicRequest):
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
+    activation_revision: int | None = Field(default=None, ge=1)
 
 
 class CapabilityHealthRequest(ContractModel):

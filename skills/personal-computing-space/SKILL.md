@@ -5,21 +5,18 @@ description: Use when a coding agent needs to submit, monitor, continue, resolve
 
 # Personal Computing Space
 
-Use the Observer as the only external entry point. A coding agent may either
-send a natural-language request to the built-in Driver planner or submit a
-complete `ClosureContract` directly. Direct planning still goes through
-Observer validation, commit, persistence, and the Driver execution queue.
+Use the Observer as the only external entry point. The external agent owns
+discovery and orchestration; Driver only executes a frozen submission.
 
 ## Boundary
 
-- Submit natural-language work with `POST /api/v1/messages`, or a complete plan
-  with `POST /api/v1/run-submissions`.
+- Submit a complete plan with `POST /api/v1/run-submissions` using the
+  `loom-orchestration` package.
 - For a plan submission, provide a stable `request_id`, optional
   `conversation_ref`, and the complete `plan`. HTTP `202` means queued, not
   executed. Poll `GET /api/v1/run-submissions/{request_id}` or
   `GET /api/v1/runs/{run_id}`.
-- Observe work with `/api/v1/conversations/*` and `/api/v1/runs/*` reads.
-- Use `POST /api/v1/conversations/{conversation_ref}/interrupt` only to cancel.
+- Observe work with `/api/v1/run-submissions/*` and `/api/v1/runs/*` reads.
 - Resolve `awaiting_decision` only after presenting the evidence and obtaining
   the user's explicit `accept` or `abandon` decision.
 - Never call Observer `/mcp`, Driver `/driver/v1/*`, Observer `/internal/v1/*`,
@@ -33,11 +30,40 @@ Observer validation, commit, persistence, and the Driver execution queue.
   `POST /api/v1/capability-packages` after its referenced contents are uploaded
   with `POST /api/v1/content`; omit lifecycle fields and package digest. This
   creates a workspace-reusable package without a Run and does not activate a
-  Slave. Run-bound packages remain the Driver agent's responsibility.
+  Slave. Run-bound packages are part of the complete external submission.
 
 For a Kubernetes task, require a ready `service + container:http/1` export whose
 package contract documents the Kubernetes gateway. `available=true` alone does
 not mean that a Kubernetes credential profile is configured.
+
+## Resource-producing capability packages
+
+When a package export contains `capability_descriptors`, treat its
+`resource_effects` as the authoritative composition metadata. Do not infer a
+follow-up package from a provider name or from an operation's prose.
+
+For a `create` effect, follow the declared `identity_path`, invoke the bounded
+`readiness` operation with its `input_mapping`, and register the resulting
+resource using the declared package and manager references. Before emitting a
+node for an `access_requirements` entry, create the declared activation bound
+to `target_resource_ref`, complete authentication when
+`requires_authentication=true`, and wait for the declared `ready_state`.
+Always retain the resource identity and use the declared `cleanup` operation on
+failure, cancellation, or successful completion. A provider HTTP success or a
+create response does not mean that the resource is ready for access.
+
+The public package endpoint includes verified descriptor payloads inline. If a
+descriptor is not inline, resolve it only through the public
+`GET /api/v1/capability-descriptors?resource_id=...&version_or_digest=...`
+endpoint. If the descriptor, output schema, or referenced package cannot be
+resolved, stop with a metadata/readiness blocker instead of guessing a field,
+package, or polling operation.
+
+For Suanli VM creation, the declared workflow is therefore
+`instances-run` → `instances-status` until the VM is running and has an IP →
+resource registration → `suanli-vm-ssh-http` activation and browser
+authentication → `exec`; retain the InstanceId for
+`instances-terminate` cleanup.
 
 ## Workflow
 
@@ -50,27 +76,22 @@ not mean that a Kubernetes credential profile is configured.
    `base_operations`, `executor_descriptors`, and
    `runtime_plugin_descriptors` when choosing a feasible task. The endpoint is
    workspace-scoped and does not expose internal endpoints or lease tokens.
-3. Reuse one stable `conversation_ref` for follow-up turns. Generate a new
-   opaque `request_id` for each semantic message.
-4. Write a task message that states the goal, inputs visible to the workspace,
-   required output, distribution requirement, constraints, and acceptance
-   criteria. Do not include secrets.
-5. Submit the message and treat HTTP `202` as receipt acceptance, not task
-   completion.
-6. Poll `GET /api/v1/conversations/{conversation_ref}` with a bounded interval.
-   Correlate the user message by `request_id`; inspect its status, assistant
-   reply, Run outcome, dynamic nodes, and evidence.
-7. On `completed`, verify the requested acceptance criteria from the outcome.
+3. Upload source/input content and register packages through the public data
+   plane; use `GET /api/v1/resources/{resource_id}/activations` to reuse an
+   activation explicitly bound to a resource.
+4. Build one complete `ClosureContract` with `SubmissionBuilder` and submit it
+   with a stable `request_id`. Do not include secrets in source or closure.
+5. Poll `GET /api/v1/run-submissions/{request_id}` with a bounded interval.
+6. On `completed`, verify the requested acceptance criteria from the outcome.
    On `awaiting_decision`, follow the decision rules in the protocol reference.
    On `failed` or `interrupted`, report the structured reason without hiding it.
-8. For `awaiting_decision` with `outcome.decision=repair`, submit a complete
+7. For `awaiting_decision` with `outcome.decision=repair`, submit a complete
    replacement with `POST /api/v1/runs/{run_id}/resubmit`, using a new
    `request_id` and the returned `base_closure_version`. Preserve the accepted
    success contract and execution policy.
 
-Retries after an uncertain HTTP result must reuse the same `request_id` with
-the exact same `conversation_ref` and text. Reusing it with different content is
-an error.
+Retries after an uncertain HTTP result must reuse the same `request_id` and
+canonical plan. Reusing it with different content is an error.
 
 Read [references/observer-workflow.md](references/observer-workflow.md) before
 calling the Observer. It contains request shapes, polling rules, decision

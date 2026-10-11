@@ -60,6 +60,7 @@ from loom_v2.content_store import ContentStore, canonical_json_bytes, put_typed_
 from loom_v2.digest import digest_bytes, digest_json
 from loom_v2.contracts.io_schema import ValidationError as SchemaValidationError, validate, validate_schema
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
+from loom_v2.contracts.resource_effects import ResourceEffect, schema_path_exists, validate_operation_descriptor
 from loom_v2.contracts.refs import (
     input_binding_for,
     operation_name,
@@ -188,6 +189,12 @@ RUN_TRANSITIONS: dict[str, dict[str, str]] = {
     "running": {
         "run_succeeded": "completed",
         "run_needs_decision": "awaiting_decision",
+        "activation_wait": "awaiting_auth",
+        "run_failed": "failed",
+        "run_cancelled": "cancelled",
+    },
+    "awaiting_auth": {
+        "activation_ready": "running",
         "run_failed": "failed",
         "run_cancelled": "cancelled",
     },
@@ -250,6 +257,9 @@ def run_record_payload(record: RunRecord, *, include_snapshots: bool = True) -> 
         "capability_packages": [package.model_dump(mode="json") for package in record.capability_packages],
         "capability_activations": [activation.model_dump(mode="json") for activation in record.capability_activations],
     }
+    if record.state == "awaiting_auth":
+        waiting = next((event for event in reversed(record.events) if event.get("phase") == "activation_wait"), None)
+        payload["waiting"] = deepcopy((waiting or {}).get("waiting") or {})
     if include_snapshots:
         payload["draft"] = record.draft.model_dump(mode="json")
         payload["committed"] = record.committed.model_dump(mode="json") if record.committed else None
@@ -361,22 +371,23 @@ class ObserverRepository:
     def register_operation_descriptor(self, resource_id: str, descriptor: Any, *, digest: str | None = None) -> str:
         """Register an immutable descriptor and return its canonical digest."""
         descriptor_payload = descriptor.model_dump(mode="json") if hasattr(descriptor, "model_dump") else deepcopy(descriptor)
+        validate_operation_descriptor(descriptor_payload)
         computed = digest_json(descriptor_payload, domain="loom/operation-descriptor/v1")
         if digest is not None and digest.lower() != computed:
             raise ValueError("operation_descriptor_digest_mismatch")
         self.operation_descriptor_registry[(resource_id, computed)] = descriptor_payload
         return computed
 
-    async def _validate_operation_descriptor_ref(self, ref: ResourceRef) -> None:
+    async def get_operation_descriptor(self, ref: ResourceRef) -> dict[str, Any]:
+        """Resolve and validate a public operation descriptor reference."""
         digest = (ref.digest or "").lower()
         if not digest:
             raise ValueError("operation_descriptor_unavailable")
-        # Content-addressed descriptor refs can be self-verified without a
-        # separate service.  ContentStore treats ``descriptor_digest`` as a
-        # different identity criterion, so use a temporary content ref for
-        # the read while retaining the descriptor digest for verification.
         if ref.resource_id.startswith("content://sha256/"):
-            content_ref = ResourceRef(resource_id=ref.resource_id, identity_criterion="content_digest")
+            content_ref = ResourceRef(
+                resource_id=ref.resource_id,
+                identity_criterion="content_digest",
+            )
             raw = await self.content_store.get(content_ref)
             try:
                 payload = json.loads(raw)
@@ -384,24 +395,59 @@ class ObserverRepository:
                 raise ValueError("operation_descriptor_unavailable") from exc
             if digest_json(payload, domain="loom/operation-descriptor/v1") != digest:
                 raise ValueError("operation_descriptor_digest_mismatch")
-            return
-        # Symbolic refs require an authoritative registry entry.  A bare
-        # 64-hex placeholder is not enough to establish descriptor identity.
-        if not self.operation_descriptor_registry or (ref.resource_id, digest) not in self.operation_descriptor_registry:
+            validate_operation_descriptor(payload)
+            return payload
+        payload = self.operation_descriptor_registry.get((ref.resource_id, digest))
+        if payload is None:
             raise ValueError("operation_descriptor_unavailable")
-        descriptor = self.operation_descriptor_registry[(ref.resource_id, digest)]
-        descriptor_payload = descriptor.model_dump(mode="json") if hasattr(descriptor, "model_dump") else descriptor
-        if digest_json(descriptor_payload, domain="loom/operation-descriptor/v1") != digest:
+        payload = deepcopy(payload)
+        if digest_json(payload, domain="loom/operation-descriptor/v1") != digest:
             raise ValueError("operation_descriptor_digest_mismatch")
+        validate_operation_descriptor(payload)
+        return payload
+
+    async def public_package_payload(self, package: CapabilityPackageVersion) -> dict[str, Any]:
+        """Return a package projection with its public operation descriptors inline.
+
+        Capability exports historically exposed only descriptor references.  A
+        public agent has no access to the Observer's in-process symbolic
+        descriptor registry, so the Observer data plane now includes the
+        verified descriptor payload alongside each reference.
+        """
+        item = package.model_dump(mode="json")
+        descriptors: list[dict[str, Any]] = []
+        for export in package.capability_exports:
+            ref = export.capability_descriptor_ref
+            entry: dict[str, Any] = {"resource_ref": ref.model_dump(mode="json")}
+            try:
+                entry["descriptor"] = await self.get_operation_descriptor(ref)
+            except (FileNotFoundError, TypeError, ValueError) as exc:
+                entry["error"] = str(exc) or "operation_descriptor_unavailable"
+            descriptors.append(entry)
+        item["capability_descriptors"] = descriptors
+        return item
+
+    async def _validate_operation_descriptor_ref(self, ref: ResourceRef) -> None:
+        await self.get_operation_descriptor(ref)
 
     async def _validate_package_exports(self, package: CapabilityPackageVersion) -> None:
         for capability_export in package.capability_exports:
             await self._validate_operation_descriptor_ref(capability_export.capability_descriptor_ref)
             try:
                 contract = IoContract.model_validate(await self._load_json_content(capability_export.io_contract_ref))
+                descriptor = await self.get_operation_descriptor(capability_export.capability_descriptor_ref)
                 for schema_ref in (contract.input_schema_ref, contract.output_schema_ref):
                     if schema_ref is not None:
                         validate_schema(await self._load_json_content(schema_ref))
+                effects = descriptor.get("resource_effects") or []
+                if effects:
+                    if contract.output_schema_ref is None:
+                        raise ValueError("resource_effect_output_schema_required")
+                    output_schema = await self._load_json_content(contract.output_schema_ref)
+                    for raw_effect in effects:
+                        effect = ResourceEffect.model_validate(raw_effect)
+                        if not schema_path_exists(output_schema, effect.identity_path):
+                            raise ValueError("resource_effect_identity_path_unavailable")
                 if contract.success_validator_ref is not None:
                     require_content_ref(contract.success_validator_ref)
                     await self.content_store.get(contract.success_validator_ref)
@@ -1552,6 +1598,8 @@ class ObserverRepository:
                 compute_binding_ref=str(args.get("compute_binding_ref") or ""),
                 rebuild=bool(args.get("rebuild", False)),
                 instance_name=str(args.get("instance_name") or "default"),
+                target_resource_ref=ResourceRef.model_validate(args["target_resource_ref"]) if args.get("target_resource_ref") else None,
+                instance_config=dict(args.get("instance_config") or {}),
             )
             result = activation.model_dump(mode="json")
         elif command.command == "capability.health":
@@ -1584,6 +1632,14 @@ class ObserverRepository:
             if not isinstance(resource_payload, dict):
                 raise ValueError("resource_payload_invalid")
             result = (await self.register_resource(workspace_id, resource_payload)).model_dump(mode="json")
+        elif command.command == "activation.wait":
+            result = run_record_payload(await self.activation_wait(
+                str(args["run_id"]),
+                step_id=str(args.get("step_id") or ""),
+                package_ref=ResourceRef.model_validate(args["package_ref"]),
+                activation_ref=ResourceRef.model_validate(args["activation_ref"]),
+                waiting=dict(args.get("waiting") or {}),
+            ))
         elif command.command == "node.reassign":
             attempt = await self.reassign_dynamic_node(
                 str(args["run_id"]),
@@ -1846,6 +1902,57 @@ class ObserverRepository:
             for (scope, _), resource in sorted(self.workspace_resources.items())
             if scope == workspace_id
         ]
+
+    async def list_resource_activations(
+        self,
+        workspace_id: str,
+        resource_ref: ResourceRef | str,
+        *,
+        package_ref: str | ResourceRef | None = None,
+        instance_name: str | None = None,
+        activation_state: str | None = None,
+    ) -> list[CapabilityPackageActivation]:
+        """Return only activations explicitly bound to one workspace resource.
+
+        A package being available on the same Slave is not a resource binding;
+        the target_resource_ref is the authoritative relationship.
+        """
+        await self.get_resource(workspace_id, resource_ref)
+        resource_id = resource_ref.resource_id if isinstance(resource_ref, ResourceRef) else resource_ref
+        package_id = None
+        package_digest = None
+        if package_ref is not None:
+            normalized = package_ref if isinstance(package_ref, ResourceRef) else ResourceRef(resource_id=package_ref)
+            package_id = normalized.resource_id
+            package_digest = normalized.digest
+        result: list[CapabilityPackageActivation] = []
+        for record in await self._all_records():
+            contract_workspace = record.closure_contract.workspace_id if record.closure_contract else workspace_id
+            if contract_workspace != workspace_id:
+                continue
+            result.extend(record.capability_activations)
+        await self._load_workspace_packages()
+        for activations in self.workspace_package_activations.values():
+            result.extend(activations)
+        filtered: list[CapabilityPackageActivation] = []
+        seen: set[tuple[str, str, str, int]] = set()
+        for activation in result:
+            target = activation.target_resource_ref
+            if target is None or target.resource_id != resource_id:
+                continue
+            if package_id is not None and activation.package_version_ref != package_id:
+                continue
+            if package_digest is not None and activation.package_digest.lower() != package_digest.lower():
+                continue
+            if instance_name is not None and activation.instance_name != instance_name:
+                continue
+            if activation_state is not None and activation.activation_state != activation_state:
+                continue
+            key = (activation.package_version_ref, activation.target_slave, activation.instance_name, activation.activation_revision)
+            if key not in seen:
+                seen.add(key)
+                filtered.append(activation)
+        return sorted(filtered, key=lambda item: (item.package_version_ref, item.instance_name, item.target_slave, item.activation_revision))
 
     async def get_resource(
         self, workspace_id: str, resource_ref: ResourceRef | str
@@ -2316,6 +2423,75 @@ class ObserverRepository:
                 recovered += 1
             return recovered
 
+    async def activation_wait(
+        self,
+        run_id: str,
+        *,
+        step_id: str,
+        package_ref: ResourceRef,
+        activation_ref: ResourceRef,
+        waiting: dict[str, Any] | None = None,
+    ) -> RunRecord:
+        """Pause one claimed execution without creating another Run."""
+        async with self._execution_transaction():
+            record = await self._load(run_id)
+            if record.state == "awaiting_auth":
+                return record
+            if record.state != "running":
+                raise ValueError("execution_not_running")
+            _transition(record, "activation_wait", reason={"step_id": step_id})
+            record.events.append({
+                "phase": "activation_wait",
+                "step_id": step_id,
+                "package_ref": package_ref.model_dump(mode="json"),
+                "activation_ref": activation_ref.model_dump(mode="json"),
+                "waiting": deepcopy(waiting or {}),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            record.outcome = None
+            await self._persist(record)
+            workspace = record.closure_contract.workspace_id if record.closure_contract else self.settings.workspace_id
+            for item in await self.list_execution_requests(workspace):
+                if item.run_id != run_id or item.state == "settled":
+                    continue
+                item.state = "awaiting_auth"
+                item.driver_id = None
+                item.driver_instance_id = None
+                item.driver_epoch = None
+                item.outcome = None
+                await self._persist_execution_request(item)
+            return record
+
+    async def recover_activation_wait(self, activation: CapabilityPackageActivation) -> list[str]:
+        """Wake runs waiting on the exact activation revision."""
+        if activation.activation_state != "ready":
+            return []
+        awakened: list[str] = []
+        async with self._execution_transaction():
+            for record in await self._all_records():
+                if record.state != "awaiting_auth":
+                    continue
+                matching = any(
+                    event.get("phase") == "activation_wait"
+                    and event.get("activation_ref", {}).get("access_binding", {}).get("package_version_ref") == activation.package_version_ref
+                    and event.get("activation_ref", {}).get("access_binding", {}).get("target_slave") == activation.target_slave
+                    and event.get("activation_ref", {}).get("access_binding", {}).get("instance_name") == activation.instance_name
+                    and event.get("activation_ref", {}).get("version_or_digest") == activation.package_digest
+                    for event in reversed(record.events)
+                )
+                if not matching:
+                    continue
+                _transition(record, "activation_ready")
+                record.events.append({"phase": "activation_wait_recovered", "activation_revision": activation.activation_revision, "created_at": datetime.now(timezone.utc).isoformat()})
+                await self._persist(record)
+                workspace = record.closure_contract.workspace_id if record.closure_contract else self.settings.workspace_id
+                for item in await self.list_execution_requests(workspace):
+                    if item.run_id == record.run_id and item.state == "awaiting_auth":
+                        item.state = "recovering"
+                        await self._persist_execution_request(item)
+                awakened.append(record.run_id)
+        return awakened
+
     async def _settle_execution_request(self, run_id: str, *, execution_id: str | None = None, outcome: dict[str, Any] | None = None) -> None:
         # Resolve the workspace from the Run rather than the process default.
         # This keeps settlement correct when a repository serves more than one
@@ -2511,6 +2687,7 @@ class ObserverRepository:
             "thinking": "thinking",
             "committed": "executing",
             "running": "executing",
+            "awaiting_auth": "awaiting_auth",
             "completed": "completed",
             "awaiting_decision": "awaiting_decision",
             "cancelled": "interrupted",
@@ -2887,12 +3064,12 @@ class ObserverRepository:
                 else "workspace-default"
             )
         if target_resource_ref is not None:
-            target_resource = await self.get_resource(record_workspace, target_resource_ref)
-            if (
-                target_resource.package_ref.resource_id != package.version_ref
-                or target_resource.package_ref.digest != package.package_digest
-            ):
-                raise ValueError("activation_target_resource_package_mismatch")
+            # A managed resource's package describes the resource domain
+            # (for example a VM API), while an activation's package describes
+            # the operation used to access it (for example SSH).  They are
+            # intentionally different identities; only workspace ownership
+            # and the explicit target_resource_ref binding are required.
+            await self.get_resource(record_workspace, target_resource_ref)
         if workspace_id is not None and workspace_id != record_workspace:
             raise ValueError("workspace_binding_mismatch")
         lock_key = (record_workspace, package.version_ref, target_slave, instance_name)
@@ -3167,6 +3344,8 @@ class ObserverRepository:
         else:
             await self._persist_workspace_package(package)
         self._project_ready_capabilities(report.target_slave)
+        if activation.activation_state == "ready":
+            await self.recover_activation_wait(activation)
         return activation
 
     @classmethod
@@ -4670,6 +4849,25 @@ class ObserverRepository:
         target = self._canonical_target_resource_id(selected_target)
         if not self._slave_supports_package(target, node_package):
             raise ValueError("node_target_unavailable")
+        workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else "workspace-default"
+        if intent.target_resource_ref is not None:
+            await self.get_resource(workspace_id, intent.target_resource_ref)
+        if intent.activation_ref is not None:
+            activation_package_ref = str(intent.activation_ref.access_binding.get("package_version_ref") or intent.package_ref.resource_id)
+            activation_package = await self.get_capability_package(activation_package_ref, run_id=run_id)
+            activations = await self.list_package_activations(activation_package)
+            expected_target = str(intent.activation_ref.access_binding.get("target_slave") or target)
+            expected_instance = str(intent.activation_ref.access_binding.get("instance_name") or intent.instance_name)
+            if not any(
+                item.package_version_ref == activation_package.version_ref
+                and item.package_digest == intent.activation_ref.digest
+                and item.target_slave == expected_target
+                and item.instance_name == expected_instance
+                and item.activation_state == "ready"
+                and (intent.target_resource_ref is None or item.target_resource_ref == intent.target_resource_ref)
+                for item in activations
+            ):
+                raise ValueError("activation_not_ready")
         if record.closure_contract is not None and node_export.permissions:
             if not set(node_export.permissions).issubset(set(record.closure_contract.allowed_effects)):
                 raise ValueError("node_permission_denied")
@@ -4699,6 +4897,8 @@ class ObserverRepository:
             capability_descriptor_ref=intent.capability_descriptor_ref,
             input_refs=intent.input_refs,
             instance_name=intent.instance_name,
+            target_resource_ref=intent.target_resource_ref,
+            activation_ref=intent.activation_ref,
             state="accepted",
         )
         record.dynamic_nodes.append(node)
@@ -4732,6 +4932,7 @@ class ObserverRepository:
 
     async def dispatch_dynamic_node(self, run_id: str, node_id: str, *, target: str) -> dict[str, Any]:
         record = await self._load(run_id)
+        workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else "workspace-default"
         if record.state != "running" or record.execution_id is None:
             raise ValueError("execution_not_running")
         node = next((item for item in record.dynamic_nodes if item.node_id == node_id), None)
@@ -4741,7 +4942,6 @@ class ObserverRepository:
             raise ValueError("dynamic_node_not_dispatchable")
         if not isinstance(target, str) or not target:
             raise ValueError("node_target_unavailable")
-        workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else "workspace-default"
         await self.refresh_slaves(workspace_id)
         normalized_target = self._canonical_target_resource_id(target)
         accepted_event = next(

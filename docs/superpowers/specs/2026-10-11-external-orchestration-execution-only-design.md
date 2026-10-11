@@ -190,6 +190,8 @@ async def orchestrate(
 package = OrchestratorPackage(
     program_content_ref=program_ref,
     allowed_node_package_refs=[...],
+    capability_descriptor_ref=orchestrator_descriptor_ref,
+    io_contract_ref=orchestrator_io_contract_ref,
     max_nodes=32,
     max_live_nodes=8,
 ).manifest()

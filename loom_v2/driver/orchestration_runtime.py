@@ -13,6 +13,7 @@ from loom_v2.contracts.types import (
     NodeIntent,
     ResourceRef,
     TaskClosure,
+    ManagedResource,
 )
 from loom_v2.contracts.refs import input_binding_for, operation_name, package_body_ref, single_export
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
@@ -21,7 +22,7 @@ from loom_v2.driver.worker import WorkerSession, WorkerUnavailableError
 from loom_v2.slave.executor import ExecutionResult
 from loom_v2.slave.service import SlaveService
 
-from .orchestrator import DockerOrchestrationExecutor, OrchestrationExecutorError, OrchestrationProgramError
+from .orchestrator import DockerOrchestrationExecutor, OrchestrationActivationWait, OrchestrationExecutorError, OrchestrationProgramError
 
 
 @dataclass
@@ -104,14 +105,91 @@ class DynamicOrchestrationRuntime:
         async def read_json(ref: ResourceRef):
             return await self.repository._load_json_content(ref)
 
-        async def emit_node(
-            package_ref: ResourceRef,
-            capability_descriptor_ref: ResourceRef,
-            input_refs: list[ResourceRef],
-        ) -> str:
+        async def materialize_json(*, step_id: str, value: Any) -> ResourceRef:
+            return await self.repository.put_content(value, media_type="application/json")
+
+        async def register_resource(*, step_id: str, resource_type: str, identity: str, package_ref: ResourceRef, managed_by_ref: ResourceRef | None = None) -> ResourceRef:
+            resource_ref = ResourceRef(resource_id=identity if "://" in identity else f"resource://{resource_type}/{identity}")
+            resource = ManagedResource(resource_ref=resource_ref, package_ref=package_ref, managed_by_ref=managed_by_ref)
+            if hasattr(self.repository, "control"):
+                result = await self.repository.register_resource(resource.model_dump(mode="json"))
+                return ResourceRef.model_validate(result["resource_ref"])
+            stored = await self.repository.register_resource(
+                self.repository.workspace_id if hasattr(self.repository, "workspace_id") else "workspace-default",
+                resource,
+            )
+            return stored.resource_ref
+
+        async def ensure_activation(*, step_id: str, package_ref: ResourceRef, target_resource_ref: ResourceRef, instance_name: str = "default", instance_config: dict[str, Any] | None = None, requires_authentication: bool = False) -> ResourceRef:
+            await self.repository.refresh_slaves()
+            package = await self.repository.get_capability_package(package_ref, run_id=run_id)
+            target = self._select_target(package, package.capability_exports[0].capability_descriptor_ref, record)
+            activation = await self.repository.set_capability_desired(
+                package_ref,
+                target,
+                desired_state="running",
+                idempotency_key=f"{record.execution_id}:{step_id}",
+                run_id=run_id,
+                instance_name=instance_name,
+                target_resource_ref=target_resource_ref,
+                instance_config=instance_config or {},
+            )
+            return ResourceRef(
+                resource_id=f"activation://{activation.package_version_ref}/{activation.target_slave}/{activation.instance_name}",
+                version_or_digest=activation.package_digest,
+                access_binding={
+                    "activation_revision": activation.activation_revision,
+                    "package_version_ref": activation.package_version_ref,
+                    "target_slave": activation.target_slave,
+                    "instance_name": activation.instance_name,
+                },
+            )
+
+        async def wait_activation(*, step_id: str, activation_ref: ResourceRef, ready_state: str = "ready") -> dict[str, Any]:
+            package_ref = str(activation_ref.access_binding.get("package_version_ref") or "")
+            target_slave = str(activation_ref.access_binding.get("target_slave") or "")
+            instance_name = str(activation_ref.access_binding.get("instance_name") or "default")
+            if not package_ref:
+                raise RuntimeError("activation_ref_invalid")
+            package = await self.repository.get_capability_package(package_ref, run_id=run_id)
+            if hasattr(self.repository, "list_package_activations"):
+                activations = await self.repository.list_package_activations(package)
+            else:
+                current = await self.repository.get_run(run_id)
+                activations = current.capability_activations
+            activation = next((item for item in activations if item.package_version_ref == package.version_ref and item.package_digest == activation_ref.digest and item.target_slave == target_slave and item.instance_name == instance_name), None)
+            if activation is None:
+                raise RuntimeError("activation_not_found")
+            if activation.activation_state == "pending_auth":
+                raise OrchestrationActivationWait({
+                    "step_id": step_id,
+                    "package_ref": package_ref,
+                    "activation_ref": activation_ref.model_dump(mode="json"),
+                    "target_slave": activation.target_slave,
+                    "instance_name": activation.instance_name,
+                    "activation_revision": activation.activation_revision,
+                    "action": "authenticate",
+                })
+            if activation.activation_state != ready_state:
+                raise RuntimeError("activation_not_ready")
+            return activation.model_dump(mode="json")
+
+        async def defer_cleanup(*, step_id: str, resource_ref: ResourceRef, cleanup_operation_ref: ResourceRef, input_mapping: dict[str, Any]) -> None:
+            current = await self.repository.get_run(run_id)
+            current.events.append({"phase": "cleanup_deferred", "step_id": step_id, "resource_ref": resource_ref.model_dump(mode="json"), "cleanup_operation_ref": cleanup_operation_ref.model_dump(mode="json"), "input_mapping": input_mapping})
+            await self.repository._persist(current)
+
+        async def emit_node(*args: Any, target_resource_ref: ResourceRef | None = None, activation_ref: ResourceRef | None = None) -> str:
+            if len(args) == 3:
+                step_id = ""
+                package_ref, capability_descriptor_ref, input_refs = args
+            elif len(args) == 4:
+                step_id, package_ref, capability_descriptor_ref, input_refs = args
+            else:
+                raise RuntimeError("node_intent_arguments_invalid")
             nonlocal intent_sequence
             intent_sequence += 1
-            intent_id = f"intent-{intent_sequence:04d}"
+            intent_id = step_id or f"intent-{intent_sequence:04d}"
             try:
                 node_package = await self.repository.get_capability_package(package_ref, run_id=run_id)
             except KeyError as exc:
@@ -171,15 +249,13 @@ class DynamicOrchestrationRuntime:
             )
             await self.repository.refresh_slaves()
             current_record = await self.repository.get_run(run_id)
-            target = (
-                previous_target
-                if existing is not None and previous_target and not record.allow_reassignment
-                else self._select_target(
-                    node_package,
-                    capability_descriptor_ref,
-                    current_record,
-                )
-            )
+            bound_target = str((activation_ref.access_binding if activation_ref else {}).get("target_slave") or "")
+            if bound_target:
+                target = bound_target
+            elif existing is not None and previous_target and not record.allow_reassignment:
+                target = previous_target
+            else:
+                target = self._select_target(node_package, capability_descriptor_ref, current_record)
             intent = NodeIntent(
                 intent_id=intent_id,
                 execution_id=record.execution_id,
@@ -187,6 +263,8 @@ class DynamicOrchestrationRuntime:
                 capability_descriptor_ref=capability_descriptor_ref,
                 input_refs=input_refs,
                 instance_name="default",
+                target_resource_ref=target_resource_ref,
+                activation_ref=activation_ref,
             )
             node = await self.repository.accept_node_intent(run_id, intent, selected_target=target)
             if node.state == "completed":
@@ -214,13 +292,29 @@ class DynamicOrchestrationRuntime:
             return await item.task
 
         try:
-            final_ref = await self.executor.run(
-                program,
-                input_binding.input_ref,
-                read_json=read_json,
-                emit_node=emit_node,
-                result=result,
-            )
+            try:
+                final_ref = await self.executor.run(
+                    program,
+                    input_binding.input_ref,
+                    read_json=read_json,
+                    emit_node=emit_node,
+                    result=result,
+                    materialize_json=materialize_json,
+                    register_resource=register_resource,
+                    ensure_activation=ensure_activation,
+                    wait_activation=wait_activation,
+                    defer_cleanup=defer_cleanup,
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument" not in str(exc):
+                    raise
+                final_ref = await self.executor.run(
+                    program,
+                    input_binding.input_ref,
+                    read_json=read_json,
+                    emit_node=emit_node,
+                    result=result,
+                )
             if pending:
                 await asyncio.gather(*(item.task for item in pending.values()))
         except BaseException as exc:
@@ -229,6 +323,15 @@ class DynamicOrchestrationRuntime:
                     item.task.cancel()
             if pending:
                 await asyncio.gather(*(item.task for item in pending.values()), return_exceptions=True)
+            if isinstance(exc, OrchestrationActivationWait):
+                await self.repository.activation_wait(
+                    run_id,
+                    step_id=str(exc.waiting.get("step_id") or ""),
+                    package_ref=ResourceRef.model_validate(exc.waiting.get("package_ref")),
+                    activation_ref=ResourceRef.model_validate(exc.waiting.get("activation_ref")),
+                    waiting=exc.waiting,
+                )
+                raise
             if not isinstance(exc, asyncio.CancelledError):
                 reason = exc.reason if isinstance(exc, OrchestrationProgramError) else {"code": str(exc) or "orchestration_executor_error"}
                 if isinstance(exc, OrchestrationExecutorError):

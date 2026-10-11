@@ -1,10 +1,7 @@
 FROM python:3.12-slim
 
-ARG CODEX_VERSION=0.151.0
-
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends docker.io docker-cli nodejs npm ca-certificates \
-    && npm install --global "@openai/codex@${CODEX_VERSION}" \
+    && apt-get install -y --no-install-recommends docker.io docker-cli ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -16,7 +13,6 @@ COPY docker/driver-entrypoint.sh /usr/local/bin/loom-driver-entrypoint
 RUN chmod +x /usr/local/bin/loom-driver-entrypoint
 
 ENV PYTHONUNBUFFERED=1
-ENV CODEX_HOME=/var/lib/loom/codex
 EXPOSE 8090
 
 ENTRYPOINT ["/usr/local/bin/loom-driver-entrypoint"]

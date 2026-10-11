@@ -229,6 +229,20 @@ class RemoteObserverRepository:
             request_id=f"resource-register:{resource.get('resource_ref', {}).get('resource_id', '')}",
         ))
 
+    async def activation_wait(self, run_id: str, *, step_id: str, package_ref: ResourceRef, activation_ref: ResourceRef, waiting: dict[str, Any]) -> RemoteRunRecord:
+        payload = await self.control.command(
+            "activation.wait",
+            {
+                "run_id": run_id,
+                "step_id": step_id,
+                "package_ref": package_ref.model_dump(mode="json"),
+                "activation_ref": activation_ref.model_dump(mode="json"),
+                "waiting": waiting,
+            },
+            request_id=f"activation-wait:{run_id}:{step_id}",
+        )
+        return _decode_run(payload)
+
     async def record_capability_health(self, report: CapabilityHealthReport, *, run_id: str | None = None) -> CapabilityPackageActivation:
         payload = await self.control.command(
             "capability.health",
@@ -248,6 +262,8 @@ class RemoteObserverRepository:
         compute_binding_ref: str = "",
         rebuild: bool = False,
         instance_name: str = "default",
+        target_resource_ref: ResourceRef | None = None,
+        instance_config: dict[str, Any] | None = None,
     ) -> CapabilityPackageActivation:
         ref = (
             package_ref.model_dump(mode="json")
@@ -266,6 +282,8 @@ class RemoteObserverRepository:
                 "compute_binding_ref": compute_binding_ref,
                 "rebuild": rebuild,
                 "instance_name": instance_name,
+                "target_resource_ref": target_resource_ref.model_dump(mode="json") if target_resource_ref else None,
+                "instance_config": instance_config or {},
             },
             request_id=(
                 f"capability-desire:{target_slave}:{desired_state}:"

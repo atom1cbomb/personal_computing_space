@@ -5,19 +5,15 @@ from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
 from typing import Any, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI
 
-from loom_v2.coding_agents.codex import CodexAppServerProvider
-from loom_v2.coding_agents.fake import FakeCodingAgentProvider
-from loom_v2.contracts.agents import AgentLease, AgentRegistration
-from loom_v2.contracts.api import DriverMessageRequest, WorkspaceRequest
+from loom_v2.contracts.agents import AgentRegistration
 from loom_v2.settings import Settings
 from loom_v2.content_store import ContentStore
 
 from .control_client import ObserverControlClient
 from .service import DriverService
 from .worker import WorkerSession
-from loom_v2.auth import InternalAuth
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
 
 
@@ -30,17 +26,10 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     load_operator_package_contracts(settings.package_contract_dir)
-    if provider is None:
-        provider = None if settings.coding_agent_backend.lower() == "none" else (
-            FakeCodingAgentProvider()
-            if settings.coding_agent_backend.lower() == "fake"
-            else CodexAppServerProvider(
-                model=settings.codex_model,
-                poll_interval_seconds=settings.coding_agent_poll_interval_seconds,
-                protocol_failure_seconds=settings.coding_agent_protocol_failure_seconds,
-                settings=settings,
-            )
-        )
+    # Driver is execution-only.  The optional argument is retained solely so
+    # old embedding code can construct the app; no provider is created or
+    # invoked by the production Driver process.
+    provider = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -66,11 +55,6 @@ def create_app(
             if app.state.lease is not None:
                 with suppress(Exception):
                     await control.release()
-            with suppress(Exception):
-                await app.state.service.coordinator.shutdown()
-            if provider is not None:
-                with suppress(Exception):
-                    await provider.force_shutdown()
             with suppress(Exception):
                 await control.close()
             for worker in workers.values():
@@ -98,8 +82,6 @@ def create_app(
     app.state.heartbeat_task = None
     app.state.execution_task = None
 
-    require_internal = InternalAuth(settings.internal_api_secret)
-
     async def registration_loop() -> None:
         while True:
             try:
@@ -110,10 +92,11 @@ def create_app(
                     workspace_id=settings.workspace_id,
                     endpoint_url=settings.driver_url or "http://driver:8090",
                     protocol_version=settings.agent_protocol_version,
-                    capabilities={"backend": settings.coding_agent_backend, "model": settings.codex_model, "label": "Codex app-server"},
+                    capabilities={"execution": True, "orchestration": True},
                 )
                 app.state.lease = await control.register(registration)
-                app.state.service.coordinator.driver_epoch = app.state.lease.epoch
+                if app.state.service.coordinator is not None:
+                    app.state.service.coordinator.driver_epoch = app.state.lease.epoch
                 with suppress(Exception):
                     await control.command("execution.recover", {"workspace_id": settings.workspace_id})
                 with suppress(Exception):
@@ -131,7 +114,8 @@ def create_app(
                 await app.state.service.stop_execution_loop()
                 try:
                     app.state.lease = await control.register()
-                    app.state.service.coordinator.driver_epoch = app.state.lease.epoch
+                    if app.state.service.coordinator is not None:
+                        app.state.service.coordinator.driver_epoch = app.state.lease.epoch
                     await control.command("execution.recover", {})
                     app.state.execution_task = app.state.service.start_execution_loop()
                 except Exception:
@@ -141,38 +125,6 @@ def create_app(
     async def health() -> dict[str, Any]:
         lease = app.state.lease
         return {"ok": lease is not None, "service": "driver", "agent_id": settings.agent_id, "epoch": lease.epoch if lease else None}
-
-    @app.post("/driver/v1/messages", dependencies=[Depends(require_internal)])
-    async def message(payload: DriverMessageRequest) -> dict[str, Any]:
-        if provider is None:
-            raise HTTPException(status_code=503, detail="coding_agent_disabled")
-        if not isinstance(payload.text, str) or not payload.text.strip():
-            raise HTTPException(status_code=422, detail="text_required")
-        if not str(payload.request_id or "").strip():
-            raise HTTPException(status_code=422, detail="request_id_required")
-        if not str(payload.conversation_ref or "").strip():
-            raise HTTPException(status_code=422, detail="conversation_ref_required")
-        workspace_id = payload.workspace_id or settings.workspace_id
-        if workspace_id != settings.workspace_id:
-            raise HTTPException(status_code=403, detail="workspace_binding_mismatch")
-        try:
-            return await app.state.service.run_prompt(str(payload.conversation_ref), payload.text, request_id=str(payload.request_id))
-        except HTTPException:
-            raise
-        except Exception as exc:
-            reason = getattr(exc, "reason", None)
-            detail = reason if isinstance(reason, dict) else str(exc)
-            raise HTTPException(status_code=503, detail=detail) from exc
-
-    @app.post("/driver/v1/conversations/{conversation_ref}/interrupt", dependencies=[Depends(require_internal)])
-    async def interrupt(conversation_ref: str, payload: WorkspaceRequest | None = None) -> dict[str, Any]:
-        workspace_id = payload.workspace_id if payload is not None and payload.workspace_id else settings.workspace_id
-        if workspace_id != settings.workspace_id:
-            raise HTTPException(status_code=403, detail="workspace_binding_mismatch")
-        try:
-            return await app.state.service.interrupt(conversation_ref)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return app
 

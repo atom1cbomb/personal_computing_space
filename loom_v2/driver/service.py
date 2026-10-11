@@ -78,7 +78,7 @@ class DriverService:
         )
         self.remote_repository = RemoteObserverRepository(repository, content_store=self.content_store) if self.control_client is not None else None
         self.provider = provider
-        self.tools = DriverTools(repository)
+        self.tools = DriverTools(repository) if provider is not None else None
         self.executor = executor
         self.slaves = slaves or {}
         self.workers = workers or {}
@@ -89,13 +89,17 @@ class DriverService:
         self._execution_loop_stop = asyncio.Event()
         self.execution_loop_active = False
         self.execution_loop_task: asyncio.Task | None = None
-        self.coordinator = DriverTurnCoordinator(
-            provider,
-            workspace_id=getattr(repository, "workspace_id", "workspace-default"),
-            driver_epoch=int(getattr(repository, "driver_epoch", 0) or 0),
-            control_client=self.control_client,
-            turn_executor=self._coordinator_execute,
-            manage_provider_context=False,
+        self.coordinator = (
+            DriverTurnCoordinator(
+                provider,
+                workspace_id=getattr(repository, "workspace_id", "workspace-default"),
+                driver_epoch=int(getattr(repository, "driver_epoch", 0) or 0),
+                control_client=self.control_client,
+                turn_executor=self._coordinator_execute,
+                manage_provider_context=False,
+            )
+            if provider is not None
+            else None
         )
 
     async def _coordinator_execute(self, context: TurnContext, prompt: str) -> dict[str, Any]:
@@ -149,6 +153,8 @@ class DriverService:
             raise
 
     async def interrupt(self, conversation_ref: str) -> dict[str, Any]:
+        if self.provider is None or self.coordinator is None:
+            raise RuntimeError("coding_agent_disabled")
         if self.control_client is not None and hasattr(self.control_client, "claim_message"):
             return await self.coordinator.interrupt(conversation_ref)
         active = self.active_turns.get(conversation_ref)

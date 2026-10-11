@@ -51,8 +51,6 @@ def render_project(config: DeploymentConfig, machine_name: str) -> RenderedProje
         "postgres_password": config.postgres_password,
         "minio_secret_key": config.minio_secret_key,
     }
-    if config.codex_api_key is not None:
-        secret_files["codex_api_key"] = config.codex_api_key
     return RenderedProject(
         machine=machine.name,
         role=machine.role,
@@ -195,16 +193,8 @@ def _render_slave(config: DeploymentConfig, machine: MachineConfig) -> tuple[dic
 
 def _render_driver(config: DeploymentConfig, machine: MachineConfig) -> tuple[dict[str, Any], dict[str, str]]:
     app = _base_service(config, machine, dockerfile="Dockerfile.driver")
-    app["build"]["args"] = {"CODEX_VERSION": config.driver.codex_version}
     environment = {
         "LOOM_AGENT_ID": "driver-default",
-        "LOOM_CODEX_API_KEY_ENV": config.driver.codex_api_key_env,
-        "LOOM_CODEX_BASE_URL": config.driver.codex_base_url,
-        "LOOM_CODEX_MODEL": config.driver.codex_model,
-        "LOOM_CODEX_MODEL_REASONING_EFFORT": "xhigh",
-        "LOOM_CODEX_PROVIDER": config.driver.codex_provider,
-        "LOOM_CODEX_SANDBOX_MODE": "danger-full-access",
-        "LOOM_CODEX_WIRE_API": config.driver.codex_wire_api,
         "LOOM_DRIVER_URL": machine.endpoint_url,
         "LOOM_OBSERVER_URL": config.urls.observer,
         "LOOM_PACKAGE_CONTRACT_DIR": "/opt/loom/package-contracts",
@@ -217,37 +207,27 @@ def _render_driver(config: DeploymentConfig, machine: MachineConfig) -> tuple[di
         "LOOM_WORKSPACE_ID": config.workspace_id,
         "LOOM_WORKSPACE_ROOT": "/workspace",
     }
-    if config.driver.model_catalog_file is not None:
-        environment["LOOM_CODEX_MODEL_CATALOG_JSON"] = "/var/lib/loom/codex/model_catalog.json"
     app.update(
         {
             "environment": environment,
             "ports": [f"{machine.service_port}:8090"],
             "secrets": [
                 "internal_api_secret",
-                *(["codex_api_key"] if config.codex_api_key is not None else []),
+
             ],
             "volumes": [
                 f"{config.driver.workspace_path}:/workspace",
-                "driver-codex-state:/var/lib/loom/codex",
                 "./source/package_contracts:/opt/loom/package-contracts:ro",
                 "/var/run/docker.sock:/var/run/docker.sock",
             ],
         }
     )
-    if config.driver.model_catalog_file is not None:
-        app["volumes"].insert(2, "./model_catalog.json:/var/lib/loom/codex/model_catalog.json:ro")
     document = {
         "services": {"driver": app},
         "secrets": {
             "internal_api_secret": {"file": "./secrets/internal_api_secret"},
-            **(
-                {"codex_api_key": {"file": "./secrets/codex_api_key"}}
-                if config.codex_api_key is not None
-                else {}
-            ),
         },
-        "volumes": {"driver-codex-state": {}},
+        "volumes": {},
     }
     env = {
         "MINIO_ACCESS_KEY": config.minio_access_key,

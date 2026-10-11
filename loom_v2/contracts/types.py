@@ -445,6 +445,8 @@ class NodeIntent(ContractModel):
     capability_descriptor_ref: ResourceRef
     input_refs: list[ResourceRef] = Field(default_factory=list)
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",)
+    target_resource_ref: ResourceRef | None = None
+    activation_ref: ResourceRef | None = None
 
 
 class DynamicNode(ContractModel):
@@ -458,6 +460,8 @@ class DynamicNode(ContractModel):
     input_refs: list[ResourceRef] = Field(default_factory=list)
     state: Literal["accepted", "dispatched", "completed", "failed", "decision_required"] = "accepted"
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",)
+    target_resource_ref: ResourceRef | None = None
+    activation_ref: ResourceRef | None = None
 
     @property
     def package_digest(self) -> str | None:
