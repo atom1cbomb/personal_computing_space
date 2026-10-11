@@ -2,7 +2,7 @@
 
 **日期：** 2026-10-11
 
-**状态：** 待评审，未实现
+**状态：** 实现中（公共提交库、资源 activation 反查和执行协议已落地）
 
 **取代：** [外部 Agent 规划与 Driver 独立执行](2026-10-09-external-agent-plan-submission-design.md)中关于内置规划、message API 和 DriverMCP 规划工具的部分
 
