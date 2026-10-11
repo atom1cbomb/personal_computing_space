@@ -76,10 +76,25 @@ class LoomClient:
         result = await self._request("GET", f"/api/v1/resources/{resource_id}/activations", params=filters)
         return result if isinstance(result, list) else list(result.get("activations", []))
 
-    async def start_auth(self, package_ref: str, *, approved_digest: str, target_slave: str, instance_name: str = "default") -> dict[str, Any]:
+    async def start_auth(
+        self,
+        package_ref: str,
+        *,
+        approved_digest: str,
+        target_slave: str,
+        instance_name: str = "default",
+        activation_revision: int | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "approved_digest": approved_digest,
+            "target_slaves": [target_slave],
+            "instance_name": instance_name,
+        }
+        if activation_revision is not None:
+            body["activation_revision"] = activation_revision
         return await self._request(
             "POST", f"/api/v1/capability-packages/{package_ref}/auth/start",
-            json={"approved_digest": approved_digest, "target_slaves": [target_slave], "instance_name": instance_name},
+            json=body,
         )
 
     async def cancel(self, run_id: str, *, request_id: str, reason: str = "user_cancel") -> dict[str, Any]:
