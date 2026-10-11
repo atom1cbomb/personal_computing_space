@@ -517,16 +517,6 @@ def create_app(
             } else 422
             raise HTTPException(status_code=status, detail=code) from exc
 
-    @app.get("/api/v1/runs/{run_id}/readiness")
-    async def readiness(run_id: str) -> dict[str, Any]:
-        try:
-            await app.state.repo._assert_run_workspace(run_id, settings.workspace_id)
-            return await app.state.repo.inspect_readiness(run_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="run_not_found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
     @app.post("/api/v1/runs/{run_id}/close")
     async def close_run(run_id: str) -> dict[str, Any]:
         try:
