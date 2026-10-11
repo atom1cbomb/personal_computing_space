@@ -142,6 +142,11 @@ class DynamicOrchestrationRuntime:
                     "package_version_ref": activation.package_version_ref,
                     "target_slave": activation.target_slave,
                     "instance_name": activation.instance_name,
+                    "target_resource_ref": (
+                        activation.target_resource_ref.model_dump(mode="json")
+                        if activation.target_resource_ref is not None
+                        else None
+                    ),
                 },
             )
 
@@ -160,6 +165,17 @@ class DynamicOrchestrationRuntime:
             activation = next((item for item in activations if item.package_version_ref == package.version_ref and item.package_digest == activation_ref.digest and item.target_slave == target_slave and item.instance_name == instance_name), None)
             if activation is None:
                 raise RuntimeError("activation_not_found")
+            expected_revision = activation_ref.access_binding.get("activation_revision")
+            if expected_revision is not None:
+                try:
+                    revision_matches = int(expected_revision) == activation.activation_revision
+                except (TypeError, ValueError):
+                    revision_matches = False
+                if not revision_matches:
+                    raise RuntimeError("activation_revision_conflict")
+            expected_resource = activation_ref.access_binding.get("target_resource_ref")
+            if expected_resource is not None and activation.target_resource_ref != ResourceRef.model_validate(expected_resource):
+                raise RuntimeError("activation_resource_binding_conflict")
             if activation.activation_state == "pending_auth":
                 raise OrchestrationActivationWait({
                     "step_id": step_id,

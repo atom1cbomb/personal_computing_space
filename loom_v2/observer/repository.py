@@ -1688,6 +1688,69 @@ class ObserverRepository:
                 from loom_v2.db.base import Base
 
                 await connection.run_sync(Base.metadata.create_all)
+        # A health report may have completed while the Observer process was
+        # down. Reconcile persisted activation waits after the schema and
+        # workspace projections are available so those Runs are claimable
+        # again without a manual resume call.
+        await self.recover_persisted_activation_waits()
+
+    async def recover_persisted_activation_waits(self) -> list[str]:
+        await self._load_workspace_packages()
+        awakened: list[str] = []
+        for record in await self._all_records():
+            if record.state != "awaiting_auth":
+                continue
+            waiting = next(
+                (
+                    event
+                    for event in reversed(record.events)
+                    if event.get("phase") == "activation_wait"
+                ),
+                None,
+            )
+            if not waiting:
+                continue
+            activation_payload = waiting.get("activation_ref")
+            if not isinstance(activation_payload, dict):
+                continue
+            try:
+                activation_ref = ResourceRef.model_validate(activation_payload)
+            except (TypeError, ValueError):
+                continue
+            binding = activation_ref.access_binding
+            package_version_ref = str(binding.get("package_version_ref") or "")
+            target_slave = str(binding.get("target_slave") or "")
+            instance_name = str(binding.get("instance_name") or "default")
+            revision = binding.get("activation_revision")
+            if not package_version_ref or not target_slave or revision is None:
+                continue
+            try:
+                revision = int(revision)
+            except (TypeError, ValueError):
+                continue
+            candidates = list(record.capability_activations)
+            candidates.extend(
+                activation
+                for activations in self.workspace_package_activations.values()
+                for activation in activations
+            )
+            activation = next(
+                (
+                    item
+                    for item in candidates
+                    if item.package_version_ref == package_version_ref
+                    and item.package_digest == activation_ref.digest
+                    and item.target_slave == target_slave
+                    and item.instance_name == instance_name
+                    and item.activation_revision == revision
+                    and item.activation_state == "ready"
+                ),
+                None,
+            )
+            if activation is None:
+                continue
+            awakened.extend(await self.recover_activation_wait(activation))
+        return awakened
 
     async def recover_stale_runs(self, active_run_ids: set[str] | None = None) -> list[str]:
         """Fence Runs left active by a lost Observer/Driver process.
@@ -2477,6 +2540,7 @@ class ObserverRepository:
                     and event.get("activation_ref", {}).get("access_binding", {}).get("target_slave") == activation.target_slave
                     and event.get("activation_ref", {}).get("access_binding", {}).get("instance_name") == activation.instance_name
                     and event.get("activation_ref", {}).get("version_or_digest") == activation.package_digest
+                    and event.get("activation_ref", {}).get("access_binding", {}).get("activation_revision") == activation.activation_revision
                     for event in reversed(record.events)
                 )
                 if not matching:

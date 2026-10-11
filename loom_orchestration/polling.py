@@ -14,7 +14,10 @@ async def poll_submission(client: LoomClient, request_id: str, *, timeout: float
     while True:
         payload = await client.submission(request_id)
         state = str(payload.get("state") or payload.get("current_run_state") or "")
-        if state in {"completed", "failed", "cancelled", "closed", "awaiting_decision", "repair"}:
+        # Authentication is a deliberate, resumable boundary. Return the
+        # waiting projection so the caller can start auth and then poll the
+        # same submission again; do not spin until the user finishes login.
+        if state in {"completed", "failed", "cancelled", "closed", "awaiting_decision", "awaiting_auth", "repair"}:
             return payload
         remaining = deadline - time.monotonic()
         if remaining <= 0:
