@@ -1,8 +1,10 @@
-# 外部 Agent 规划与 Driver 独立执行
+# 外部 Agent 规划与 Driver 独立执行（历史版本）
 
 **日期：** 2026-10-09  
-**状态：** 待用户评审；评审通过后开始实现  
+**状态：** 已被 2026-10-11 spec 完全取代，仅保留历史背景
 **适用规范：** [Spec 设计原则](../spec-design-guidance.md)
+
+**状态说明：** 本文的内置 planner、`/api/v1/messages`、conversation projection、DriverMCP 规划工具和“两条规划路径”均已由 [外部 Agent 编排与 Driver 执行专用化](2026-10-11-external-orchestration-execution-only-design.md)取代；本文不再作为实现依据。执行队列、lease fencing、Node/Attempt 恢复和无模型执行的约束已整合到新 spec。
 
 ## 1. 目标与核心决策
 
