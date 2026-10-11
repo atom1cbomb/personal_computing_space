@@ -229,6 +229,8 @@ class DynamicOrchestrationRuntime:
                     existing.package_ref != package_ref
                     or existing.capability_descriptor_ref != capability_descriptor_ref
                     or existing.input_refs != input_refs
+                    or existing.target_resource_ref != target_resource_ref
+                    or existing.activation_ref != activation_ref
                 ):
                     raise RuntimeError("node_intent_conflict")
                 current_record = await self.repository.get_run(run_id)

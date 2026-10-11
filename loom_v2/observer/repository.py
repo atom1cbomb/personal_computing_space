@@ -4821,6 +4821,9 @@ class ObserverRepository:
                 existing.package_ref == intent.package_ref
                 and existing.capability_descriptor_ref == intent.capability_descriptor_ref
                 and existing.input_refs == intent.input_refs
+                and existing.instance_name == intent.instance_name
+                and existing.target_resource_ref == intent.target_resource_ref
+                and existing.activation_ref == intent.activation_ref
             ):
                 return existing
             raise ValueError("node_intent_conflict")
