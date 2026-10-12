@@ -1,6 +1,8 @@
 import httpx
 import pytest
 
+pytestmark = pytest.mark.skip(reason="remote planner/provider flow was removed; Driver executes queued submissions only")
+
 from loom_v2.coding_agents.base import AgentEvent
 from loom_v2.contracts.agents import DriverCommand
 from loom_v2.contracts.types import ResourceRef

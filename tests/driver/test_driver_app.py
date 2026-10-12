@@ -15,12 +15,12 @@ class ObserverTransport(httpx.AsyncBaseTransport):
         return httpx.Response(200, json={"agent_id": "driver-default", "instance_id": "test-instance", "workspace_id": "workspace-default", "lease_id": "lease-1", "epoch": 1, "heartbeat_interval_seconds": 60})
 
 
-def test_driver_message_endpoint_requires_internal_token(monkeypatch):
+def test_driver_message_endpoint_is_removed(monkeypatch):
     monkeypatch.setenv("LOOM_INTERNAL_API_SECRET", "secret")
     app = create_app(observer_transport=ObserverTransport())
     with TestClient(app) as client:
         response = client.post("/driver/v1/messages", json={"request_id": "r", "conversation_ref": "c", "text": "hello"})
-    assert response.status_code == 401
+    assert response.status_code == 404
 
 
 def test_driver_registers_on_startup():

@@ -77,7 +77,10 @@ def test_run_code_binding_requires_package_and_then_allows_submission():
     )]
     submitted = client.post("/api/v1/run-submissions", json=request)
     assert submitted.status_code == 202, submitted.text
-    assert client.get(f"/api/v1/runs/{submitted.json()['run_id']}/readiness").json()["ready"] is True
+    queried = client.get("/api/v1/run-submissions/package-required")
+    assert queried.status_code == 200
+    assert queried.json()["execution_request_state"] == "queued"
+    assert queried.json()["current_run_state"] == "committed"
 
 
 @pytest.mark.asyncio

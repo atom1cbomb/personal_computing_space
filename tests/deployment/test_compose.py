@@ -55,13 +55,13 @@ def test_driver_project_uses_observer_and_docker_socket(tmp_path: Path):
     assert "LOOM_SLAVE_A_URL" not in environment
     assert "LOOM_SLAVE_B_URL" not in environment
     assert environment["LOOM_S3_ENDPOINT_URL"] == "${LOOM_S3_ENDPOINT_URL}"
-    assert document["services"]["driver"]["build"]["args"] == {"CODEX_VERSION": "0.151.0"}
+    assert "args" not in document["services"]["driver"]["build"]
     assert document["services"]["driver"]["volumes"][-1] == "/var/run/docker.sock:/var/run/docker.sock"
     assert "pg-password" not in project.redacted_preview
     assert "internal-token" not in project.redacted_preview
 
 
-def test_driver_project_mounts_optional_codex_provider_secret(tmp_path: Path):
+def test_driver_project_ignores_legacy_codex_provider_secret(tmp_path: Path):
     for filename, value in {
         "internal.secret": "internal-token",
         "postgres.secret": "pg-password",
@@ -84,11 +84,10 @@ def test_driver_project_mounts_optional_codex_provider_secret(tmp_path: Path):
     document = json.loads(project.compose_text)
     driver = document["services"]["driver"]
 
-    assert driver["environment"]["LOOM_CODEX_PROVIDER"] == "volcengine-agent-plan"
-    assert driver["environment"]["LOOM_CODEX_API_KEY_ENV"] == "ARK_API_KEY"
-    assert "codex_api_key" in driver["secrets"]
-    assert document["secrets"]["codex_api_key"] == {"file": "./secrets/codex_api_key"}
-    assert project.secret_files["codex_api_key"] == "ark-key"
+    assert not any(key.startswith("LOOM_CODEX_") for key in driver["environment"])
+    assert "codex_api_key" not in driver["secrets"]
+    assert "codex_api_key" not in document["secrets"]
+    assert "codex_api_key" not in project.secret_files
     assert "ark-key" not in project.redacted_preview
 
 

@@ -19,7 +19,7 @@ def test_compose_uses_host_proxy_and_only_requires_internal_secret():
     compose = Path("deploy/docker-compose.yml").read_text(encoding="utf-8")
 
     assert "codex_api_key" not in compose
-    assert "http://host.docker.internal:8787" in compose
-    assert "host.docker.internal:host-gateway" in compose
+    assert "host.docker.internal:8787" not in compose
+    assert "host.docker.internal:host-gateway" not in compose
     assert "LOOM_SLAVE_A_URL" not in compose
     assert "LOOM_SLAVE_B_URL" not in compose

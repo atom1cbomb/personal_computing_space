@@ -43,27 +43,10 @@ async def test_control_client_surfaces_stale_epoch():
 
 
 @pytest.mark.asyncio
-async def test_control_client_preserves_structured_readiness_error():
-    detail = {
-        "code": "readiness_blocked",
-        "category": "domain",
-        "retryable": False,
-        "operation_ref": None,
-        "details": {
-            "blockers": [
-                {
-                    "code": "orchestration_program_unresolved_name",
-                    "diagnostics": [{"file": "orchestration.py", "line": 7, "column": 38, "end_line": 7, "end_column": 42, "severity": "error", "rule": "reportUndefinedVariable", "message": "null is not defined"}],
-                }
-            ]
-        },
-    }
-    transport = RecordingTransport(httpx.Response(409, json={"detail": detail}))
-    client = ObserverControlClient("http://observer:8080", driver_id="driver-default", instance_id="one", lease_id="lease", driver_epoch=1, transport=transport)
-    with pytest.raises(DomainError) as caught:
+async def test_control_client_rejects_removed_planner_commands():
+    client = ObserverControlClient("http://observer:8080", driver_id="driver-default", instance_id="one", lease_id="lease", driver_epoch=1)
+    with pytest.raises(ValueError, match="driver_command_not_allowed"):
         await client.command("run.commit", {"run_id": "run-1"})
-    assert caught.value.envelope.code == "readiness_blocked"
-    assert caught.value.envelope.details["blockers"][0]["diagnostics"][0]["rule"] == "reportUndefinedVariable"
 
 
 @pytest.mark.asyncio

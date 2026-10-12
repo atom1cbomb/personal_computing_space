@@ -38,7 +38,7 @@ def test_registering_new_driver_increments_epoch_and_fences_old_client():
 def test_observer_starts_without_registered_slave_or_driver():
     with TestClient(create_app()) as client:
         assert client.get("/healthz").json()["ok"] is True
-        assert client.post("/api/v1/messages", json={"request_id": "req-1", "conversation_ref": "c", "text": "hello"}).status_code == 503
+        assert client.post("/api/v1/messages", json={"request_id": "req-1", "conversation_ref": "c", "text": "hello"}).status_code == 404
 
 
 @pytest.mark.asyncio

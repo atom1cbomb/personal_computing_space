@@ -101,8 +101,6 @@ services:
       LOOM_S3_REGION: us-east-1
       LOOM_PACKAGE_CONTRACT_DIR: /opt/loom/package-contracts
     secrets: [internal_api_secret]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ${LOOM_WORKSPACE_PATH:-..}:/workspace
       - ../package_contracts:/opt/loom/package-contracts:ro

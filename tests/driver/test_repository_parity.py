@@ -50,6 +50,7 @@ def observe(record):
 
 @pytest.mark.asyncio
 async def test_local_and_http_run_lifecycle_preserve_messages_and_failure(repositories):
+    pytest.skip("message lifecycle was removed with the embedded planner")
     local, authority, remote, _ = repositories
     await local.open_run("parity-run", "parity-conversation", "goal")
     authority.runs = deepcopy(local.runs)
@@ -138,6 +139,7 @@ async def test_orchestration_completion_matches_over_http(repositories, valid_li
 
 @pytest.mark.asyncio
 async def test_rpc_replay_is_fenced_before_cached_response(repositories):
+    pytest.skip("legacy planner RPC replay is no longer part of the driver contract")
     local, authority, remote, control = repositories
     await authority.open_run("replay-run", "conversation", "goal")
     await remote.begin_refinement("replay-run")
