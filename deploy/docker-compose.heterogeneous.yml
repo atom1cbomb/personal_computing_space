@@ -5,6 +5,12 @@ services:
   driver:
     environment:
       LOOM_SCHEDULING_POLICY: ${LOOM_SCHEDULING_POLICY:-round_robin_v1}
+    volumes:
+      - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
+
+  observer:
+    volumes:
+      - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
 
   slave-a:
     cpus: 0.75
@@ -14,12 +20,18 @@ services:
       LOOM_SCHEDULING_CAPACITY: "1"
       LOOM_SCHEDULING_SERVICE_TIME_MS: "800"
       LOOM_SCHEDULING_COLD_START_MS: "1500"
+    volumes:
+      - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
 
   slave-b:
     cpus: 2.5
     environment:
       LOOM_RUNTIME_PLUGIN_CPUS: "2.0"
       LOOM_RUNTIME_PLUGIN_MAX_CONCURRENCY: "4"
-      LOOM_SCHEDULING_CAPACITY: "4"
+      # The current YOLO image has one blocking inference worker. The runtime
+      # can admit four calls, but its effective compute capacity is one.
+      LOOM_SCHEDULING_CAPACITY: "1"
       LOOM_SCHEDULING_SERVICE_TIME_MS: "200"
       LOOM_SCHEDULING_COLD_START_MS: "1500"
+    volumes:
+      - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro

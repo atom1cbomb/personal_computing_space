@@ -1,0 +1,104 @@
+{
+  "assignments": {
+    "slave-a": 2,
+    "slave-b": 10
+  },
+  "attempts": [
+    {
+      "attempt_id": "attempt-52d7dc51e064",
+      "inference_ms": 405.927,
+      "node_id": "node-execution-eb744a320636-1",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-92e91591af04",
+      "inference_ms": 228.515,
+      "node_id": "node-execution-eb744a320636-2",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-f830f457ef03",
+      "inference_ms": 221.939,
+      "node_id": "node-execution-eb744a320636-3",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-f905c7def734",
+      "inference_ms": 1136.272,
+      "node_id": "node-execution-eb744a320636-4",
+      "state": "completed",
+      "target": "slave-a"
+    },
+    {
+      "attempt_id": "attempt-86fe9b01b25d",
+      "inference_ms": 199.34,
+      "node_id": "node-execution-eb744a320636-5",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-a42356ed7ebc",
+      "inference_ms": 164.771,
+      "node_id": "node-execution-eb744a320636-6",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-4758362a8832",
+      "inference_ms": 222.848,
+      "node_id": "node-execution-eb744a320636-7",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-a8f33881a767",
+      "inference_ms": 206.058,
+      "node_id": "node-execution-eb744a320636-8",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-494c980d1cba",
+      "inference_ms": 155.374,
+      "node_id": "node-execution-eb744a320636-9",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-4105c5a9bf59",
+      "inference_ms": 224.348,
+      "node_id": "node-execution-eb744a320636-10",
+      "state": "completed",
+      "target": "slave-b"
+    },
+    {
+      "attempt_id": "attempt-54cc3dc2f540",
+      "inference_ms": 1354.291,
+      "node_id": "node-execution-eb744a320636-11",
+      "state": "completed",
+      "target": "slave-a"
+    },
+    {
+      "attempt_id": "attempt-099a2fb684aa",
+      "inference_ms": 203.153,
+      "node_id": "node-execution-eb744a320636-12",
+      "state": "completed",
+      "target": "slave-b"
+    }
+  ],
+  "completed_jobs": 12,
+  "decision_policy_ids": [
+    "earliest_finish_v1"
+  ],
+  "jobs": 12,
+  "node_latency_mean_ms": 942.589,
+  "node_latency_p95_ms": 1855.764,
+  "policy_id": "earliest_finish_v1",
+  "run_id": "run-b153c69c8f8e",
+  "scheduler_overhead_mean_us": 48.826,
+  "state": "completed",
+  "wall_latency_ms": 6206.255
+}

@@ -17,7 +17,11 @@ docker compose -f deploy/docker-compose.yml \
 
 ```bash
 python benchmarks/heterogeneous_scheduling/run_policy_simulation.py \
-  --output benchmarks/results/scheduling_simulation.json
+  --output benchmarks/results/test_results/heterogeneous_scheduling/scheduling_simulation.json
 ```
 
 正式实验必须对所有策略复用相同镜像摘要、输入清单、到达序列、超时和重试预算，并从 Run 事件与 Attempt 采集事实，不能把 Agent 的文字回复当成任务成功。
+
+当前 YOLO 容器虽然允许多个 HTTP 请求进入，但模型推理会阻塞单个服务进程，因此调度画像中的有效容量设为 1。把 HTTP 并发上限直接当成计算容量会产生错误调度。
+
+已完成的三轮端到端结果见 `end-to-end-results.md`。实验控制器中的固定编排程序只是构造相同的独立任务流，使策略比较可重复；它不替调度器选择 Slave，也不参与调度评分。
