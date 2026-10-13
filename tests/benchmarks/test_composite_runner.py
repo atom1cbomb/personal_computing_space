@@ -60,7 +60,11 @@ def test_orchestration_emits_three_stages_then_one_aggregate_node() -> None:
 
 
 def test_formal_node_limits_are_derived_from_image_count() -> None:
-    from benchmarks.composite_heterogeneous_scheduling.run_composite import node_limits
+    from benchmarks.composite_heterogeneous_scheduling.run_composite import locality_compute_spec, node_limits
 
     assert node_limits(100) == {"max_nodes": 301, "max_live_nodes": 100}
     assert node_limits(3) == {"max_nodes": 10, "max_live_nodes": 3}
+    assert locality_compute_spec("slave-c") == {
+        "operation_ref": "loom://composite-inspection",
+        "requirements": [{"key": "loom.data.locality.v1", "value": "slave-c", "view": "systems"}],
+    }

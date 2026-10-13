@@ -33,6 +33,13 @@ def node_limits(image_count: int) -> dict[str, int]:
     return {"max_nodes": 3 * image_count + 1, "max_live_nodes": image_count}
 
 
+def locality_compute_spec(slave_id: str) -> dict[str, Any]:
+    return {
+        "operation_ref": "loom://composite-inspection",
+        "requirements": [{"key": "loom.data.locality.v1", "value": slave_id, "view": "systems"}],
+    }
+
+
 def build_orchestration_source(packages: dict[str, PackageBinding]) -> str:
     def plain(value: Any) -> Any:
         return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
@@ -152,7 +159,10 @@ def run_experiment(args: argparse.Namespace) -> dict[str, Any]:
             "body": {"closure_id": "composite-inspection", "program": {"operation_ref": "loom://composite-inspection", "io_contract_ref": parent_contract}},
         }
         run_id = mcp_call(client, conversation, "loom_open_run", {"closure_contract": closure})["run_id"]
-        mcp_call(client, conversation, "loom_apply_plan_patch", {"ops": [{"kind": "set_execution_payload", "value": {"node_id": "loom://composite-inspection", "input_ref": parent_input}}]})
+        initial_ops = [{"kind": "set_execution_payload", "value": {"node_id": "loom://composite-inspection", "input_ref": parent_input}}]
+        if getattr(args, "target_slave", None):
+            initial_ops.append({"kind": "set_compute_spec", "value": locality_compute_spec(args.target_slave)})
+        mcp_call(client, conversation, "loom_apply_plan_patch", {"ops": initial_ops})
 
         process_defs = [
             ("risk", "inspection-assess-risk", RISK_INPUT_SCHEMA, RISK_OUTPUT_SCHEMA, RISK_PROGRAM),
@@ -207,13 +217,14 @@ def run_experiment(args: argparse.Namespace) -> dict[str, Any]:
             final_output = client.get(f"/api/v1/content/{digest}", timeout=30).json()
         package_digests = {name: ref[0]["version_or_digest"] for name, ref in bindings.items()}
         metrics = collect_run_metrics(record, wall_ms=wall_ms, policy_id=args.policy, topology=args.topology, image_digest=image_digest, package_digests=package_digests, final_output=final_output, final_content_ref=final_ref)
-        return {"configuration": {"images": args.images, "policy_id": args.policy, "topology": args.topology}, "metrics": metrics, "task_output": final_output, "run": record}
+        return {"configuration": {"images": args.images, "policy_id": args.policy, "topology": args.topology, "target_slave": getattr(args, "target_slave", None)}, "metrics": metrics, "task_output": final_output, "run": record}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy", required=True, choices=["round_robin_v1", "least_loaded_v1", "earliest_finish_v1"])
     parser.add_argument("--topology", required=True, choices=["a-b", "a-b-c"])
+    parser.add_argument("--target-slave", choices=["slave-a", "slave-b", "slave-c"])
     parser.add_argument("--images", type=int, default=3)
     parser.add_argument("--observer-url", default="http://localhost:18080")
     parser.add_argument("--timeout", type=float, default=900)
