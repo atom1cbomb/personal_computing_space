@@ -1,0 +1,7 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {"resource_id": "content://sha256/<upload-preprocess-input-schema>", "identity_criterion": "content_digest"},
+  "output_schema_ref": {"resource_id": "content://sha256/<upload-preprocess-output-schema>", "identity_criterion": "content_digest"},
+  "success_semantics": null,
+  "success_validator_ref": null
+}

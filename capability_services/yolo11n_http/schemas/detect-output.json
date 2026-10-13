@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["request_id", "image_id", "model", "detections", "counts", "inference_ms"],
+  "properties": {
+    "request_id": {"type": "string"},
+    "image_id": {"type": "string"},
+    "model": {"const": "yolo11n"},
+    "detections": {"type": "array"},
+    "counts": {"type": "object"},
+    "inference_ms": {"type": "number", "minimum": 0}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["request_id", "image_id", "image_base64"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "image_id": {"type": "string", "minLength": 1},
+    "image_base64": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

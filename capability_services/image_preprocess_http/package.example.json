@@ -1,0 +1,28 @@
+{
+  "package_type": "service",
+  "package_id": "image-preprocess-http",
+  "package_version": "v1",
+  "execution": {"kind": "container:http", "version": "1"},
+  "body": {
+    "image_ref": "localhost:5001/loom/image-preprocess-http@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz"
+  },
+  "capability_exports": [
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "content://sha256/<upload-operation-descriptor>",
+        "version_or_digest": "<descriptor-digest>",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/<upload-io-contract>",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "PureCompute",
+      "permissions": [],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {"path": "/invoke"}
+    }
+  ]
+}

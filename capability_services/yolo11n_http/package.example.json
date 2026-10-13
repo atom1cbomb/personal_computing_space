@@ -1,0 +1,28 @@
+{
+  "package_type": "service",
+  "package_id": "yolo11n-http",
+  "package_version": "v4",
+  "execution": {"kind": "container:http", "version": "1"},
+  "body": {
+    "image_ref": "localhost:5001/loom/yolo11n-http@sha256:05ba984b7fc57dc4b2dd7036dfb7bea9d4bda3514c4d0f29846e74d7d20b93ca",
+    "container_port": 8080,
+    "health_path": "/healthz"
+  },
+  "capability_exports": [
+    {
+      "capability_descriptor_ref": {
+        "resource_id": "content://sha256/59aebcba17a7713e8bae59b7f8622c43ea7722ef11064eb9984c4913788f7104",
+        "version_or_digest": "60ccff3404094e85cde1bccb998bdf10a5976d9739f2916ef09189c8eac28dd8",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "content://sha256/0b52789b1442d189f5cf748a157d52b623ee04c175aad16b4c73f8f0e7c92564",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "PureCompute",
+      "permissions": [],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {"path": "/invoke"}
+    }
+  ]
+}

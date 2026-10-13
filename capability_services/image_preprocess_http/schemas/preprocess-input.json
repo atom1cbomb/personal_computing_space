@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["request_id", "image_id", "image_base64"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "image_id": {"type": "string", "minLength": 1},
+    "image_base64": {"type": "string", "minLength": 1},
+    "max_edge": {"type": "integer", "minimum": 32, "maximum": 4096, "default": 1280},
+    "jpeg_quality": {"type": "integer", "minimum": 40, "maximum": 95, "default": 85}
+  },
+  "additionalProperties": false
+}
