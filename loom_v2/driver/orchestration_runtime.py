@@ -43,6 +43,7 @@ class DynamicOrchestrationRuntime:
         workers: dict[str, WorkerSession] | None = None,
         driver_id: str | None = None,
         driver_epoch: int | None = None,
+        scheduling_policy: SchedulingPolicy | None = None,
     ) -> None:
         self.repository = repository
         self.executor = executor
@@ -50,7 +51,7 @@ class DynamicOrchestrationRuntime:
         self.workers = workers or {}
         self.driver_id = driver_id
         self.driver_epoch = driver_epoch
-        self._round_robin_cursor: dict[str, int] = {}
+        self.scheduling_policy = scheduling_policy or create_scheduling_policy("round_robin_v1")
 
     async def run(self, run_id: str) -> tuple[Any, ExecutionResult]:
         record = await self.repository.get_run(run_id)
@@ -476,15 +477,35 @@ class DynamicOrchestrationRuntime:
             if activation.package_version_ref == package.version_ref
             and activation.activation_state == "ready"
         }
-        candidates = [slave_id for slave_id in available if slave_id in activation_targets] or available
-        cursor_key = (
+        scheduling_key = (
             f"{package.version_ref}#descriptor:"
             f"{action_descriptor_ref.digest or action_descriptor_ref.resource_id}"
         )
-        cursor = self._round_robin_cursor.get(cursor_key, 0)
-        target = candidates[cursor % len(candidates)]
-        self._round_robin_cursor[cursor_key] = cursor + 1
-        return target
+        inflight = {
+            slave_id: sum(
+                1
+                for attempt in record.attempts
+                if attempt.get("target") == slave_id
+                and attempt.get("state") in {"created", "running"}
+            )
+            for slave_id in available
+        }
+        candidates = []
+        for slave_id in available:
+            profile = self.repository.slave_capabilities.get(slave_id, {}).get("scheduling", {})
+            candidates.append(
+                SchedulingCandidate(
+                    target_id=slave_id,
+                    inflight=inflight[slave_id],
+                    capacity=max(1, int(profile.get("capacity", 1))),
+                    service_time_ms=max(0.0, float(profile.get("service_time_ms", 1000.0))),
+                    cold_start_ms=max(0.0, float(profile.get("cold_start_ms", 0.0))),
+                    ready=slave_id in activation_targets,
+                )
+            )
+        return self.scheduling_policy.select(
+            SchedulingContext(scheduling_key=scheduling_key, candidates=candidates)
+        ).selected_target
 
     async def _execute_node(self, run_id: str, node: DynamicNode, target: str) -> ResourceRef:
         try:

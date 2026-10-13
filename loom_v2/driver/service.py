@@ -26,6 +26,7 @@ from loom_v2.contracts.errors import DomainError, DomainErrorEnvelope
 
 from .orchestrator import DockerOrchestrationExecutor
 from .orchestration_runtime import DynamicOrchestrationRuntime
+from .scheduling import create_scheduling_policy
 from .remote_repository import RemoteObserverRepository
 
 from .tools import DriverTools
@@ -85,6 +86,7 @@ class DriverService:
         self.slaves = slaves or {}
         self.workers = workers or {}
         self.orchestration_executor = orchestration_executor or DockerOrchestrationExecutor.from_settings(self.settings)
+        self.scheduling_policy = create_scheduling_policy(self.settings.scheduling_policy)
         self.deadline_seconds = deadline_seconds if deadline_seconds is not None else self.settings.coding_agent_deadline_seconds
         self.active_turns: dict[str, ActiveTurn] = {}
         self._execution_tasks: dict[str, asyncio.Task[Any]] = {}
@@ -871,6 +873,7 @@ class DriverService:
                 workers=self.workers,
                 driver_id=control.driver_id,
                 driver_epoch=control.driver_epoch,
+                scheduling_policy=self.scheduling_policy,
             )
             await runtime.run(run_id)
             return
@@ -1061,6 +1064,7 @@ class DriverService:
                 workers=self.workers,
                 driver_id=getattr(self.control_client, "driver_id", None),
                 driver_epoch=getattr(self.control_client, "driver_epoch", None),
+                scheduling_policy=self.scheduling_policy,
             )
             return await runtime.run(run_id)
         action = action_name(snapshot.program.action_ref or snapshot.compute.action_ref) or "run_code"

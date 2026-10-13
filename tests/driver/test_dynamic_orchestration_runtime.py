@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from loom_v2.contracts.types import ClosureContract, ResourceRef, TaskClosure
 from loom_v2.contracts.types import ComputeRequirement
 from loom_v2.driver.orchestration_runtime import DynamicOrchestrationRuntime
+from loom_v2.driver.scheduling import create_scheduling_policy
 from loom_v2.driver.orchestrator import DockerOrchestrationExecutor
 from loom_v2.driver.service import DriverService
 from loom_v2.observer.repository import ObserverRepository
@@ -205,6 +206,36 @@ async def test_target_selection_applies_permissions_locality_and_round_robin():
     localized = record.committed.snapshot.compute.requirements.pop()
     assert localized.value == "slave-b"
     assert [runtime._select_target(package, descriptor_ref, record) for _ in range(2)] == ["slave-a", "slave-b"]
+
+
+async def test_target_selection_can_use_slave_profiles_and_current_load():
+    repo = _seeded_repository()
+    run, _patched = await _dynamic_fixture_for_target_selection(repo)
+    record = await repo.get_run(run.run_id)
+    package = next(package for package in record.capability_packages if package.package_id == "summarize")
+    descriptor_ref = package.capability_exports[0].capability_descriptor_ref
+    repo.slave_capabilities["slave-a"]["scheduling"] = {
+        "capacity": 1,
+        "service_time_ms": 800,
+        "cold_start_ms": 0,
+    }
+    repo.slave_capabilities["slave-b"]["scheduling"] = {
+        "capacity": 4,
+        "service_time_ms": 200,
+        "cold_start_ms": 300,
+    }
+    record.attempts.append({"target": "slave-a", "state": "running"})
+    runtime = DynamicOrchestrationRuntime(
+        repository=repo,
+        executor=object(),
+        workers={
+            "slave-a": WorkerSession("slave-a", "http://slave-a"),
+            "slave-b": WorkerSession("slave-b", "http://slave-b"),
+        },
+        scheduling_policy=create_scheduling_policy("earliest_finish_v1"),
+    )
+
+    assert runtime._select_target(package, descriptor_ref, record) == "slave-b"
 
 
 @pytest.mark.asyncio

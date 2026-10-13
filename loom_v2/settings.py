@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +33,10 @@ class Settings(BaseSettings):
     runtime_plugin_response_max_bytes: int = 256 * 1024 * 1024
     runtime_plugin_max_concurrency: int = 16
     runtime_plugin_docker_timeout_seconds: float = 120.0
+    scheduling_policy: str = "round_robin_v1"
+    scheduling_capacity: int = Field(default=1, gt=0)
+    scheduling_service_time_ms: float = Field(default=1000.0, ge=0)
+    scheduling_cold_start_ms: float = Field(default=0.0, ge=0)
     orchestrator_image: str = "python:3.12-slim"
     orchestrator_memory: str = "512m"
     orchestrator_cpus: float = 1.0

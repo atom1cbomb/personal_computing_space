@@ -74,6 +74,11 @@ def seed_embedded_slaves(
                     for descriptor in slave.runtime_plugin_host.descriptors()
                 ] if slave.runtime_plugin_host is not None else [],
                 "term_support": [item.model_dump(mode="json") for item in slave.term_support()],
+                "scheduling": {
+                    "capacity": settings.scheduling_capacity,
+                    "service_time_ms": settings.scheduling_service_time_ms,
+                    "cold_start_ms": settings.scheduling_cold_start_ms,
+                },
             },
             "epoch": 1,
             "lease_id_hash": "",
