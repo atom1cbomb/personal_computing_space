@@ -169,6 +169,10 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
     assert record.dynamic_nodes[0].state == "completed"
     assert record.attempts[0]["node_id"] == record.dynamic_nodes[0].node_id
     assert record.attempts[0]["target"] == "slave-a"
+    accepted_event = next(event for event in record.events if event["phase"] == "node_accepted")
+    assert accepted_event["scheduling_decision"]["policy_id"] == "round_robin_v1"
+    assert accepted_event["scheduling_decision"]["selected_target"] == "slave-a"
+    assert accepted_event["scheduling_decision"]["candidates"][0]["target_id"] == "slave-a"
     assert record.events[-1]["phase"] == "orchestration_completed"
 
 

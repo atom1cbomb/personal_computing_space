@@ -301,7 +301,12 @@ class DynamicOrchestrationRuntime:
                 target_resource_ref=target_resource_ref,
                 activation_ref=activation_ref,
             )
-            node = await self.repository.accept_node_intent(run_id, intent, selected_target=target)
+            node = await self.repository.accept_node_intent(
+                run_id,
+                intent,
+                selected_target=target,
+                scheduling_decision=scheduling_evidence,
+            )
             if node.state == "completed":
                 current_record = await self.repository.get_run(run_id)
                 previous = next(
@@ -441,6 +446,21 @@ class DynamicOrchestrationRuntime:
         *,
         exclude_targets: set[str] | None = None,
     ) -> str:
+        return self._select_target_decision(
+            package,
+            capability_descriptor_ref,
+            record,
+            exclude_targets=exclude_targets,
+        ).selected_target
+
+    def _select_target_decision(
+        self,
+        package: CapabilityPackageVersion,
+        capability_descriptor_ref: ResourceRef,
+        record: Any,
+        *,
+        exclude_targets: set[str] | None = None,
+    ) -> SchedulingDecision:
         closure = record.committed.snapshot if getattr(record, "committed", None) is not None else record.draft.snapshot
         allowed_effects = set(record.closure_contract.allowed_effects) if record.closure_contract is not None else set()
         try:
@@ -466,11 +486,6 @@ class DynamicOrchestrationRuntime:
             ),
             None,
         )
-        if locality is not None:
-            requested = str(locality)
-            if requested not in available:
-                raise RuntimeError("node_target_unavailable")
-            return requested
         activation_targets = {
             activation.target_slave
             for activation in record.capability_activations
@@ -503,9 +518,19 @@ class DynamicOrchestrationRuntime:
                     ready=slave_id in activation_targets,
                 )
             )
+        if locality is not None:
+            requested = str(locality)
+            if requested not in available:
+                raise RuntimeError("node_target_unavailable")
+            return SchedulingDecision(
+                policy_id=self.scheduling_policy.policy_id,
+                selected_target=requested,
+                reason="hard_constraint_data_locality",
+                candidates=candidates,
+            )
         return self.scheduling_policy.select(
             SchedulingContext(scheduling_key=scheduling_key, candidates=candidates)
-        ).selected_target
+        )
 
     async def _execute_node(self, run_id: str, node: DynamicNode, target: str) -> ResourceRef:
         try:
@@ -577,7 +602,8 @@ class DynamicOrchestrationRuntime:
             await self.repository.refresh_slaves()
             record = await self.repository.get_run(run_id)
             try:
-                replacement_target = self._select_target(
+                started_ns = time.perf_counter_ns()
+                decision = self._select_target_decision(
                     package,
                     node.action_descriptor_ref,
                     record,
@@ -589,8 +615,12 @@ class DynamicOrchestrationRuntime:
                     lost_attempt_id=str(attempt["attempt_id"]),
                     expected_execution_id=str(record.execution_id),
                     expected_execution_epoch=int(record.execution_epoch),
-                    target=replacement_target,
+                    target=decision.selected_target,
                     reason="worker_lease_expired",
+                    scheduling_decision={
+                        **asdict(decision),
+                        "overhead_us": (time.perf_counter_ns() - started_ns) / 1000,
+                    },
                 )
             except (RuntimeError, ValueError) as exc:
                 if str(exc) != "node_target_unavailable":

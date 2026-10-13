@@ -1639,7 +1639,12 @@ class ObserverRepository:
         elif command.command == "capability.health":
             result = (await self.record_capability_health(CapabilityHealthReport.model_validate(args["report"]), run_id=args.get("run_id"))).model_dump(mode="json")
         elif command.command == "node.accept":
-            node = await self.accept_node_intent(str(args["run_id"]), NodeIntent.model_validate(args["intent"]), selected_target=str(args["selected_target"]))
+            node = await self.accept_node_intent(
+                str(args["run_id"]),
+                NodeIntent.model_validate(args["intent"]),
+                selected_target=str(args["selected_target"]),
+                scheduling_decision=args.get("scheduling_decision"),
+            )
             result = node.model_dump(mode="json")
         elif command.command == "node.dispatch":
             attempt = await self.dispatch_dynamic_node(str(args["run_id"]), str(args["node_id"]), target=str(args["target"]))
@@ -1711,6 +1716,7 @@ class ObserverRepository:
                 expected_execution_epoch=int(args["expected_execution_epoch"]),
                 target=str(args["target"]),
                 reason=str(args.get("reason") or "worker_lease_expired"),
+                scheduling_decision=args.get("scheduling_decision"),
             )
             result = {
                 "node": {"node_id": str(args["node_id"]), "state": "dispatched"},
@@ -5071,10 +5077,11 @@ class ObserverRepository:
         intent: NodeIntent,
         *,
         selected_target: str,
+        scheduling_decision: dict[str, Any] | None = None,
     ) -> DynamicNode:
         lock = self._dynamic_intent_locks.setdefault(run_id, asyncio.Lock())
         async with lock:
-            return await self._accept_node_intent(run_id, intent, selected_target=selected_target)
+            return await self._accept_node_intent(run_id, intent, selected_target=selected_target, scheduling_decision=scheduling_decision)
 
     async def _accept_node_intent(
         self,
@@ -5082,6 +5089,7 @@ class ObserverRepository:
         intent: NodeIntent,
         *,
         selected_target: str,
+        scheduling_decision: dict[str, Any] | None = None,
     ) -> DynamicNode:
         """Deterministically materialize a program-emitted NodeIntent.
 
@@ -5329,6 +5337,7 @@ class ObserverRepository:
                     "instance_name": intent.instance_name,
                     "selected_target": target,
                     "reason": "capability_match",
+                    "scheduling_decision": deepcopy(scheduling_decision),
                     "provenance": {
                         **provenance,
                         "node_package_ref": node.package_ref.model_dump(mode="json"),
@@ -5428,6 +5437,7 @@ class ObserverRepository:
         expected_execution_epoch: int,
         target: str,
         reason: str,
+        scheduling_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         lock = self._dynamic_intent_locks.setdefault(run_id, asyncio.Lock())
         async with lock:
@@ -5564,6 +5574,7 @@ class ObserverRepository:
                     "to_instance_id": replacement["target_instance_id"],
                     "to_agent_epoch": replacement["target_agent_epoch"],
                     "reason": reason,
+                    "scheduling_decision": deepcopy(scheduling_decision),
                     "source_lease_state": source_agent["lease_state"],
                     "reassignment_authorization": {
                         "policy": "allow_reassignment",

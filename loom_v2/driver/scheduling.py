@@ -26,6 +26,7 @@ class SchedulingDecision:
     selected_target: str
     scores: dict[str, float] = field(default_factory=dict)
     reason: str = ""
+    candidates: list[SchedulingCandidate] = field(default_factory=list)
 
 
 class SchedulingPolicy(Protocol):
@@ -57,6 +58,7 @@ class RoundRobinPolicy:
             policy_id=self.policy_id,
             selected_target=selected.target_id,
             reason="round_robin_ready_first",
+            candidates=context.candidates,
         )
 
 
@@ -75,6 +77,7 @@ class LeastLoadedPolicy:
             selected_target=selected.target_id,
             scores=scores,
             reason="minimum_normalized_inflight",
+            candidates=context.candidates,
         )
 
 
@@ -97,6 +100,7 @@ class EarliestFinishPolicy:
             selected_target=selected.target_id,
             scores=scores,
             reason="minimum_expected_finish_ms",
+            candidates=context.candidates,
         )
 
 

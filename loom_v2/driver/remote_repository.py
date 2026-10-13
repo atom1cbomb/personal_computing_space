@@ -194,10 +194,10 @@ class RemoteObserverRepository:
             capabilities=self.slave_capabilities,
         )
 
-    async def accept_node_intent(self, run_id: str, intent: NodeIntent, *, selected_target: str) -> DynamicNode:
+    async def accept_node_intent(self, run_id: str, intent: NodeIntent, *, selected_target: str, scheduling_decision: dict[str, Any] | None = None) -> DynamicNode:
         payload = await self.control.command(
             "node.accept",
-            {"run_id": run_id, "intent": intent.model_dump(mode="json"), "selected_target": selected_target},
+            {"run_id": run_id, "intent": intent.model_dump(mode="json"), "selected_target": selected_target, "scheduling_decision": scheduling_decision},
         )
         return DynamicNode.model_validate(payload)
 
