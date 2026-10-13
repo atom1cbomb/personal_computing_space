@@ -1,0 +1,25 @@
+# Controlled heterogeneity for scheduler experiments on one Docker host.
+# Use together with deploy/docker-compose.yml; this is not evidence of real
+# CPU/GPU heterogeneity.
+services:
+  driver:
+    environment:
+      LOOM_SCHEDULING_POLICY: ${LOOM_SCHEDULING_POLICY:-round_robin_v1}
+
+  slave-a:
+    cpus: 0.75
+    environment:
+      LOOM_RUNTIME_PLUGIN_CPUS: "0.5"
+      LOOM_RUNTIME_PLUGIN_MAX_CONCURRENCY: "1"
+      LOOM_SCHEDULING_CAPACITY: "1"
+      LOOM_SCHEDULING_SERVICE_TIME_MS: "800"
+      LOOM_SCHEDULING_COLD_START_MS: "1500"
+
+  slave-b:
+    cpus: 2.5
+    environment:
+      LOOM_RUNTIME_PLUGIN_CPUS: "2.0"
+      LOOM_RUNTIME_PLUGIN_MAX_CONCURRENCY: "4"
+      LOOM_SCHEDULING_CAPACITY: "4"
+      LOOM_SCHEDULING_SERVICE_TIME_MS: "200"
+      LOOM_SCHEDULING_COLD_START_MS: "1500"

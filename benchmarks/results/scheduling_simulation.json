@@ -1,0 +1,63 @@
+{
+  "evidence_level": "simulation_only",
+  "experiment": "controlled_policy_simulation_v1",
+  "profiles": {
+    "slave-a": {
+      "actual_ms": 820.0,
+      "capacity": 1,
+      "estimated_ms": 800.0
+    },
+    "slave-b": {
+      "actual_ms": 210.0,
+      "capacity": 4,
+      "estimated_ms": 200.0
+    }
+  },
+  "results": [
+    {
+      "assignments": {
+        "slave-a": 20,
+        "slave-b": 20
+      },
+      "deadline_miss_rate": 0.425,
+      "deadline_ms": 3000.0,
+      "jobs": 40,
+      "makespan_ms": 16342.425,
+      "mean_latency_ms": 4648.506,
+      "p95_latency_ms": 14813.116,
+      "policy_id": "round_robin_v1",
+      "seed": 20261013,
+      "success_rate": 0.575
+    },
+    {
+      "assignments": {
+        "slave-a": 8,
+        "slave-b": 32
+      },
+      "deadline_miss_rate": 0.125,
+      "deadline_ms": 3000.0,
+      "jobs": 40,
+      "makespan_ms": 6926.052,
+      "mean_latency_ms": 1530.488,
+      "p95_latency_ms": 5197.016,
+      "policy_id": "least_loaded_v1",
+      "seed": 20261013,
+      "success_rate": 0.875
+    },
+    {
+      "assignments": {
+        "slave-a": 2,
+        "slave-b": 38
+      },
+      "deadline_miss_rate": 0.0,
+      "deadline_ms": 3000.0,
+      "jobs": 40,
+      "makespan_ms": 2138.696,
+      "mean_latency_ms": 1119.568,
+      "p95_latency_ms": 1996.704,
+      "policy_id": "earliest_finish_v1",
+      "seed": 20261013,
+      "success_rate": 1.0
+    }
+  ]
+}
