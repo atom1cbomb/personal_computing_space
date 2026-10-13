@@ -246,6 +246,43 @@ async def test_target_selection_can_use_slave_profiles_and_current_load():
     assert runtime._select_target(package, descriptor_ref, record) == "slave-a"
 
 
+async def test_target_selection_uses_package_specific_slave_profile():
+    repo = _seeded_repository()
+    run, _patched = await _dynamic_fixture_for_target_selection(repo)
+    record = await repo.get_run(run.run_id)
+    package = next(package for package in record.capability_packages if package.package_id == "summarize")
+    descriptor_ref = package.capability_exports[0].capability_descriptor_ref
+    repo.slave_capabilities["slave-a"]["scheduling"] = {
+        "default": {"capacity": 1, "service_time_ms": 50, "cold_start_ms": 0},
+        "packages": {
+            "summarize": {"capacity": 1, "service_time_ms": 900, "cold_start_ms": 0}
+        },
+    }
+    repo.slave_capabilities["slave-b"]["scheduling"] = {
+        "default": {"capacity": 1, "service_time_ms": 1000, "cold_start_ms": 0},
+        "packages": {
+            "summarize": {"capacity": 1, "service_time_ms": 100, "cold_start_ms": 0}
+        },
+    }
+    runtime = DynamicOrchestrationRuntime(
+        repository=repo,
+        executor=object(),
+        workers={
+            "slave-a": WorkerSession("slave-a", "http://slave-a"),
+            "slave-b": WorkerSession("slave-b", "http://slave-b"),
+        },
+        scheduling_policy=create_scheduling_policy("earliest_finish_v1"),
+    )
+
+    decision = runtime._select_target_decision(package, descriptor_ref, record)
+
+    assert decision.selected_target == "slave-b"
+    assert {item.target_id: item.service_time_ms for item in decision.candidates} == {
+        "slave-a": 900,
+        "slave-b": 100,
+    }
+
+
 @pytest.mark.asyncio
 async def test_runtime_reuses_completed_nodes_after_driver_restart():
     repo = _seeded_repository()

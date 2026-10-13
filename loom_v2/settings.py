@@ -1,5 +1,16 @@
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SchedulingProfile(BaseModel):
+    capacity: int = Field(default=1, gt=0)
+    service_time_ms: float = Field(default=1000.0, ge=0)
+    cold_start_ms: float = Field(default=0.0, ge=0)
+
+
+class SchedulingProfiles(BaseModel):
+    default: SchedulingProfile = Field(default_factory=SchedulingProfile)
+    packages: dict[str, SchedulingProfile] = Field(default_factory=dict)
 
 
 class Settings(BaseSettings):
@@ -37,6 +48,7 @@ class Settings(BaseSettings):
     scheduling_capacity: int = Field(default=1, gt=0)
     scheduling_service_time_ms: float = Field(default=1000.0, ge=0)
     scheduling_cold_start_ms: float = Field(default=0.0, ge=0)
+    scheduling_profiles: SchedulingProfiles | None = None
     orchestrator_image: str = "python:3.12-slim"
     orchestrator_memory: str = "512m"
     orchestrator_cpus: float = 1.0

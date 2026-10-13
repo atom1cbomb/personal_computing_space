@@ -109,3 +109,17 @@ def test_slave_scheduling_profile_settings_are_positive():
     assert settings.scheduling_capacity == 4
     with pytest.raises(ValueError):
         Settings(scheduling_capacity=0)
+
+
+def test_slave_parses_default_and_per_package_scheduling_profiles(monkeypatch):
+    monkeypatch.setenv(
+        "LOOM_SCHEDULING_PROFILES",
+        '{"default":{"capacity":2,"service_time_ms":500,"cold_start_ms":50},'
+        '"packages":{"yolo11n-http":{"capacity":1,"service_time_ms":200,"cold_start_ms":1500}}}',
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.scheduling_profiles.default.capacity == 2
+    assert settings.scheduling_profiles.packages["yolo11n-http"].service_time_ms == 200
+    assert settings.scheduling_profiles.packages["yolo11n-http"].cold_start_ms == 1500

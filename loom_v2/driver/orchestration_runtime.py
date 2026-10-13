@@ -517,6 +517,9 @@ class DynamicOrchestrationRuntime:
         candidates = []
         for slave_id in available:
             profile = self.repository.slave_capabilities.get(slave_id, {}).get("scheduling", {})
+            package_profiles = profile.get("packages", {}) if isinstance(profile, dict) else {}
+            if isinstance(package_profiles, dict):
+                profile = package_profiles.get(package.package_id) or profile.get("default") or profile
             candidates.append(
                 SchedulingCandidate(
                     target_id=slave_id,
