@@ -62,6 +62,19 @@ services:
       timeout: 3s
       retries: 20
 
+  slave-c-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: loom
+      POSTGRES_PASSWORD: loom
+      POSTGRES_DB: loom_slave_c
+    volumes: [slave-c-db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loom -d loom_slave_c"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   observer:
     build:
       context: ..
@@ -120,6 +133,7 @@ services:
       LOOM_SERVICE_NAME: slave-a
       LOOM_DATABASE_URL: postgresql+asyncpg://loom:loom@slave-a-db:5432/loom_slave_a
       LOOM_OBSERVER_URL: http://observer:8080
+      LOOM_SLAVE_ENDPOINT_URL: http://slave-a:8081
       LOOM_S3_ENDPOINT_URL: http://minio:9000
       LOOM_S3_BUCKET: loom-content
       LOOM_S3_ACCESS_KEY: loom
@@ -153,6 +167,7 @@ services:
       LOOM_SERVICE_NAME: slave-b
       LOOM_DATABASE_URL: postgresql+asyncpg://loom:loom@slave-b-db:5432/loom_slave_b
       LOOM_OBSERVER_URL: http://observer:8080
+      LOOM_SLAVE_ENDPOINT_URL: http://slave-b:8082
       LOOM_S3_ENDPOINT_URL: http://minio:9000
       LOOM_S3_BUCKET: loom-content
       LOOM_S3_ACCESS_KEY: loom
@@ -177,13 +192,49 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [default, loom-internal]
 
+  slave-c:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["/bin/sh", "-c", "export LOOM_INTERNAL_API_SECRET=\"$$(cat /run/secrets/internal_api_secret)\" && exec uvicorn loom_v2.slave.app:create_app --factory --host 0.0.0.0 --port 8083"]
+    environment:
+      LOOM_SERVICE_NAME: slave-c
+      LOOM_DATABASE_URL: postgresql+asyncpg://loom:loom@slave-c-db:5432/loom_slave_c
+      LOOM_OBSERVER_URL: http://observer:8080
+      LOOM_SLAVE_ENDPOINT_URL: http://slave-c:8083
+      LOOM_S3_ENDPOINT_URL: http://minio:9000
+      LOOM_S3_BUCKET: loom-content
+      LOOM_S3_ACCESS_KEY: loom
+      LOOM_S3_SECRET_KEY: loom-content-secret
+      LOOM_S3_REGION: us-east-1
+      LOOM_PACKAGE_CONTRACT_DIR: /opt/loom/package-contracts
+      LOOM_RUNTIME_PLUGIN_DIR: /opt/loom/runtime-plugins
+      LOOM_RUNTIME_PLUGIN_SOCKET_DIR: /run/loom/runtime-plugins
+      LOOM_RUNTIME_PLUGIN_NETWORK: loom-internal
+      LOOM_RUNTIME_PLUGIN_MEMORY: 512m
+      LOOM_RUNTIME_PLUGIN_CPUS: "1.0"
+      LOOM_RUNTIME_PLUGIN_PIDS_LIMIT: "128"
+      LOOM_RUNTIME_PLUGIN_TMPFS_SIZE: 64m
+    secrets: [internal_api_secret]
+    depends_on:
+      slave-c-db: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    volumes:
+      - ../runtime_plugins:/opt/loom/runtime-plugins:ro
+      - ../package_contracts:/opt/loom/package-contracts:ro
+      - slave-c-runtime-plugin-sockets:/run/loom/runtime-plugins
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [default, loom-internal]
+
 volumes:
   observer-db-data:
   slave-a-db-data:
   slave-b-db-data:
+  slave-c-db-data:
   minio-data:
   slave-a-runtime-plugin-sockets:
   slave-b-runtime-plugin-sockets:
+  slave-c-runtime-plugin-sockets:
 
 networks:
   loom-internal:

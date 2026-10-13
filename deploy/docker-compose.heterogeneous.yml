@@ -13,25 +13,28 @@ services:
       - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
 
   slave-a:
-    cpus: 0.75
+    cpus: 0.5
     environment:
-      LOOM_RUNTIME_PLUGIN_CPUS: "0.5"
+      LOOM_RUNTIME_PLUGIN_CPUS: "0.4"
       LOOM_RUNTIME_PLUGIN_MAX_CONCURRENCY: "1"
-      LOOM_SCHEDULING_CAPACITY: "1"
-      LOOM_SCHEDULING_SERVICE_TIME_MS: "800"
-      LOOM_SCHEDULING_COLD_START_MS: "1500"
+      LOOM_SCHEDULING_PROFILES: '{"default":{"capacity":1,"service_time_ms":600,"cold_start_ms":0},"packages":{"image-preprocess-http":{"capacity":1,"service_time_ms":300,"cold_start_ms":500},"yolo11n-http":{"capacity":1,"service_time_ms":1600,"cold_start_ms":1500},"inspection-assess-risk":{"capacity":1,"service_time_ms":80,"cold_start_ms":0},"inspection-aggregate":{"capacity":1,"service_time_ms":120,"cold_start_ms":0}}}'
     volumes:
       - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
 
   slave-b:
-    cpus: 2.5
+    cpus: 1.5
     environment:
-      LOOM_RUNTIME_PLUGIN_CPUS: "2.0"
+      LOOM_RUNTIME_PLUGIN_CPUS: "1.0"
+      LOOM_RUNTIME_PLUGIN_MAX_CONCURRENCY: "2"
+      LOOM_SCHEDULING_PROFILES: '{"default":{"capacity":1,"service_time_ms":300,"cold_start_ms":0},"packages":{"image-preprocess-http":{"capacity":1,"service_time_ms":150,"cold_start_ms":500},"yolo11n-http":{"capacity":1,"service_time_ms":700,"cold_start_ms":1500},"inspection-assess-risk":{"capacity":1,"service_time_ms":50,"cold_start_ms":0},"inspection-aggregate":{"capacity":1,"service_time_ms":80,"cold_start_ms":0}}}'
+    volumes:
+      - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
+
+  slave-c:
+    cpus: 3.0
+    environment:
+      LOOM_RUNTIME_PLUGIN_CPUS: "2.5"
       LOOM_RUNTIME_PLUGIN_MAX_CONCURRENCY: "4"
-      # The current YOLO image has one blocking inference worker. The runtime
-      # can admit four calls, but its effective compute capacity is one.
-      LOOM_SCHEDULING_CAPACITY: "1"
-      LOOM_SCHEDULING_SERVICE_TIME_MS: "200"
-      LOOM_SCHEDULING_COLD_START_MS: "1500"
+      LOOM_SCHEDULING_PROFILES: '{"default":{"capacity":1,"service_time_ms":150,"cold_start_ms":0},"packages":{"image-preprocess-http":{"capacity":1,"service_time_ms":80,"cold_start_ms":500},"yolo11n-http":{"capacity":1,"service_time_ms":300,"cold_start_ms":1500},"inspection-assess-risk":{"capacity":1,"service_time_ms":30,"cold_start_ms":0},"inspection-aggregate":{"capacity":1,"service_time_ms":50,"cold_start_ms":0}}}'
     volumes:
       - ${LOOM_SOURCE_PATH:-../loom_v2}:/app/loom_v2:ro
