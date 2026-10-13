@@ -52,6 +52,8 @@ class DynamicOrchestrationRuntime:
         self.driver_id = driver_id
         self.driver_epoch = driver_epoch
         self.scheduling_policy = scheduling_policy or create_scheduling_policy("round_robin_v1")
+        self._active_assignments: dict[str, int] = {}
+        self._node_targets: dict[str, str] = {}
 
     async def run(self, run_id: str) -> tuple[Any, ExecutionResult]:
         record = await self.repository.get_run(run_id)
@@ -301,13 +303,19 @@ class DynamicOrchestrationRuntime:
                 target_resource_ref=target_resource_ref,
                 activation_ref=activation_ref,
             )
-            node = await self.repository.accept_node_intent(
-                run_id,
-                intent,
-                selected_target=target,
-                scheduling_decision=scheduling_evidence,
-            )
+            self._active_assignments[target] = self._active_assignments.get(target, 0) + 1
+            try:
+                node = await self.repository.accept_node_intent(
+                    run_id,
+                    intent,
+                    selected_target=target,
+                    scheduling_decision=scheduling_evidence,
+                )
+            except BaseException:
+                self._release_target(target)
+                raise
             if node.state == "completed":
+                self._release_target(target)
                 current_record = await self.repository.get_run(run_id)
                 previous = next(
                     (
@@ -321,6 +329,7 @@ class DynamicOrchestrationRuntime:
                     raise RuntimeError("replay_result_missing")
                 task = asyncio.create_task(asyncio.sleep(0, result=ResourceRef.model_validate(previous)))
             else:
+                self._node_targets[node.node_id] = target
                 task = asyncio.create_task(self._execute_node(run_id, node, target))
             pending[intent_id] = _PendingNode(intent_id=intent_id, task=task)
             return intent_id
@@ -511,7 +520,7 @@ class DynamicOrchestrationRuntime:
             candidates.append(
                 SchedulingCandidate(
                     target_id=slave_id,
-                    inflight=inflight[slave_id],
+                    inflight=max(inflight[slave_id], self._active_assignments.get(slave_id, 0)),
                     capacity=max(1, int(profile.get("capacity", 1))),
                     service_time_ms=max(0.0, float(profile.get("service_time_ms", 1000.0))),
                     cold_start_ms=max(0.0, float(profile.get("cold_start_ms", 0.0))),
@@ -575,6 +584,16 @@ class DynamicOrchestrationRuntime:
             except Exception:
                 pass
             raise RuntimeError("dynamic_node_failed") from exc
+        finally:
+            active_target = self._node_targets.pop(node.node_id, target)
+            self._release_target(active_target)
+
+    def _release_target(self, target: str) -> None:
+        remaining = self._active_assignments.get(target, 0) - 1
+        if remaining > 0:
+            self._active_assignments[target] = remaining
+        else:
+            self._active_assignments.pop(target, None)
 
     async def _recover_attempt(
         self,
@@ -609,7 +628,7 @@ class DynamicOrchestrationRuntime:
                     record,
                     exclude_targets={source_target},
                 )
-                return await self.repository.reassign_dynamic_node(
+                replacement = await self.repository.reassign_dynamic_node(
                     run_id,
                     node.node_id,
                     lost_attempt_id=str(attempt["attempt_id"]),
@@ -622,6 +641,10 @@ class DynamicOrchestrationRuntime:
                         "overhead_us": (time.perf_counter_ns() - started_ns) / 1000,
                     },
                 )
+                self._release_target(source_target)
+                self._active_assignments[decision.selected_target] = self._active_assignments.get(decision.selected_target, 0) + 1
+                self._node_targets[node.node_id] = decision.selected_target
+                return replacement
             except (RuntimeError, ValueError) as exc:
                 if str(exc) != "node_target_unavailable":
                     raise

@@ -173,6 +173,7 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
     assert accepted_event["scheduling_decision"]["policy_id"] == "round_robin_v1"
     assert accepted_event["scheduling_decision"]["selected_target"] == "slave-a"
     assert accepted_event["scheduling_decision"]["candidates"][0]["target_id"] == "slave-a"
+    assert driver.scheduling_policy.policy_id == "round_robin_v1"
     assert record.events[-1]["phase"] == "orchestration_completed"
 
 
@@ -240,6 +241,9 @@ async def test_target_selection_can_use_slave_profiles_and_current_load():
     )
 
     assert runtime._select_target(package, descriptor_ref, record) == "slave-b"
+
+    runtime._active_assignments["slave-b"] = 40
+    assert runtime._select_target(package, descriptor_ref, record) == "slave-a"
 
 
 @pytest.mark.asyncio

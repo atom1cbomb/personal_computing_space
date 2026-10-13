@@ -1708,15 +1708,19 @@ class ObserverRepository:
                 waiting=dict(args.get("waiting") or {}),
             ))
         elif command.command == "node.reassign":
+            reassign_arguments = {
+                "lost_attempt_id": str(args["lost_attempt_id"]),
+                "expected_execution_id": str(args["expected_execution_id"]),
+                "expected_execution_epoch": int(args["expected_execution_epoch"]),
+                "target": str(args["target"]),
+                "reason": str(args.get("reason") or "worker_lease_expired"),
+            }
+            if args.get("scheduling_decision") is not None:
+                reassign_arguments["scheduling_decision"] = args["scheduling_decision"]
             attempt = await self.reassign_dynamic_node(
                 str(args["run_id"]),
                 str(args["node_id"]),
-                lost_attempt_id=str(args["lost_attempt_id"]),
-                expected_execution_id=str(args["expected_execution_id"]),
-                expected_execution_epoch=int(args["expected_execution_epoch"]),
-                target=str(args["target"]),
-                reason=str(args.get("reason") or "worker_lease_expired"),
-                scheduling_decision=args.get("scheduling_decision"),
+                **reassign_arguments,
             )
             result = {
                 "node": {"node_id": str(args["node_id"]), "state": "dispatched"},
