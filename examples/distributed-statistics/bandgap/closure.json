@@ -9,7 +9,7 @@
   "body": {
     "closure_id": "closure-bandgap-stats",
     "program": {
-      "operation_ref": "loom://orchestrate",
+      "action_ref": "grip://loom.local/workspaces/workspace-default/actions/orchestrate",
       "io_contract_ref": "PARENT_IO_CONTRACT_REF_PLACEHOLDER"
     }
   }

@@ -1,7 +1,9 @@
 # Capability Package 模型
 
-**日期：** 2026-09-14
-**状态：** Phase 1/2/3 实现说明
+**日期：** 2026-10-20
+**状态：** 当前实现说明，包含 GRIP 与 action 术语迁移
+
+资源使用入口和包内资源引用均统一为 [GRIP DESCRIBE/INVOKE](grip-resource-usage.md)。ResourceRef 仅接受完整 GRIP URI；内容名称包含用途，末尾摘要用于不可变版本校验。runtime binding 中的网络入口仍使用实际传输协议。
 
 本文说明当前仓库中的 Capability Package 公共模型、contract 选择、digest 和 runtime 扩展边界。详细设计见：
 
@@ -17,7 +19,7 @@
 CapabilityPackageVersion {
     package_type: str
     execution: { kind: str, version: str }
-    capability_exports: list[CapabilityExport]
+    action_exports: list[ActionExport]
     body: JSON object | null
     package_digest: sha256
 
@@ -27,8 +29,8 @@ CapabilityPackageVersion {
     scope / publication_state / provenance
 }
 
-CapabilityExport {
-    capability_descriptor_ref: ResourceRef
+ActionExport {
+    action_descriptor_ref: ResourceRef
     io_contract_ref: ResourceRef
     effect_class: str
     permissions: list[str]
@@ -36,6 +38,8 @@ CapabilityExport {
     runtime_binding: JSON object
 }
 ```
+
+业务动作统一称为 action。描述符使用 `action.v1` 和 `application/vnd.loom.action-descriptor+json`，执行引用使用 `action_ref`。原有业务字段不保留别名；升级后应重新构建服务镜像、生成契约，并以新包版本发布。
 
 公共层只理解 export、不可变引用和生命周期字段。`body` 与 `runtime_binding` 的含义由 package contract 校验、由对应 runtime provider 解释。
 
@@ -78,7 +82,7 @@ Operator 还可以将 contract JSON 文件安装到 `LOOM_PACKAGE_CONTRACT_DIR`�
 Schema 必须校验完整的执行 manifest：
 
 ```text
-{package_type, execution, capability_exports, body}
+{package_type, execution, action_exports, body}
 ```
 
 未知三元组、缺失字段、未知字段或 schema 不匹配都会拒绝。Registry 是 append-only；重复注册相同 schema 幂等，改绑为不同 schema 失败。
@@ -93,23 +97,23 @@ Schema 必须校验完整的执行 manifest：
 可以上传、发布和查询，但不能 provision、dispatch 或激活到 Slave。
 
 workspace 资源通过 `package_ref` 引用这个使用包；资源不重复保存 descriptor、IoContract
-或 runtime binding。资源的可用能力由查询该 package 的 `capability_exports` 得到。资源可
+或 runtime binding。包的 `action_exports` 描述声明契约；实际可调用动作由资源的 GRIP DESCRIBE offers 给出，只有明确绑定且 ready 的执行实例才提供业务 binding。资源可
 以通过 `managed_by_ref` 指向同 workspace 的管理资源（例如 VM 由云资源管理），但管理包
-和使用包保持分离。资源登记使用 `POST /api/v1/resources`，重复登记同一绑定幂等，改变
+和使用包保持分离。资源登记使用 workspace 资源的 GRIP `register-resource` 动作，重复登记同一绑定幂等，改变
 绑定返回冲突；资源状态单独持久化。
 
 ## 4. 引用与 digest
 
-Agent 使用 `loom_put_content` 上传程序、JSON Schema、IoContract 和 operation descriptor，并直接使用返回的 `ResourceRef`。Agent 不计算 content、descriptor 或 package digest。
+外部 Agent 使用 SDK `client.upload_content` 上传程序、JSON Schema、IoContract 和 action descriptor，并直接使用返回的 `ResourceRef`。Agent 不计算 content、descriptor 或 package digest。
 
 引用规则如下：
 
-- 普通内容：`content://sha256/<lowercase digest>` 和 `content_digest`；
-- operation descriptor：`descriptor_digest`，正文采用 JCS 和 `loom/operation-descriptor/v1` 域分离计算；
+- 普通内容：`grip://loom.local/workspaces/workspace-default/content/<可读用途>/sha256/<lowercase digest>` 和 `content_digest`；
+- action descriptor：`descriptor_digest`，正文采用 JCS 和 `loom/action-descriptor/v1` 域分离计算；
 - IoContract：必须是可读取并通过 `io.v1` 校验的 content ref；
 - package：对规范化 execution manifest 使用项目的 `rfc8785` 库进行 JCS 序列化，再以 `loom/package/v1` 域分离计算 SHA-256。
 
-Package digest 只覆盖 `package_type`、`execution`、规范化后的 `capability_exports` 和 `body`。坐标、scope、publication state、provenance、activation、Slave 和容器状态不进入 package identity。因而候选包 promotion 生成的 reusable 坐标可以复用同一 digest-backed runtime；Docker 容器身份按 workspace、Slave 和 package digest fencing，不按生命周期坐标 fencing。
+Package digest 只覆盖 `package_type`、`execution`、规范化后的 `action_exports` 和 `body`。坐标、scope、publication state、provenance、activation、Slave 和容器状态不进入 package identity。因而候选包 promotion 生成的 reusable 坐标可以复用同一 digest-backed runtime；Docker 容器身份按 workspace、Slave 和 package digest fencing，不按生命周期坐标 fencing。
 
 Export 按完整 descriptor identity 排序，permissions 按集合语义排序；`ResourceRef.access_binding` 和 provenance 不参与 digest。因此 export 顺序或部署位置变化不会改变同一 manifest 的 digest。
 
@@ -121,7 +125,7 @@ Export 按完整 descriptor identity 排序，permissions 按集合语义排序�
 POST /api/v1/capability-packages
 ```
 
-请求只提交 package manifest 和已经上传到 `ContentStore` 的 `ResourceRef`，不接受调用方指定 `scope`、`publication_state` 或 `source_run_ref`。Observer 完成 contract/export/IoContract 校验后，创建 `workspace_reusable`、`published` 版本并保存到 workspace package registry。注册不自动激活；需要时仍通过现有 provision/deprovision 流程按 Slave 激活。
+请求只提交 package manifest 和已经上传到 `ContentStore` 的 `ResourceRef`，不接受调用方指定 `scope`、`publication_state` 或 `source_run_ref`。Observer 完成 contract/export/IoContract 校验后，创建 `workspace_reusable`、`published` 版本并保存到 workspace package registry。注册不自动激活；使用方通过 Slave 的 GRIP `activate-package` 激活，并通过实例的 `stop` 停用，Observer 转换为内部 provision/deprovision 命令。
 
 Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并通过 `promote` 派生 reusable 版本。两条路径共享同一 package digest 和 runtime contract，不共享伪造的 Run 来源。
 
@@ -167,13 +171,13 @@ digest 不包含 profile 内容。没有配置匹配 profile 时，provision 失
 
 需要浏览器往返的包必须声明 `browser_path` 和 `client`。`client` 指向随能力包交付、
 运行在用户电脑上的本地助手；助手只转发固定的登录入口与回调，不属于 Slave 容器，
-也不要求用户拥有 Observer 主机权限。Observer 为每次 `auth/start` 发放绑定 package
+也不要求用户拥有 Observer 主机权限。Observer 为每次激活资源的 GRIP `auth-start` 发放绑定 package
 digest、实例和 activation revision 的短期 bridge token。
 
 每个 export 的 runtime binding 为：
 
 ```json
-{"path": "/v1/operation"}
+{"path": "/v1/action"}
 ```
 
 Schema 拒绝 tag image、非法端口、非 origin-form path 和未知字段。跨 export 的重复 path 与 health path 冲突由 `container-http-v1` plugin 在任何 Docker mutation 前拒绝。
@@ -216,11 +220,11 @@ Core 与插件通过私有 Unix socket 上的 HTTP/JSON 通信。Core 负责 aut
 
 ## 8. Phase 3 动态编排与健康投影
 
-动态节点统一使用三参数 `emit_node(package_ref, capability_descriptor_ref, input_refs)`；Observer、Driver 和 Slave 都按 package 公共 `capability_exports` 的完整 descriptor identity 选择单个 export。多个 export 调用由多个 Node 表达，不把 runtime binding 或 endpoint 地址复制到 Node identity。
+动态节点统一使用三参数 `emit_node(package_ref, action_descriptor_ref, input_refs)`；Observer、Driver 和 Slave 都按 package 公共 `action_exports` 的完整 descriptor identity 选择单个 export。多个 export 调用由多个 Node 表达，不把 runtime binding 或 endpoint 地址复制到 Node identity。
 
 activation 使用 Observer 分配的单调 `activation_revision`。Slave 在持久化 desired state、package digest 和幂等键后才调用 runtime；低 revision 和相同 revision 冲突命令会被拒绝。健康报告必须严格匹配当前 revision，重复 `report_id` 幂等。
 
-长运行 runtime 由 Slave 后台 health loop 检查，状态从 `ready/degraded/failed/stopped` 事实投影到 Observer 和 Slave capability snapshot。快照每次从基础 operation 与 ready activation 的 exports 重算，多 activation 暴露同名 operation 时停止一个不会删除另一个。
+长运行 runtime 由 Slave 后台 health loop 检查，状态从 `ready/degraded/failed/stopped` 事实投影到 Observer 和 Slave capability snapshot。快照每次从基础 action 与 ready activation 的 exports 重算，多 activation 暴露同名 action 时停止一个不会删除另一个。
 
 ## 9. 当前边界
 

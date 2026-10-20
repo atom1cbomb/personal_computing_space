@@ -62,7 +62,7 @@ def create_app(
         slave_id=slave_id,
         engine=app.state.engine,
         content_store=ContentStore.from_settings(settings),
-        capability_operation_timeout_seconds=settings.capability_operation_timeout_seconds,
+        capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
         settings=settings,
     )
     app.state.lease = None
@@ -109,7 +109,7 @@ def create_app(
                 "package_type": descriptor.package_type,
                 "kind": descriptor.kind,
                 "version": descriptor.version,
-                "operations": sorted(descriptor.operations),
+                "actions": sorted(descriptor.actions),
                 "descriptor_ref": descriptor.descriptor_ref,
                 "digest": descriptor.digest,
             }
@@ -117,7 +117,7 @@ def create_app(
         ]
         while True:
             try:
-                registration = AgentRegistration(role="slave", agent_id=slave_id, instance_id=instance_id, workspace_id=app.state.service.workspace_id, endpoint_url=endpoint_url, protocol_version=settings.agent_protocol_version, capabilities={"operations": sorted(app.state.service.capability_snapshot()), "base_operations": sorted(app.state.service.supported_operations), "executor_descriptors": executor_descriptors, "runtime_plugin_descriptors": runtime_descriptors, "runtime_plugins": runtime_descriptors, "term_support": [item.model_dump(mode="json") for item in app.state.service.term_support()]})
+                registration = AgentRegistration(role="slave", agent_id=slave_id, instance_id=instance_id, workspace_id=app.state.service.workspace_id, endpoint_url=endpoint_url, protocol_version=settings.agent_protocol_version, capabilities={"actions": sorted(app.state.service.capability_snapshot()), "base_actions": sorted(app.state.service.supported_actions), "executor_descriptors": executor_descriptors, "runtime_plugin_descriptors": runtime_descriptors, "runtime_plugins": runtime_descriptors, "term_support": [item.model_dump(mode="json") for item in app.state.service.term_support()]})
                 response = await observer_request(
                     "/internal/v1/agents/register",
                     registration.model_dump(mode="json"),
@@ -186,7 +186,7 @@ def create_app(
             record_driver_epoch(payload.driver_id, payload.driver_epoch)
             attempt_id = payload.attempt_id
             execution_id = payload.execution_id
-            operation = payload.operation
+            action = payload.action
             body = payload.payload
             closure = payload.closure
             binding = payload.binding
@@ -194,13 +194,13 @@ def create_app(
             if workspace_id != service.workspace_id:
                 raise ValueError("workspace_binding_mismatch")
             if binding is not None:
-                target_ref = binding.target_resource_ref.resource_id.rstrip("/")
-                if target_ref != service.slave_id and not target_ref.endswith(f"/{service.slave_id}") and not target_ref.endswith(f":{service.slave_id}"):
+                target_ref = binding.target_resource_ref.resource_id
+                if target_ref != service.names.name("slaves", service.slave_id):
                     raise ValueError("target_slave_mismatch")
             execution_epoch = payload.execution_epoch
             result = await service.run(
                 attempt_id,
-                operation,
+                action,
                 body,
                 closure=closure,
                 binding=binding,
@@ -319,9 +319,9 @@ def create_app(
             "workspace_id": service.workspace_id,
             "available": service.available,
             "replica": service.replica.state,
-            "operations": sorted(service.capability_snapshot()),
-            "base_operations": sorted(service.supported_operations),
-            "executor_descriptors": [descriptor.__dict__ | {"operations": sorted(descriptor.operations), "digest": descriptor.digest, "descriptor_ref": descriptor.descriptor_ref} for descriptor in service.executor_registry.descriptors()],
+            "actions": sorted(service.capability_snapshot()),
+            "base_actions": sorted(service.supported_actions),
+            "executor_descriptors": [descriptor.__dict__ | {"actions": sorted(descriptor.actions), "digest": descriptor.digest, "descriptor_ref": descriptor.descriptor_ref} for descriptor in service.executor_registry.descriptors()],
             "runtime_plugin_descriptors": [descriptor.__dict__ | {"supports": [support.to_mapping() for support in descriptor.supports]} for descriptor in service.runtime_plugin_host.descriptors()] if service.runtime_plugin_host is not None else [],
             "runtime_plugins": [descriptor.__dict__ | {"supports": [support.to_mapping() for support in descriptor.supports]} for descriptor in service.runtime_plugin_host.descriptors()] if service.runtime_plugin_host is not None else [],
             "activations": [activation.model_dump(mode="json") for activation in service.activations.values()],

@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/exec",
+  "name": "exec",
+  "description": "Exec through the vm-ssh-http activation.",
+  "capability_kinds": [
+    "compute.vm.remote_shell"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/instance-config/sha256/fa26e09130901538bacb9665013100de0919c8e35ed4506aa8401f245d831e44",
+    "identity_criterion": "content_digest"
+  }
+}

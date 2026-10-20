@@ -193,7 +193,7 @@ class SlaveAttemptRow(SlaveBase):
     attempt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     slave_id: Mapped[str] = mapped_column(String(128), nullable=False)
     workspace_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    operation: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     state: Mapped[str] = mapped_column(String(64), nullable=False)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)

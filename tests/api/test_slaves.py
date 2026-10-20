@@ -6,6 +6,7 @@ import pytest
 
 from loom_v2.observer.app import create_app
 from loom_v2.settings import Settings
+from tests.support.grip_client import exchange, resources
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -29,8 +30,8 @@ def register(client, slave_id="slave-a", instance="one", workspace="my-workspace
         "workspace_id": workspace, "endpoint_url": "http://private-worker:8081",
         "protocol_version": "loom.v1",
         "capabilities": {
-            "base_operations": ["run_code"],
-            "operations": ["run_code", "stale-package-operation"],
+            "base_actions": ["run_code"],
+            "actions": ["run_code", "stale-package-action"],
             "executor_descriptors": [{"package_type": "function", "kind": "process:json_stdio", "version": "1"}],
             "runtime_plugin_descriptors": [{"plugin_id": "http", "supports": [{"package_type": "service", "execution": {"kind": "container:http", "version": "1"}}]}],
             "term_support": [], "private_token": "do-not-expose",
@@ -40,13 +41,11 @@ def register(client, slave_id="slave-a", instance="one", workspace="my-workspace
     return response.json()
 
 
-def test_public_slaves_empty_and_workspace_bound(client):
-    assert client.get("/api/v1/slaves").json() == {"workspace_id": "my-workspace", "slaves": []}
-    assert client.get("/api/v1/slaves?workspace_id=my-workspace").status_code == 200
-    response = client.get("/api/v1/slaves?workspace_id=other")
-    assert response.status_code == 403
-    assert response.json()["detail"] == "workspace_binding_mismatch"
-    assert client.get("/api/v1/slaves?available_only=invalid").status_code == 422
+def test_grip_slaves_empty_and_workspace_bound(client):
+    assert resources(client, "slave") == []
+    from loom_orchestration import Names
+    result = exchange(client, Names(workspace="other").root)
+    assert result["error_code"] == "not_found"
 
 
 def test_public_slaves_scoped_deduplicated_and_safe(client):
@@ -56,20 +55,19 @@ def test_public_slaves_scoped_deduplicated_and_safe(client):
     register(client, "foreign-slave", workspace="other")
     register(client, "driver", role="driver")
 
-    response = client.get("/api/v1/slaves")
-    assert response.status_code == 200
-    slaves = response.json()["slaves"]
+    result = resources(client, "slave")
+    slaves = [r["metadata"] for r in result]
     assert [slave["slave_id"] for slave in slaves] == ["slave-a", "slave-b"]
     for slave in slaves:
         assert slave["available"] is True
         assert slave["lease_state"] == "active"
         assert slave["last_seen_at"]
-        assert slave["base_operations"] == ["run_code"]
+        assert slave["base_actions"] == ["run_code"]
         assert slave["executor_descriptors"][0]["kind"] == "process:json_stdio"
         assert slave["runtime_plugin_descriptors"][0]["plugin_id"] == "http"
     for private in ("lease_id", "lease_id_hash", "endpoint_url", "instance_id", "private_token", "do-not-expose", "foreign-slave"):
-        assert private not in response.text
-    assert client.get("/api/v1/slaves?available_only=true").json() == response.json()
+        assert private not in str(result)
+    assert all(r["metadata"]["available"] for r in resources(client, "slave"))
     assert client.get("/internal/v1/agents/slaves").status_code == 401
 
 
@@ -85,28 +83,27 @@ def test_public_slaves_released_and_expired_are_not_available(client):
     register(client, "slave-b")
     with patch("loom_v2.observer.repository.datetime") as clock:
         clock.now.return_value = datetime.now(timezone.utc) + timedelta(minutes=5)
-        slaves = client.get("/api/v1/slaves").json()["slaves"]
-        assert [(s["slave_id"], s["lease_state"], s["available"]) for s in slaves] == [
+        slaves = [r["metadata"] for r in resources(client, "slave")]
+        assert sorted((s["slave_id"], s["lease_state"], s["available"]) for s in slaves) == [
             ("slave-a", "released", False), ("slave-b", "expired", False),
         ]
-        assert client.get("/api/v1/slaves?available_only=true").json()["slaves"] == []
+        assert not any(r["metadata"]["available"] for r in resources(client, "slave"))
 
 
-def test_public_slaves_in_openapi(client):
+def test_grip_is_the_only_public_resource_access_route(client):
     schema = client.get("/openapi.json").json()
-    operation = schema["paths"]["/api/v1/slaves"]["get"]
-    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/PublicSlaveList")
+    assert "/.well-known/grip" in schema["paths"]
+    for removed in ("/api/v1/slaves", "/api/v1/capabilities", "/api/v1/resources", "/api/v1/resources/{resource_id}/activations", "/api/v1/capability-packages/{package_ref}/deactivate", "/api/v1/capability-packages/{package_ref}/auth/start"):
+        assert removed not in schema["paths"]
 
 
-def test_public_slaves_does_not_read_runs_or_mutate_dispatch_cache(client):
+def test_grip_discovery_does_not_mutate_dispatch_cache(client):
     register(client)
     repo = client.app.state.repo
-    repo.slave_capabilities = {"slave-a": {"operations": {"foreign-run-operation"}}}
-    with patch.object(repo, "_all_records", side_effect=AssertionError("must not read Runs")):
-        response = client.get("/api/v1/slaves")
-    assert response.status_code == 200
-    assert "foreign-run-operation" not in response.text
-    assert repo.slave_capabilities == {"slave-a": {"operations": {"foreign-run-operation"}}}
+    repo.slave_capabilities = {"slave-a": {"actions": {"foreign-run-action"}}}
+    result = resources(client, "slave")
+    assert "foreign-run-action" not in str(result)
+    assert repo.slave_capabilities == {"slave-a": {"actions": {"foreign-run-action"}}}
 
 
 def test_public_slaves_uses_latest_offline_instance(client):
@@ -117,7 +114,7 @@ def test_public_slaves_uses_latest_offline_instance(client):
         register(client, instance="newer")
     with patch("loom_v2.observer.repository.datetime") as clock:
         clock.now.return_value = future + timedelta(minutes=5)
-        slaves = client.get("/api/v1/slaves").json()["slaves"]
+        slaves = [r["metadata"] for r in resources(client, "slave")]
     assert len(slaves) == 1
     assert slaves[0]["lease_state"] == "expired"
     seen = datetime.fromisoformat(slaves[0]["last_seen_at"])

@@ -7,7 +7,9 @@ from pathlib import Path
 import re
 import tomllib
 from typing import Annotated, Any, Literal, Self
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
+
+from loom_orchestration.grip import Names
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
 
@@ -123,6 +125,24 @@ class ClusterConfig(ConfigModel):
     runtime_credentials_dir: str | None = None
     runtime_plugin_state_dir: str = "/var/lib/loom/runtime-plugin-state"
     runtime_plugin_egress_network: NonEmptyString | None = None
+    grip_authority: NonEmptyString = "loom.local"
+    public_base_url: str = ""
+    grip_token_file: NonEmptyString | None = None
+
+    @field_validator("grip_authority")
+    @classmethod
+    def valid_grip_authority(cls, value: str) -> str:
+        Names(authority=value)
+        return value
+
+    @field_validator("public_base_url")
+    @classmethod
+    def valid_public_base_url(cls, value: str) -> str:
+        if value:
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+                raise ValueError("public_base_url must be an HTTP(S) origin")
+        return value.rstrip("/")
 
     @field_validator("name")
     @classmethod
@@ -188,6 +208,9 @@ class DeploymentConfig:
     runtime_credentials_dir: str | None = None
     runtime_plugin_state_dir: str = "/var/lib/loom/runtime-plugin-state"
     runtime_plugin_egress_network: str | None = None
+    grip_authority: str = "loom.local"
+    public_base_url: str = ""
+    grip_token: str | None = None
 
     @classmethod
     def from_file(cls, path: str | Path) -> "DeploymentConfig":
@@ -251,6 +274,11 @@ class DeploymentConfig:
             }
         )
         secret_paths = [internal_secret_path, postgres_password_path, minio_secret_path]
+        grip_token = None
+        if cluster.grip_token_file is not None:
+            grip_path = _resolve_secret_path(base_dir, cluster.grip_token_file, "cluster.grip_token_file")
+            grip_token = _read_secret(grip_path, "cluster.grip_token_file")
+            secret_paths.append(grip_path)
         if codex_api_key_path is not None:
             secret_paths.append(codex_api_key_path)
         return cls(
@@ -270,6 +298,9 @@ class DeploymentConfig:
             runtime_credentials_dir=cluster.runtime_credentials_dir,
             runtime_plugin_state_dir=cluster.runtime_plugin_state_dir,
             runtime_plugin_egress_network=cluster.runtime_plugin_egress_network,
+            grip_authority=cluster.grip_authority,
+            public_base_url=cluster.public_base_url,
+            grip_token=grip_token,
         )
 
     def machine(self, name_or_role: str) -> MachineConfig:

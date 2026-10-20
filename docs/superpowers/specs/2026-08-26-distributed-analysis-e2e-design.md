@@ -1,5 +1,7 @@
 # 程序化分布式任务编排与校验压力测试设计（B + A）
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 **日期：** 2026-08-26
 **修订：** 2026-08-30（从静态 DAG 改为受约束的 Python 动态编排，并收敛抽象与安全边界）；2026-09-02（明确能力包 digest 身份、同 Run 冲突处理与无限制 attempt 默认）
 **状态：** 设计（待评审）
@@ -43,7 +45,7 @@ Python 程序不是闭包的全部，也不 inline 持久化在闭包中。父�
 
 ```text
 ProgramApplication = {
-  operation_ref: "loom://orchestrate",
+  operation_ref: "grip://loom.local/workspaces/workspace-default/operations/orchestrate",
   io_contract_ref: ResourceRef
 }
 
@@ -105,12 +107,12 @@ attempt 前拒绝超出预算的 dispatch。`max_nodes` 与 `max_live_nodes` 仍
 
 ```python
 SUMMARIZE_PACKAGE_REF = {
-    "resource_id": "capability-package://summarize/v1",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/packages/summarize/v1",
     "version_or_digest": "<package-digest>",
 }
 
 MERGE_PACKAGE_REF = {
-    "resource_id": "capability-package://merge-summaries/v1",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/packages/merge-summaries/v1",
     "version_or_digest": "<package-digest>",
 }
 
@@ -198,7 +200,7 @@ DynamicNode = {
 
 - `node_id` 与 `intent_id` 由 Observer/Driver 生成，不接受程序指定。
 - package、operation、IoContract 和 executor 描述全部来自 `NodeIntent.package_ref` 指向的已授权 capability package。
-- 输入只能是 ContentStore `content://sha256/<digest>` 或上游节点成功输出的同形态引用。
+- 输入只能是 ContentStore `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` 或上游节点成功输出的同形态引用。
 - Observer 对每个静态输入执行 input schema 校验；上游输出在 terminal 已通过 schema 校验，下游 admission 仍会重读并校验。
 - DynamicNode 是从已提交父闭包和授权 package 机械派生的执行事实，不产生新的父闭包 draft，也不改变已提交父闭包版本。
 
@@ -307,7 +309,7 @@ NodeIntent
 每个节点输出都是规范化 JSON，并写入 ContentStore：
 
 ```text
-result ResourceRef = content://sha256/<digest>
+result ResourceRef = grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>
 ```
 
 Observer 最终接受条件：
@@ -395,7 +397,7 @@ orchestration_completed
 - DynamicNode 的 operation/schema 来自授权 package；
 - readiness blocker 带 intent/node 语义；
 - 改派保留父 execution 身份；
-- final 输出是 `content://sha256/<digest>`；
+- final 输出是 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>`；
 - 事件日志可重放。
 
 ## 9. 场景 A：动态分布式统计概要

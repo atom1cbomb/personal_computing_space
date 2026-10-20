@@ -69,7 +69,7 @@ async def test_dynamic_orchestration_single_node_stress_and_admission():
                 recovery_policy={"allow_reassignment": True},
                 body=TaskClosure(
                     closure_id="closure-dynamic-stress",
-                    program={"operation_ref": "loom://orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
+                    program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
                 ),
             ).model_dump(mode="json")
         },
@@ -79,17 +79,17 @@ async def test_dynamic_orchestration_single_node_stress_and_admission():
         "loom_apply_plan_patch",
         {
             "ops": [
-                {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
+                {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
                 {
                     "kind": "materialize_capability_package_candidate",
-                    "value": process_package_value(repo, package_id="summarize", operation_ref="loom://summarize", program_content_ref=node_program, io_contract_ref=node_contract),
+                    "value": process_package_value(repo, package_id="summarize", action_ref="grip://loom.local/workspaces/workspace-default/actions/summarize", program_content_ref=node_program, io_contract_ref=node_contract),
                 },
             ]
         },
     )
     node_package = next(item for item in (await repo.get_run(run_id)).capability_packages if item.package_id == "summarize")
     package_ref = ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest)
-    node_descriptor_ref = node_package.capability_exports[0].capability_descriptor_ref
+    node_descriptor_ref = node_package.action_exports[0].action_descriptor_ref
     orchestration_program = await _put(
         mcp,
         f'PACKAGE_REF = {package_ref.model_dump(mode="json")}\nDESCRIPTOR_REF = {node_descriptor_ref.model_dump(mode="json")}\n\nasync def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":\n    document = await ctx.read_json(input_ref)\n    handle = ctx.emit_node(PACKAGE_REF, DESCRIPTOR_REF, [document["partition"]])\n    return await ctx.result(handle)\n',
@@ -101,7 +101,7 @@ async def test_dynamic_orchestration_single_node_stress_and_admission():
             "ops": [
                 {
                     "kind": "materialize_capability_package_candidate",
-                    "value": orchestration_package_value(repo, package_id="orchestrate", operation_ref="loom://orchestrate", program_content_ref=orchestration_program, io_contract_ref=parent_contract, allowed_node_package_refs=[package_ref], max_nodes=2, max_live_nodes=1),
+                    "value": orchestration_package_value(repo, package_id="orchestrate", action_ref="grip://loom.local/workspaces/workspace-default/actions/orchestrate", program_content_ref=orchestration_program, io_contract_ref=parent_contract, allowed_node_package_refs=[package_ref], max_nodes=2, max_live_nodes=1),
                 }
             ]
         },
@@ -131,10 +131,10 @@ async def test_dynamic_orchestration_single_node_stress_and_admission():
     )
     record, result = await driver._dispatch_execution(run_id, "summarize one partition")
     assert record.state == "completed"
-    assert result.resource_ref.resource_id.startswith("content://sha256/")
+    assert result.resource_ref.resource_id.startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")
     assert len(record.dynamic_nodes) == 1
     assert record.dynamic_nodes[0].parent_execution_ref == record.execution_id
     assert [event["phase"] for event in record.events if event["phase"].startswith("node_")] == ["node_requested", "node_accepted", "node_dispatched", "node_completed"]
 
-    assert record.outcome["resource_ref"]["resource_id"].startswith("content://sha256/")
+    assert record.outcome["resource_ref"]["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")
     assert record.dynamic_nodes[0].package_digest == node_package.package_digest

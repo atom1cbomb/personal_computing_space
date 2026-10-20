@@ -102,7 +102,7 @@ async def test_observer_record_result_projects_schema_failure_to_awaiting_decisi
             "attempt_id": attempt_id,
             "execution_id": record.execution_id,
             "execution_epoch": 1,
-            "resource_ref": {"resource_id": f"result-{digest[:16]}", "version_or_digest": digest, "identity_criterion": "content_digest"},
+            "resource_ref": {"resource_id": f"grip://loom.local/workspaces/workspace-default/content/execution-result/sha256/{digest}", "identity_criterion": "content_digest"},
             "value": value,
         },
     )
@@ -129,7 +129,7 @@ async def test_observer_recomputes_output_digest_and_resource_ref_identity():
                 "attempt_id": attempt_id,
                 "execution_id": record.execution_id,
                 "execution_epoch": 1,
-                "resource_ref": {"resource_id": "result-forged", "version_or_digest": "f" * 64},
+                "resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result-forged", "version_or_digest": "f" * 64},
                 "value": {"text": "hello"},
             },
         )
@@ -212,7 +212,7 @@ async def test_observer_reexecutes_validator_instead_of_trusting_slave_evidence(
             "attempt_id": attempt_id,
             "execution_id": current.execution_id,
             "execution_epoch": current.execution_epoch,
-            "resource_ref": {"resource_id": f"result-{digest[:16]}", "version_or_digest": digest, "identity_criterion": "content_digest"},
+            "resource_ref": {"resource_id": f"grip://loom.local/workspaces/workspace-default/content/execution-result/sha256/{digest}", "identity_criterion": "content_digest"},
             "value": value,
             "validation_evidence": [
                 {

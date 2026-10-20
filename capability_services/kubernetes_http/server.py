@@ -2,7 +2,7 @@
 
 The image intentionally uses the kubectl CLI because the supported cluster
 authentication is the kubeconfig exec plugin from production/kubernetes.md.
-Only fixed operations are exposed; request data is never interpolated into a
+Only fixed actions are exposed; request data is never interpolated into a
 shell command.
 """
 

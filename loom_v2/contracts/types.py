@@ -4,6 +4,9 @@ import json
 import re
 from typing import Any, Literal
 
+from loom_orchestration.grip import URI, Names
+from loom_orchestration.naming import content_digest, CONTENT_PATTERN
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .constraints import Constraint, ConstraintRef
@@ -17,7 +20,7 @@ class ContractModel(BaseModel):
 
 
 class ResourceRef(ContractModel):
-    resource_id: str
+    resource_id: URI
     version_or_digest: str | None = None
     access_binding: dict[str, Any] = Field(default_factory=dict)
     identity_criterion: str | None = None
@@ -26,7 +29,7 @@ class ResourceRef(ContractModel):
     @model_validator(mode="after")
     def validate_identity(self) -> "ResourceRef":
         if (
-            self.resource_id.startswith("content://sha256/")
+            content_digest(self.resource_id) is not None
             and self.version_or_digest is not None
             and self.identity_criterion != "descriptor_digest"
         ):
@@ -37,8 +40,8 @@ class ResourceRef(ContractModel):
     def digest(self) -> str | None:
         if self.identity_criterion == "descriptor_digest" and self.version_or_digest:
             return self.version_or_digest.lower()
-        if self.resource_id.startswith("content://sha256/"):
-            return self.resource_id.removeprefix("content://sha256/").lower()
+        if content_digest(self.resource_id) is not None:
+            return content_digest(self.resource_id)
         return self.version_or_digest.lower() if self.version_or_digest else None
 
 
@@ -84,7 +87,7 @@ class ValidationEvidence(ContractModel):
 
 
 class ProgramApplication(ContractModel):
-    operation_ref: str = ""
+    action_ref: str = ""
     # These fields remain the v2 application view.  Executable validation is
     # anchored by ``io_contract_ref``; the repository will resolve the view
     # from that content-addressed contract instead of trusting free text.
@@ -149,7 +152,7 @@ class TypedHole(ContractModel):
 
 class ComputeSpec(ContractModel):
     capability_requirements: list[TypedTerm] = Field(default_factory=list)
-    operation_ref: str = ""
+    action_ref: str = ""
     requirements: list[ComputeRequirement] = Field(default_factory=list)
     typed_holes: list[TypedHole] = Field(default_factory=list)
     terms: list[TypedTerm] = Field(default_factory=list)
@@ -158,20 +161,21 @@ class ComputeSpec(ContractModel):
 class ComputeBinding(ContractModel):
     binding_id: str
     hole_id: str
-    capability_descriptor_ref: ResourceRef
+    action_descriptor_ref: ResourceRef
     capability_package_ref: ResourceRef | None = None
     target_resource_ref: ResourceRef
     constraint_evidence_refs: list[str] = Field(default_factory=list)
     bound_by: str = "driver"
     bound_at: str = ""
     runtime_profile: dict[str, Any] = Field(default_factory=dict)
-    activation_ref: str | None = None
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    expected_activation_revision: int | None = Field(default=None, ge=1)
 
 
-class CapabilityExport(ContractModel):
-    """Runtime-neutral operation projection exported by a package."""
+class ActionExport(ContractModel):
+    """Runtime-neutral action projection exported by a package."""
 
-    capability_descriptor_ref: ResourceRef
+    action_descriptor_ref: ResourceRef
     io_contract_ref: ResourceRef
     effect_class: str
     permissions: list[str] = Field(default_factory=list)
@@ -179,18 +183,18 @@ class CapabilityExport(ContractModel):
     runtime_binding: dict[str, JsonValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_refs(self) -> "CapabilityExport":
-        descriptor_digest = self.capability_descriptor_ref.version_or_digest
+    def validate_refs(self) -> "ActionExport":
+        descriptor_digest = self.action_descriptor_ref.version_or_digest
         if (
-            not self.capability_descriptor_ref.resource_id
-            or self.capability_descriptor_ref.identity_criterion != "descriptor_digest"
+            not self.action_descriptor_ref.resource_id
+            or self.action_descriptor_ref.identity_criterion != "descriptor_digest"
             or not _is_sha256(descriptor_digest)
         ):
-            raise ValueError("capability_descriptor_invalid")
+            raise ValueError("action_descriptor_invalid")
         if (
             self.io_contract_ref.identity_criterion != "content_digest"
             or not re.fullmatch(
-                r"content://sha256/[0-9a-f]{64}", self.io_contract_ref.resource_id
+                CONTENT_PATTERN, self.io_contract_ref.resource_id
             )
             or self.io_contract_ref.version_or_digest is not None
         ):
@@ -208,6 +212,7 @@ class CapabilityPackageVersion(ContractModel):
     """Immutable runtime-neutral package envelope."""
 
     package_type: str = "function"
+    resource_authority: str = "loom.local"
     package_id: str
     package_version: str
     package_closure_version_ref: str | None = None
@@ -218,28 +223,29 @@ class CapabilityPackageVersion(ContractModel):
     publication_state: Literal["candidate", "published", "abandoned"] = "candidate"
     provenance: list[dict[str, Any]] = Field(default_factory=list)
     execution: ExecutionContract = Field(default_factory=ExecutionContract)
-    capability_exports: list[CapabilityExport] = Field(min_length=1)
+    action_exports: list[ActionExport] = Field(min_length=1)
     body: dict[str, JsonValue] | None = None
     package_digest: str = ""
 
     @model_validator(mode="after")
     def validate_contract(self) -> "CapabilityPackageVersion":
+        Names(self.resource_authority, self.workspace_id or "workspace-default")
         descriptor_keys = [
-            (item.capability_descriptor_ref.resource_id, item.capability_descriptor_ref.digest)
-            for item in self.capability_exports
+            (item.action_descriptor_ref.resource_id, item.action_descriptor_ref.digest)
+            for item in self.action_exports
         ]
         if len(descriptor_keys) != len(set(descriptor_keys)):
-            raise ValueError("capability_export_duplicate")
+            raise ValueError("action_export_duplicate")
         package_contract_registry.validate(
             (self.package_type, self.execution.kind, self.execution.version),
             self.model_dump(
                 mode="json",
-                include={"package_type", "execution", "capability_exports", "body"},
+                include={"package_type", "execution", "action_exports", "body"},
             ),
         )
         return self
 
-    def export_for(self, descriptor_ref: ResourceRef) -> CapabilityExport:
+    def export_for(self, descriptor_ref: ResourceRef) -> ActionExport:
         # Descriptor refs are a distinct identity class.  Do not accept a
         # bare resource id or a digest carried under another criterion just
         # because its derived ``digest`` happens to match an export.  This is
@@ -250,18 +256,18 @@ class CapabilityPackageVersion(ContractModel):
             or not descriptor_ref.resource_id
             or not _is_sha256(descriptor_ref.version_or_digest)
         ):
-            raise ValueError("capability_descriptor_invalid")
+            raise ValueError("action_descriptor_invalid")
         matches = [
             item
-            for item in self.capability_exports
-            if item.capability_descriptor_ref.resource_id == descriptor_ref.resource_id
-            and item.capability_descriptor_ref.identity_criterion
+            for item in self.action_exports
+            if item.action_descriptor_ref.resource_id == descriptor_ref.resource_id
+            and item.action_descriptor_ref.identity_criterion
             == descriptor_ref.identity_criterion
-            and item.capability_descriptor_ref.version_or_digest
+            and item.action_descriptor_ref.version_or_digest
             == descriptor_ref.version_or_digest
         ]
         if len(matches) != 1:
-            raise ValueError("capability_export_not_found")
+            raise ValueError("action_export_not_found")
         return matches[0]
 
     @property
@@ -278,7 +284,7 @@ class CapabilityPackageVersion(ContractModel):
 
     @property
     def version_ref(self) -> str:
-        return f"capability-package://{self.package_id}/{self.package_version}"
+        return Names(self.resource_authority, self.workspace_id or "workspace-default").name("packages", self.package_id, self.package_version)
 
     def model_post_init(self, __context: Any) -> None:
         payload = self._identity_payload()
@@ -295,7 +301,7 @@ class CapabilityPackageVersion(ContractModel):
 
     def _identity_payload(self) -> dict[str, Any]:
         """Immutable execution identity; lifecycle/provenance are excluded."""
-        payload = self.model_dump(mode="json", include={"package_type", "execution", "capability_exports", "body"})
+        payload = self.model_dump(mode="json", include={"package_type", "execution", "action_exports", "body"})
         resource_ref_fields = {
             "resource_id",
             "version_or_digest",
@@ -315,9 +321,8 @@ class CapabilityPackageVersion(ContractModel):
                 if "resource_id" in value and set(value) <= resource_ref_fields:
                     resource_id = str(value.get("resource_id") or "")
                     version_or_digest = value.get("version_or_digest")
-                    if resource_id.startswith("content://sha256/"):
-                        resource_id = resource_id.lower()
-                        # A content-backed operation descriptor has two
+                    if content_digest(resource_id) is not None:
+                        # A content-backed action descriptor has two
                         # distinct hashes: the ContentStore object identity
                         # in resource_id and the domain-separated descriptor
                         # identity in version_or_digest. Preserve both.
@@ -342,11 +347,11 @@ class CapabilityPackageVersion(ContractModel):
                 # Capability exports and common permission lists have set
                 # semantics. Package-specific body arrays retain the order
                 # declared by their contract.
-                if key == "capability_exports":
+                if key == "action_exports":
                     normalized.sort(
                         key=lambda item: (
-                            str((item.get("capability_descriptor_ref") or {}).get("resource_id", "")),
-                            str((item.get("capability_descriptor_ref") or {}).get("version_or_digest", "")),
+                            str((item.get("action_descriptor_ref") or {}).get("resource_id", "")),
+                            str((item.get("action_descriptor_ref") or {}).get("version_or_digest", "")),
                         )
                         if isinstance(item, dict)
                         else str(item)
@@ -442,7 +447,7 @@ class NodeIntent(ContractModel):
     intent_id: str = Field(min_length=1)
     execution_id: str = Field(min_length=1)
     package_ref: ResourceRef
-    capability_descriptor_ref: ResourceRef
+    action_descriptor_ref: ResourceRef
     input_refs: list[ResourceRef] = Field(default_factory=list)
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",)
     target_resource_ref: ResourceRef | None = None
@@ -456,7 +461,7 @@ class DynamicNode(ContractModel):
     parent_execution_ref: str = Field(min_length=1)
     intent_id: str = Field(min_length=1)
     package_ref: ResourceRef
-    capability_descriptor_ref: ResourceRef
+    action_descriptor_ref: ResourceRef
     input_refs: list[ResourceRef] = Field(default_factory=list)
     state: Literal["accepted", "dispatched", "completed", "failed", "decision_required"] = "accepted"
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",)

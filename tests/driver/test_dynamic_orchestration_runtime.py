@@ -92,7 +92,7 @@ async def test_dynamic_orchestration_runtime_executes_docker_program_and_slave_n
         goal="dynamic summarize",
         body=TaskClosure(
             closure_id="closure-runtime",
-            program={"operation_ref": "loom://orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
         ),
     )
     run = await repo.open_run("run-dynamic-runtime", "conversation-dynamic-runtime", "dynamic summarize", closure_contract=closure)
@@ -102,10 +102,10 @@ async def test_dynamic_orchestration_runtime_executes_docker_program_and_slave_n
         run.draft_digest,
         "materialize-node",
         [
-            {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": parent_input.model_dump(mode="json")}},
+            {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": parent_input.model_dump(mode="json")}},
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": process_package_value(repo, package_id="summarize", operation_ref="loom://summarize", program_content_ref=node_program, io_contract_ref=node_contract),
+                "value": process_package_value(repo, package_id="summarize", action_ref="grip://loom.local/workspaces/workspace-default/actions/summarize", program_content_ref=node_program, io_contract_ref=node_contract),
             },
         ],
     )
@@ -115,8 +115,8 @@ async def test_dynamic_orchestration_runtime_executes_docker_program_and_slave_n
         if package.package_id == "summarize"
     )
     package_ref = ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest)
-    node_descriptor_ref = node_package.capability_exports[0].capability_descriptor_ref
-    orchestration_descriptor_ref = register_test_descriptor(repo, "loom://orchestrate")
+    node_descriptor_ref = node_package.action_exports[0].action_descriptor_ref
+    orchestration_descriptor_ref = register_test_descriptor(repo, "grip://loom.local/workspaces/workspace-default/actions/orchestrate")
     orchestration_source = f'''
 PACKAGE_REF = {package_ref.model_dump(mode="json")}
 NODE_DESCRIPTOR_REF = {node_descriptor_ref.model_dump(mode="json")}
@@ -136,7 +136,7 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
         [
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": orchestration_package_value(repo, package_id="orchestrate", operation_ref="loom://orchestrate", program_content_ref=orchestration_program, io_contract_ref=parent_contract, allowed_node_package_refs=[package_ref], max_nodes=2, max_live_nodes=1),
+                "value": orchestration_package_value(repo, package_id="orchestrate", action_ref="grip://loom.local/workspaces/workspace-default/actions/orchestrate", program_content_ref=orchestration_program, io_contract_ref=parent_contract, allowed_node_package_refs=[package_ref], max_nodes=2, max_live_nodes=1),
             },
         ],
     )
@@ -161,7 +161,7 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
 
     assert completed.state == "completed"
     assert result.value == {"count": 3, "sum": 6, "min": 1, "max": 3, "sumsq": 14}
-    assert result.resource_ref.resource_id.startswith("content://sha256/")
+    assert result.resource_ref.resource_id.startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")
     record = await repo.get_run(run.run_id)
     assert started["execution_id"] == record.execution_id
     assert len(record.dynamic_nodes) == 1
@@ -176,7 +176,7 @@ async def test_target_selection_applies_permissions_locality_and_round_robin():
     run, patched = await _dynamic_fixture_for_target_selection(repo)
     record = await repo.get_run(run.run_id)
     package = next(package for package in record.capability_packages if package.package_id == "summarize")
-    descriptor_ref = package.capability_exports[0].capability_descriptor_ref
+    descriptor_ref = package.action_exports[0].action_descriptor_ref
     runtime = DynamicOrchestrationRuntime(
         repository=repo,
         executor=object(),
@@ -187,7 +187,7 @@ async def test_target_selection_applies_permissions_locality_and_round_robin():
     )
 
     denied_payload = package.model_dump(mode="json")
-    denied_payload["capability_exports"][0]["permissions"] = ["compute"]
+    denied_payload["action_exports"][0]["permissions"] = ["compute"]
     denied_payload["package_digest"] = ""
     denied = type(package).model_validate(denied_payload)
     try:
@@ -214,7 +214,7 @@ async def test_runtime_reuses_completed_nodes_after_driver_restart():
     record = await repo.get_run(run.run_id)
     package = next(package for package in record.capability_packages if package.package_id == "summarize")
     package_ref = ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest)
-    descriptor_ref = package.capability_exports[0].capability_descriptor_ref
+    descriptor_ref = package.action_exports[0].action_descriptor_ref
 
     class ReplayExecutor:
         async def run(self, program, input_ref, *, read_json, emit_node, result):
@@ -266,7 +266,7 @@ async def _dynamic_fixture_for_target_selection(
         recovery_policy={"allow_reassignment": allow_reassignment},
         body=TaskClosure(
             closure_id="closure-target-selection",
-            program={"operation_ref": "loom://orchestrate", "io_contract_ref": contract.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "io_contract_ref": contract.model_dump(mode="json")},
         ),
     )
     run = await repo.open_run(
@@ -282,10 +282,10 @@ async def _dynamic_fixture_for_target_selection(
         run.draft_digest,
         "target-node-package",
         [
-            {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
+            {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": process_package_value(repo, package_id="summarize", operation_ref="loom://summarize", program_content_ref=node_program, io_contract_ref=contract),
+                "value": process_package_value(repo, package_id="summarize", action_ref="grip://loom.local/workspaces/workspace-default/actions/summarize", program_content_ref=node_program, io_contract_ref=contract),
             },
         ],
     )
@@ -303,7 +303,7 @@ async def _dynamic_fixture_for_target_selection(
         [
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": orchestration_package_value(repo, package_id="orchestrate", operation_ref="loom://orchestrate", program_content_ref=program, io_contract_ref=contract, allowed_node_package_refs=[package_ref], max_nodes=2, max_live_nodes=2),
+                "value": orchestration_package_value(repo, package_id="orchestrate", action_ref="grip://loom.local/workspaces/workspace-default/actions/orchestrate", program_content_ref=program, io_contract_ref=contract, allowed_node_package_refs=[package_ref], max_nodes=2, max_live_nodes=2),
             },
         ],
     )
@@ -337,7 +337,7 @@ class LosingWorker:
     def __init__(self, repo: ObserverRepository, delegate: WorkerSession) -> None:
         self.repo = repo
         self.delegate = delegate
-        self.operation_timeout = delegate.operation_timeout
+        self.action_timeout = delegate.action_timeout
 
     async def provision(self, **arguments):
         return await self.delegate.provision(**arguments)
@@ -354,11 +354,11 @@ async def test_runtime_reassigns_lost_dynamic_attempt_without_bumping_epoch():
     record = await repo.get_run(run.run_id)
     package = next(item for item in record.capability_packages if item.package_id == "summarize")
     node_ref = ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest)
-    descriptor_ref = package.capability_exports[0].capability_descriptor_ref
+    descriptor_ref = package.action_exports[0].action_descriptor_ref
     parent_input = next(
         item.input_ref
         for item in record.committed.snapshot.node_input_bindings
-        if item.node_id == "loom://orchestrate"
+        if item.node_id == "grip://loom.local/workspaces/workspace-default/actions/orchestrate"
     )
     slave_a = WorkerSession(
         "slave-a",
@@ -406,11 +406,11 @@ async def test_runtime_keeps_healthy_sibling_valid_during_reassignment():
     record = await repo.get_run(run.run_id)
     package = next(item for item in record.capability_packages if item.package_id == "summarize")
     node_ref = ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest)
-    descriptor_ref = package.capability_exports[0].capability_descriptor_ref
+    descriptor_ref = package.action_exports[0].action_descriptor_ref
     parent_input = next(
         item.input_ref
         for item in record.committed.snapshot.node_input_bindings
-        if item.node_id == "loom://orchestrate"
+        if item.node_id == "grip://loom.local/workspaces/workspace-default/actions/orchestrate"
     )
     slave_a = WorkerSession(
         "slave-a",

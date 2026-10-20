@@ -50,7 +50,7 @@
 
 - [x] **Step 1: Construct the store from Settings.** Pass all S3 settings into `ObserverRepository` from `observer.app`; keep explicit `content_store` injection for tests.
 - [x] **Step 2: Await all repository content operations.** Convert `_evaluate_readiness` to async and await `put`, `exists`, and `stat` in materialization, patch, commit, start, and readiness paths.
-- [x] **Step 3: Normalize semantic refs.** Ensure materialized `ResourceRef` contains `content://sha256/<digest>`, digest, identity criterion, and no endpoint/bucket/key access binding; ensure closure canonical digest ignores `access_binding`.
+- [x] **Step 3: Normalize semantic refs.** Ensure materialized `ResourceRef` contains `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>`, digest, identity criterion, and no endpoint/bucket/key access binding; ensure closure canonical digest ignores `access_binding`.
 - [x] **Step 4: Update the content endpoint.** Await `content_store.get`, validate the requested digest as `sha256/<digest>`, and map missing content to 404 without exposing backend credentials or locations.
 - [x] **Step 5: Adapt capability-package tests to async S3 stores and add a canonical-digest invariance assertion.**
 - [x] **Step 6: Run repository/API/content tests and confirm materialize → readiness → commit still passes.**

@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "operation": {
+    "action": {
       "type": "string",
       "const": "instances_run"
     },
@@ -12,7 +12,29 @@
           "type": "array",
           "items": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "InstanceId": {
+                "type": "string"
+              },
+              "State": {
+                "type": "string"
+              },
+              "Ip": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "Ips": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "InstanceId"
+            ]
           }
         }
       },
@@ -22,7 +44,7 @@
     }
   },
   "required": [
-    "operation",
+    "action",
     "result"
   ]
 }

@@ -1,5 +1,7 @@
 # 删除遗留内置能力并以 `run_code` 作为执行基线
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 **日期：** 2026-09-06
 **状态：** 已按实现计划落地
 **取代范围：** 现有 `builtin_v1` 的 `echo`、`hash`、`sort` 演示能力，以及依赖这些能力的确定性测试夹具
@@ -36,12 +38,12 @@
 ```text
 executor_kind:      subprocess_json_v1
 executor_operation: run_code
-capability_ref:     capability-package://<package>/<version>
-program_content:    content://sha256/<digest>
-io_contract:        content://sha256/<digest>
+capability_ref:     grip://loom.local/workspaces/workspace-default/packages/<package>/<version>
+program_content:    grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>
+io_contract:        grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>
 ```
 
-测试中的应用 operation 使用明确的 fixture 名称，例如 `loom://test_double` 或 `loom://test_sum`，其 package 仍通过 `subprocess_json_v1/run_code` 执行。这样可以同时验证“应用能力”和“通用代码执行器”之间的边界，避免把 executor operation 与应用 operation 混为一谈。
+测试中的应用 operation 使用明确的 fixture 名称，例如 `grip://loom.local/workspaces/workspace-default/operations/test_double` 或 `grip://loom.local/workspaces/workspace-default/operations/test_sum`，其 package 仍通过 `subprocess_json_v1/run_code` 执行。这样可以同时验证“应用能力”和“通用代码执行器”之间的边界，避免把 executor operation 与应用 operation 混为一谈。
 
 ### 4.2 删除 `builtin_v1`，不保留空 adapter
 
@@ -118,9 +120,9 @@ fixture 的应用 operation 应使用 `test_double`、`test_sum` 等非遗留名
 
 ### 5.4 Driver、Observer 和 API 测试
 
-- `FakeCodingAgentProvider` 不再生成 `loom://echo` 闭包；确定性 provider 通过 MCP handler 上传 fixture 程序/IoContract、materialize package、绑定 typed hole，再启动 run_code package；
+- `FakeCodingAgentProvider` 不再生成 `grip://loom.local/workspaces/workspace-default/operations/echo` 闭包；确定性 provider 通过 MCP handler 上传 fixture 程序/IoContract、materialize package、绑定 typed hole，再启动 run_code package；
 - 需要真实执行的 Driver 测试统一注入 embedded `SlaveService` 或 HTTP `WorkerSession`；不再依赖默认本地 executor；
-- 只验证 turn、patch、readiness、错误 fencing 而不启动执行的测试，可使用 `loom://test_run_code` 作为 operation 名，并在需要提交/启动时提供 package；
+- 只验证 turn、patch、readiness、错误 fencing 而不启动执行的测试，可使用 `grip://loom.local/workspaces/workspace-default/operations/test_run_code` 作为 operation 名，并在需要提交/启动时提供 package；
 - readiness 测试改为验证 package 缺失、executor descriptor 不匹配和未绑定 run_code package 的结构化 blocker；
 - 删除所有断言 `echo/hash/sort` 结果的测试，改为断言 fixture 程序产生的实际结果和 provenance。
 
@@ -132,7 +134,7 @@ fixture 的应用 operation 应使用 `test_double`、`test_sum` 等非遗留名
 
 实现后增加以下回归断言：
 
-- 源码和测试中不存在 `BuiltinV1Adapter`、`builtin_v1`、`loom://echo`、`loom://hash`、`loom://sort` 的运行时引用；
+- 源码和测试中不存在 `BuiltinV1Adapter`、`builtin_v1`、`grip://loom.local/workspaces/workspace-default/operations/echo`、`grip://loom.local/workspaces/workspace-default/operations/hash`、`grip://loom.local/workspaces/workspace-default/operations/sort` 的运行时引用；
 - 新建 Slave 的能力快照不包含三个遗留 operation；
 - 所有成功的普通 Slave 执行都能在事件/结果中追溯到 package、程序 digest 和 `subprocess_json_v1` descriptor；
 - `orchestrator_python_v1`、未来 executor unsupported 错误和 capability package promotion 流程没有回退到旧 adapter。

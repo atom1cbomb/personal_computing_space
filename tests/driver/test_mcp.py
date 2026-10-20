@@ -35,7 +35,7 @@ async def test_open_run_is_agent_decision_and_contract_is_scoped_by_driver():
                 "resource_budget": {"max_attempts": 2},
                 "recovery_policy": {"allow_reassignment": False},
                 "result_expectations": [{"kind": "content"}],
-                "body": TaskClosure(program={"operation_ref": "loom://test_transform"}).model_dump(mode="json"),
+                "body": TaskClosure(program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_transform"}).model_dump(mode="json"),
             }
         },
     )
@@ -57,7 +57,7 @@ async def test_query_capabilities_is_available_before_open_run():
     result = await mcp.call("loom_query_capabilities")
 
     assert result["workspace_id"] == "workspace-default"
-    assert {item["resource_id"] for item in result["capabilities"]} == {"slave-a", "slave-b"}
+    assert {item["resource_id"] for item in result["capabilities"]} == {"grip://loom.local/workspaces/workspace-default/slaves/slave-a", "grip://loom.local/workspaces/workspace-default/slaves/slave-b"}
     assert any(item["kind"] == "process:json_stdio" for item in result["executor_descriptors"])
     assert any(item.get("driver_special") for item in result["executor_descriptors"])
 
@@ -69,7 +69,7 @@ async def test_query_capabilities_projects_slave_runtime_descriptors():
         "runtime_plugin_descriptors"
     ] = [{
         "plugin_id": "container-http-v1",
-        "runtime_descriptor_ref": "runtime://service/container:http/1",
+        "runtime_descriptor_ref": "grip://loom.local/workspaces/workspace-default/runtimes/service/container:http/1",
         "supports": [{"package_type": "service", "execution_kind": "container:http", "execution_version": "1"}],
     }]
     mcp = DriverMCP(repo, "conversation-capabilities-runtime")
@@ -78,7 +78,7 @@ async def test_query_capabilities_projects_slave_runtime_descriptors():
 
     assert result["runtime_plugin_descriptors"] == [{
         "plugin_id": "container-http-v1",
-        "runtime_descriptor_ref": "runtime://service/container:http/1",
+        "runtime_descriptor_ref": "grip://loom.local/workspaces/workspace-default/runtimes/service/container:http/1",
         "supports": [{"package_type": "service", "execution_kind": "container:http", "execution_version": "1"}],
     }]
     assert all(item.get("kind") != "container:http" for item in result["executor_descriptors"])
@@ -97,14 +97,14 @@ def test_driver_mcp_exposes_dynamic_tool_specs():
     assert "atomic" in description
     assert "readiness" in description
     put_spec = next(item for item in specs if item["name"] == "loom_put_content")
-    assert "operation-descriptor+json" in put_spec["description"]
+    assert "action-descriptor+json" in put_spec["description"]
     assert "do not calculate" in put_spec["description"].lower()
-    assert "capability_exports" in description
+    assert "action_exports" in description
     assert "omit `package_digest`" in description
 
 
 @pytest.mark.asyncio
-async def test_apply_plan_patch_accepts_explicit_operation_alias_from_json_tool_call():
+async def test_apply_plan_patch_accepts_explicit_action_alias_from_json_tool_call():
     repo = _seeded_repository()
     mcp = DriverMCP(repo, "conversation-mcp-alias")
     await mcp.call(
@@ -114,12 +114,12 @@ async def test_apply_plan_patch_accepts_explicit_operation_alias_from_json_tool_
 
     result = await mcp.call(
         "loom_apply_plan_patch",
-        {"ops": [{"op": "set_program_ref", "value": {"program_ref": "loom://test_alias"}}]},
+        {"ops": [{"op": "set_program_ref", "value": {"program_ref": "grip://loom.local/workspaces/workspace-default/actions/test_alias"}}]},
     )
 
     assert result["draft_version"].startswith("draft-")
     run = await repo.get_run(mcp.run_id)
-    assert run.draft.snapshot.program.operation_ref == "loom://test_alias"
+    assert run.draft.snapshot.program.action_ref == "grip://loom.local/workspaces/workspace-default/actions/test_alias"
 
 
 @pytest.mark.asyncio
@@ -147,8 +147,8 @@ async def test_bind_compute_hole_accepts_capability_uri_target_for_registered_sl
     descriptor = await mcp.call(
         "loom_put_content",
         {
-            "media_type": "application/vnd.loom.operation-descriptor+json",
-            "content": {"schema_version": "operation.v1", "resource_id": "loom://test_binding", "name": "test_binding"},
+            "media_type": "application/vnd.loom.action-descriptor+json",
+            "content": {"schema_version": "action.v1", "resource_id": "grip://loom.local/workspaces/workspace-default/actions/test_binding", "name": "test_binding"},
         },
     )
     await mcp.call(
@@ -157,9 +157,9 @@ async def test_bind_compute_hole_accepts_capability_uri_target_for_registered_sl
     await mcp.call(
         "loom_apply_plan_patch",
         {"ops": [
-            {"kind": "set_program_ref", "value": "loom://test_binding"},
+            {"kind": "set_program_ref", "value": "grip://loom.local/workspaces/workspace-default/actions/test_binding"},
             {"kind": "set_io_contract_ref", "value": contract["resource_ref"]},
-            {"kind": "set_compute_spec", "value": {"operation_ref": "loom://test_binding"}},
+            {"kind": "set_compute_spec", "value": {"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_binding"}},
             {"kind": "add_typed_hole", "value": {"hole_id": "h_binding"}},
         ]},
     )
@@ -173,8 +173,8 @@ async def test_bind_compute_hole_accepts_capability_uri_target_for_registered_sl
                              "package_version": "v1",
                              "package_type": "function",
                              "execution": {"kind": "process:json_stdio", "version": "1"},
-                             "capability_exports": [{
-                                 "capability_descriptor_ref": descriptor["resource_ref"],
+                             "action_exports": [{
+                                 "action_descriptor_ref": descriptor["resource_ref"],
                                  "io_contract_ref": contract["resource_ref"],
                                  "effect_class": "Sandboxed",
                                  "permissions": [],
@@ -198,9 +198,9 @@ async def test_bind_compute_hole_accepts_capability_uri_target_for_registered_sl
                     "value": {
                         "binding_id": "binding-test",
                         "hole_id": "h_binding",
-                        "capability_descriptor_ref": descriptor["resource_ref"],
-                        "capability_package_ref": {"resource_id": "capability-package://mcp-binding-package/v1"},
-                        "target_resource_ref": {"resource_id": "loom://compute/slave-a"},
+                        "action_descriptor_ref": descriptor["resource_ref"],
+                        "capability_package_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/packages/mcp-binding-package/v1"},
+                        "target_resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/slaves/slave-a"},
                     },
                 }
             ]
@@ -253,11 +253,11 @@ async def test_open_run_uses_goal_as_execution_prompt_when_transport_has_no_prom
 async def test_start_run_returns_repair_outcome_as_successful_tool_call():
     repo = ObserverRepository()
 
-    async def failing_executor(_operation, payload):
+    async def failing_executor(_action, payload):
         digest = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
         return ExecutionResult(
             resource_ref=ResourceRef(
-                resource_id=f"content://sha256/{digest}",
+                resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}",
                 identity_criterion="content_digest",
             ),
             value=payload,
@@ -277,7 +277,7 @@ async def test_start_run_returns_repair_outcome_as_successful_tool_call():
                 "goal": "run failure",
                 "body": {
                     "closure_id": "closure-mcp-repair",
-                    "program": {"operation_ref": ""},
+                    "program": {"action_ref": ""},
                 },
             }
         },
@@ -302,7 +302,7 @@ async def test_start_run_wakes_when_run_is_cancelled():
     executor_started = asyncio.Event()
     executor_cancelled = asyncio.Event()
 
-    async def blocking_executor(_operation, _payload):
+    async def blocking_executor(_action, _payload):
         executor_started.set()
         try:
             await asyncio.Event().wait()
@@ -321,7 +321,7 @@ async def test_start_run_wakes_when_run_is_cancelled():
                 "goal": "wait",
                 "body": {
                     "closure_id": "closure-mcp-cancelled",
-                    "program": {"operation_ref": ""},
+                    "program": {"action_ref": ""},
                 },
             }
         },

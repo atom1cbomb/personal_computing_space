@@ -151,3 +151,17 @@ def test_database_url_uses_url_encoded_password_variable(tmp_path: Path):
     assert document["services"]["observer"]["environment"]["LOOM_DATABASE_URL"] == "postgresql+asyncpg://loom:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/loom_observer"
     assert "POSTGRES_PASSWORD_URLENCODED='p%40ss%2Fword'" in project.env_text
     assert "p%40ss%2Fword" not in project.redacted_preview
+
+
+def test_grip_configuration_is_delivered_only_to_observer_and_redacted(tmp_path):
+    from dataclasses import replace
+    config = replace(make_config(tmp_path), grip_authority="resources.example", public_base_url="https://observer.example", grip_token="private-grip-fixture")
+    observer = render_project(config, "observer")
+    document = json.loads(observer.compose_text)
+    assert document["services"]["observer"]["environment"]["LOOM_GRIP_AUTHORITY"] == "resources.example"
+    assert document["services"]["observer"]["environment"]["LOOM_PUBLIC_BASE_URL"] == "https://observer.example"
+    assert document["secrets"]["grip_token"]["file"] == "./secrets/grip_token"
+    assert "cat /run/secrets/grip_token" in document["services"]["observer"]["command"][2]
+    assert observer.secret_files["grip_token"] == "private-grip-fixture"
+    assert "private-grip-fixture" not in observer.redacted_preview
+    assert "grip_token" not in render_project(config, "worker-a").secret_files

@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "content://sha256/057b3f0a27aff31908347c01020fc02069b0b3f4af6e076ed83904c0ac1a55b9",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/jobs-logs-input/sha256/057b3f0a27aff31908347c01020fc02069b0b3f4af6e076ed83904c0ac1a55b9",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "content://sha256/2acbb75ba5b4d6213045dcaeaed2d73887ead7cf2d9e0ec2edc33fbec4e73d8c",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/jobs-logs-output/sha256/2acbb75ba5b4d6213045dcaeaed2d73887ead7cf2d9e0ec2edc33fbec4e73d8c",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

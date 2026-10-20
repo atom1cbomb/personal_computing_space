@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/resources-list",
+  "name": "resources_list",
+  "description": "Resources list through the kubernetes-http activation."
+}

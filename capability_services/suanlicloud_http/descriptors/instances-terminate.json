@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-terminate",
+  "name": "instances_terminate",
+  "description": "Terminates the explicit InstanceIds array and returns result.StateTransitions under the declared io.v1 contract."
+}

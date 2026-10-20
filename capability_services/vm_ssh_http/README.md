@@ -1,5 +1,10 @@
 # Ordinary VM SSH capability service
 
+Public resource use follows [the shared GRIP workflow](../README.md): publish the
+artifact directory with `scripts/publish_service_package.py`, activate the package
+on a Slave, then invoke the ready activation's discovered action URI. The HTTP
+paths below describe the private runtime-to-container binding.
+
 This package exposes one fixed `container:http/1` capability, `/v1/exec`, for
 an ordinary SSH-accessible VM. The activation-owned `/run/loom/instance.json`
 provides the host, user, and port. The request can provide only a shell command
@@ -10,3 +15,8 @@ The activation mounts an SSH private key at the credential profile's
 volume, uses `StrictHostKeyChecking=accept-new` on first contact, and rejects a
 changed host key. Authentication status is exposed through the standard
 `/v1/auth/status` path; browser or provider login is intentionally unsupported.
+
+The descriptor carries `schemas/instance-config.json`. Publication includes
+`validators/exec-success.py`: successful execution requires exit code zero and
+no timeout. The activation offers GRIP `auth-start` for the configured SSH key
+profile; it does not perform an interactive browser login.

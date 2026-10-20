@@ -78,7 +78,7 @@ class EchoPlugin:
     async def invoke(
         self,
         package,
-        capability_export,
+        action_export,
         payload,
         *,
         activation,
@@ -88,7 +88,7 @@ class EchoPlugin:
         self.calls.append("invoke")
         return {
             "value": {"echo": payload, "configured": package.body["message"]},
-            "replay_safety": capability_export.replay_safety,
+            "replay_safety": action_export.replay_safety,
             "runtime_plugin_id": self.descriptor.plugin_id,
         }
 
@@ -274,7 +274,7 @@ async def test_generic_plugin_provision_invoke_and_deprovision_without_core_type
         media_type="application/vnd.loom.io-contract+json",
     )
     descriptor_ref = ResourceRef(
-        resource_id="loom://test/echo",
+        resource_id="grip://loom.local/workspaces/workspace-default/actions/test/echo",
         version_or_digest="a" * 64,
         identity_criterion="descriptor_digest",
     )
@@ -286,9 +286,9 @@ async def test_generic_plugin_provision_invoke_and_deprovision_without_core_type
         source_run_ref="run-1",
         source_closure_version_ref="version-1",
         execution={"kind": CUSTOM_KEY[1], "version": CUSTOM_KEY[2]},
-        capability_exports=[
+        action_exports=[
             {
-                "capability_descriptor_ref": descriptor_ref,
+                "action_descriptor_ref": descriptor_ref,
                 "io_contract_ref": io_contract_ref,
                 "effect_class": "Pure",
                 "permissions": [],
@@ -306,12 +306,12 @@ async def test_generic_plugin_provision_invoke_and_deprovision_without_core_type
     binding = ComputeBinding(
         binding_id="binding-echo",
         hole_id="hole-echo",
-        capability_descriptor_ref=descriptor_ref,
+        action_descriptor_ref=descriptor_ref,
         capability_package_ref=ResourceRef(
             resource_id=package.version_ref,
             version_or_digest=package.package_digest,
         ),
-        target_resource_ref=ResourceRef(resource_id="slave-test"),
+        target_resource_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/slaves/slave-test"),
     )
     provision_command = CapabilityProvisionCommand(
         command_id="provision-echo",

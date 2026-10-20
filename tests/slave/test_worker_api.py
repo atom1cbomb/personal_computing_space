@@ -19,7 +19,7 @@ def dispatch_arguments() -> dict[str, object]:
         "execution_id": "execution-worker-unavailable",
         "execution_epoch": 1,
         "workspace_id": "workspace-default",
-        "operation": "run_code",
+        "action": "run_code",
         "payload": {},
         "closure": TaskClosure.minimal(),
         "binding": None,
@@ -63,14 +63,14 @@ def test_slave_capabilities_endpoint_reports_worker_contract():
     assert response.status_code == 200
     payload = response.json()
     assert payload["slave_id"] == "slave-a"
-    assert payload["operations"] == ["run_code"]
+    assert payload["actions"] == ["run_code"]
     assert [item["kind"] for item in payload["executor_descriptors"]] == ["process:json_stdio"]
 
 
 @pytest.mark.asyncio
 async def test_slave_dispatch_endpoint_returns_ack_and_terminal_report():
     app = create_app("slave-a")
-    fixture = await make_run_code_fixture(app.state.service, operation="test_worker_api")
+    fixture = await make_run_code_fixture(app.state.service, action="test_worker_api")
     await provision_run_code_fixture(app.state.service, fixture)
     closure = fixture.closure()
     transport = httpx.ASGITransport(app=app)
@@ -82,7 +82,7 @@ async def test_slave_dispatch_endpoint_returns_ack_and_terminal_report():
                 "execution_id": "execution-worker-api",
                 "execution_epoch": 1,
                 "workspace_id": "workspace-default",
-                "operation": fixture.operation,
+                "action": fixture.action,
                 "payload": {"value": 3},
                 "closure": closure.model_dump(mode="json"),
                 "binding": fixture.binding.model_dump(mode="json"),
@@ -110,7 +110,7 @@ def test_slave_dispatch_requires_driver_epoch_when_internal_auth_is_enabled(monk
                 "execution_id": "execution-auth-fencing",
                 "execution_epoch": 1,
                 "workspace_id": "workspace-default",
-                "operation": "run_code",
+                "action": "run_code",
                 "payload": {"value": 3},
             },
         )
@@ -121,7 +121,7 @@ def test_slave_dispatch_requires_driver_epoch_when_internal_auth_is_enabled(monk
 @pytest.mark.asyncio
 async def test_worker_session_dispatches_over_http_envelope():
     app = create_app("slave-a")
-    fixture = await make_run_code_fixture(app.state.service, operation="test_worker_session")
+    fixture = await make_run_code_fixture(app.state.service, action="test_worker_session")
     await provision_run_code_fixture(app.state.service, fixture)
     transport = httpx.ASGITransport(app=app)
     session = WorkerSession("slave-a", "http://slave-a", transport=transport)
@@ -130,7 +130,7 @@ async def test_worker_session_dispatches_over_http_envelope():
         execution_id="execution-worker-session",
         execution_epoch=1,
         workspace_id="workspace-default",
-        operation=fixture.operation,
+        action=fixture.action,
         payload={"value": 5},
         closure=fixture.closure(),
         binding=fixture.binding,
@@ -157,7 +157,7 @@ async def test_worker_session_preserves_slave_terminal_validation_state():
     )
     fixture = await make_run_code_fixture(
         app.state.service,
-        operation="test_worker_validation",
+        action="test_worker_validation",
         io_contract_ref=contract_ref,
         program=b'import json,sys; d=json.load(sys.stdin); print(json.dumps({"text": d["text"]}))',
     )
@@ -168,7 +168,7 @@ async def test_worker_session_preserves_slave_terminal_validation_state():
         execution_id="execution-worker-validation",
         execution_epoch=1,
         workspace_id="workspace-default",
-        operation=fixture.operation,
+        action=fixture.action,
         payload={"text": "hello"},
         closure=fixture.closure(io_contract_ref=contract_ref),
         binding=fixture.binding,
@@ -190,20 +190,20 @@ async def test_worker_session_timeout_is_independent_from_coding_agent_deadline(
     session = WorkerSession(
         "slave-a",
         "http://slave-a",
-        operation_timeout=0.01,
+        action_timeout=0.01,
         transport=httpx.ASGITransport(app=app),
     )
-    assert session.operation_timeout == 0.01
+    assert session.action_timeout == 0.01
 
-    with pytest.raises(RuntimeError, match="worker_operation_timeout"):
+    with pytest.raises(RuntimeError, match="worker_action_timeout"):
         await session.dispatch(
             attempt_id="attempt-worker-timeout",
             execution_id="execution-worker-timeout",
             execution_epoch=1,
             workspace_id="workspace-default",
-            operation="run_code",
+            action="run_code",
             payload={"value": 2},
-            closure=TaskClosure(program={"operation_ref": "loom://run_code"}),
+            closure=TaskClosure(program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code"}),
             binding=None,
         )
 
@@ -226,7 +226,7 @@ async def test_worker_session_rejects_terminal_report_with_wrong_attempt_id():
                 "execution_epoch": 1,
                 "state": "completed",
                 "result": {
-                    "resource_ref": {"resource_id": "result-fencing"},
+                    "resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result-fencing"},
                     "value": {"ok": True},
                 },
             },
@@ -239,9 +239,9 @@ async def test_worker_session_rejects_terminal_report_with_wrong_attempt_id():
             execution_id="execution-worker-fencing",
             execution_epoch=1,
             workspace_id="workspace-default",
-            operation="run_code",
+            action="run_code",
             payload={"value": 2},
-            closure=TaskClosure(program={"operation_ref": "loom://run_code"}),
+            closure=TaskClosure(program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code"}),
             binding=None,
         )
 
@@ -264,7 +264,7 @@ async def test_worker_session_rejects_terminal_report_with_wrong_execution_id():
                 "execution_epoch": 1,
                 "state": "completed",
                 "result": {
-                    "resource_ref": {"resource_id": "result-fencing-exec"},
+                    "resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result-fencing-exec"},
                     "value": {"ok": True},
                 },
             },
@@ -277,9 +277,9 @@ async def test_worker_session_rejects_terminal_report_with_wrong_execution_id():
             execution_id="execution-worker-fencing-exec",
             execution_epoch=1,
             workspace_id="workspace-default",
-            operation="run_code",
+            action="run_code",
             payload={"value": 2},
-            closure=TaskClosure(program={"operation_ref": "loom://run_code"}),
+            closure=TaskClosure(program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code"}),
             binding=None,
         )
 
@@ -304,15 +304,15 @@ async def test_worker_session_omits_mutable_payload_when_closure_has_input_bindi
                 "execution_epoch": 1,
                 "state": "completed",
                 "result": {
-                    "resource_ref": {"resource_id": "result-input-ref"},
+                    "resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result-input-ref"},
                     "value": {"ok": True},
                 },
             },
         }
 
-    input_ref = ResourceRef(resource_id="content://sha256/" + "a" * 64)
+    input_ref = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64)
     closure = TaskClosure(
-        program={"operation_ref": "loom://test_input_ref"},
+        program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_input_ref"},
         node_input_bindings=[NodeInputBinding(node_id="test_input_ref", input_ref=input_ref)],
     )
     session = WorkerSession("slave-a", "http://slave-a", transport=httpx.ASGITransport(app=app))
@@ -321,7 +321,7 @@ async def test_worker_session_omits_mutable_payload_when_closure_has_input_bindi
         execution_id="execution-input-ref",
         execution_epoch=1,
         workspace_id="workspace-default",
-        operation="test_input_ref",
+        action="test_input_ref",
         payload={"value": "untrusted"},
         closure=closure,
         binding=None,
@@ -342,7 +342,7 @@ async def test_worker_session_provision_sends_only_content_references():
         assert isinstance(package, dict)
         return {"accepted": True, "health_report": CapabilityHealthReport(
             report_id="health-test",
-            package_version_ref=f"capability-package://{package['package_id']}/{package['package_version']}",
+            package_version_ref=payload["command"]["package_version_ref"],
             package_digest=str(package["package_digest"]),
             target_slave="slave-a",
             activation_state="ready",
@@ -366,8 +366,8 @@ async def test_worker_session_provision_sends_only_content_references():
         package_closure_version_ref="closure",
         source_run_ref="run",
         source_closure_version_ref="version",
-        capability_exports=[{
-            "capability_descriptor_ref": ResourceRef(resource_id="loom://check", version_or_digest="a" * 64, identity_criterion="descriptor_digest"),
+        action_exports=[{
+            "action_descriptor_ref": ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/actions/check", version_or_digest="a" * 64, identity_criterion="descriptor_digest"),
             "io_contract_ref": contract_ref,
             "effect_class": "Sandboxed",
             "permissions": [],

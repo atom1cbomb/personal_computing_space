@@ -1,7 +1,7 @@
 # Local browser bridge
 
-Run the entrypoint with the `client` object returned by Observer's
-`auth/start` response:
+Run the entrypoint with the `client` object returned by the activation resource's GRIP
+`auth-start` response:
 
 ```bash
 python client/loom_vm_auth.py \

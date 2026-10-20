@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "vm-ssh-http",
-  "package_version": "v1",
+  "package_version": "v2",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -12,17 +12,21 @@
     "health_path": "/healthz",
     "credential_profile": "vm-ssh-default",
     "network_profile": "egress",
-    "persistent_state": true
+    "persistent_state": true,
+    "authentication": {
+      "start_path": "/v1/auth/start",
+      "status_path": "/v1/auth/status"
+    }
   },
-  "capability_exports": [
+  "action_exports": [
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://vm/exec",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/exec",
+        "version_or_digest": "646c05fbb23325e7b48df8cfd2c38917237467a19a24cb5b0d9200e0b1574afe",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/a75c0893587cd883474a1fefe7ea55820b9d4ecb9c4d9aa761e712b1455f6dd3",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/contracts/exec/sha256/ff5733085e5544d49034fa2e61ba33bc84e7a2631d51f89cf06c0b7039faf9be",
         "identity_criterion": "content_digest"
       },
       "effect_class": "RemoteExecution",

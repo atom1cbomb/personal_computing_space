@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "operation": {
+    "action": {
       "type": "string",
       "const": "instances_list"
     },
@@ -12,22 +12,48 @@
           "type": "array",
           "items": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "InstanceId": {
+                "type": "string"
+              },
+              "State": {
+                "type": "string"
+              },
+              "Ip": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "Ips": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "InstanceId"
+            ]
           }
         },
-        "PageMeta": {
-          "type": "object",
-          "properties": {}
+        "PageNumber": {
+          "type": "integer"
+        },
+        "PageSize": {
+          "type": "integer"
+        },
+        "TotalCount": {
+          "type": "integer"
         }
       },
       "required": [
-        "Instances",
-        "PageMeta"
+        "Instances"
       ]
     }
   },
   "required": [
-    "operation",
+    "action",
     "result"
   ]
 }

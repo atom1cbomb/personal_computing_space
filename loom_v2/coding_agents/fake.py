@@ -69,14 +69,14 @@ class FakeCodingAgentProvider:
         if handler is None:
             raise RuntimeError("fake_mcp_handler_required")
 
-        operation_ref = "loom://test_double"
+        action_ref = "grip://loom.local/workspaces/workspace-default/actions/test_double"
         descriptor = await handler(
             "loom_put_content",
             {
-                "media_type": "application/vnd.loom.operation-descriptor+json",
+                "media_type": "application/vnd.loom.action-descriptor+json",
                 "content": {
-                    "schema_version": "operation.v1",
-                    "resource_id": operation_ref,
+                    "schema_version": "action.v1",
+                    "resource_id": action_ref,
                     "name": "test_double",
                 },
             },
@@ -117,7 +117,7 @@ class FakeCodingAgentProvider:
         program_ref = program["resource_ref"]
         io_contract_ref = io_contract["resource_ref"]
         input_ref = input_content["resource_ref"]
-        capability_descriptor_ref = descriptor["resource_ref"]
+        action_descriptor_ref = descriptor["resource_ref"]
         yield AgentEvent(
             "open_run",
             {
@@ -146,9 +146,9 @@ class FakeCodingAgentProvider:
         yield await apply_patch(
             "fake-run-code-program",
             [
-                {"kind": "set_program_ref", "value": operation_ref},
+                {"kind": "set_program_ref", "value": action_ref},
                 {"kind": "set_io_contract_ref", "value": io_contract_ref},
-                {"kind": "set_compute_spec", "value": {"operation_ref": operation_ref}},
+                {"kind": "set_compute_spec", "value": {"action_ref": action_ref}},
                 {"kind": "add_typed_hole", "value": {"hole_id": "h_compute"}},
             ],
         )
@@ -162,9 +162,9 @@ class FakeCodingAgentProvider:
                                  "package_version": "v1",
                                  "package_type": "function",
                                  "execution": {"kind": "process:json_stdio", "version": "1"},
-                                 "capability_exports": [
+                                 "action_exports": [
                                      {
-                                         "capability_descriptor_ref": capability_descriptor_ref,
+                                         "action_descriptor_ref": action_descriptor_ref,
                                          "io_contract_ref": io_contract_ref,
                                          "effect_class": "Sandboxed",
                                          "permissions": [],
@@ -187,13 +187,13 @@ class FakeCodingAgentProvider:
                     "value": {
                         "binding_id": "binding-h_compute",
                         "hole_id": "h_compute",
-                        "capability_descriptor_ref": capability_descriptor_ref,
-                        "capability_package_ref": {"resource_id": "capability-package://fake-run-code/v1"},
-                        "target_resource_ref": {"resource_id": "slave-a"},
+                        "action_descriptor_ref": action_descriptor_ref,
+                        "capability_package_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/packages/fake-run-code/v1"},
+                        "target_resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/slaves/slave-a"},
                         "bound_by": "fake-driver",
                     },
                 },
-                {"kind": "set_execution_payload", "value": {"node_id": operation_ref, "input_ref": input_ref}},
+                {"kind": "set_execution_payload", "value": {"node_id": action_ref, "input_ref": input_ref}},
             ],
         )
         await handler("loom_inspect_plan_readiness", {})

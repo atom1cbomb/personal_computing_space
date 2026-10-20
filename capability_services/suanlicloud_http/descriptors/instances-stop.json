@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-stop",
+  "name": "instances_stop",
+  "description": "Instances stop through the suanlicloud-http activation."
+}

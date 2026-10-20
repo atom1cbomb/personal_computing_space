@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-shutdown",
+  "name": "instances_shutdown",
+  "description": "Instances shutdown through the suanlicloud-http activation."
+}

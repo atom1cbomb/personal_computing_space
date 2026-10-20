@@ -1,5 +1,7 @@
 # HTTP 服务能力包：契约与 digest
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 **日期：** 2026-09-13  
 **状态：** 设计草案，Phase 1  
 **前置：** 无  
@@ -57,7 +59,7 @@ Operator contract 以纯 JSON 文件安装到所有 Observer、Driver 和 Slave 
 ### 2.1 引用规则
 
 - `image_ref` 必须匹配 `<registry>/<repository>@sha256:<64 lowercase hex>`。tag、裸 repository、Docker image ID 和命令片段不合法。
-- `io_contract_ref` 必须是 `content://sha256/<digest>`，`identity_criterion` 固定为 `content_digest`。Observer 在创建、promotion 和 provision 时读取并验证 `io.v1` contract；schema ref 若存在也必须读取并验证。
+- `io_contract_ref` 必须是 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>`，`identity_criterion` 固定为 `content_digest`。Observer 在创建、promotion 和 provision 时读取并验证 `io.v1` contract；schema ref 若存在也必须读取并验证。
 - `capability_descriptor_ref` 必须带 `identity_criterion=descriptor_digest` 和 64 位十六进制 digest。
 - descriptor digest 不能只做字符串形状校验。权威 descriptor registry 必须能按 `resource_id + digest` 返回不可变 descriptor；registry 对 descriptor 正文使用项目统一 JCS 序列化和 `loom/operation-descriptor/v1` 域分离。无法解析或重算不一致时拒绝 package。
 - descriptor registry 的访问凭据和部署地址不进入 package body 或 package digest。
@@ -105,7 +107,7 @@ package manifest 仅包含：
 resource_id + version_or_digest + identity_criterion
 ```
 
-规范化要求：digest 一律小写；content ref 固定为 `content://sha256/<digest>` 与 `content_digest`；descriptor ref 的 criterion 固定为 `descriptor_digest`。等价引用必须生成相同 manifest。
+规范化要求：digest 一律小写；content ref 固定为 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` 与 `content_digest`；descriptor ref 的 criterion 固定为 `descriptor_digest`。等价引用必须生成相同 manifest。
 
 ### 3.3 算法与列表语义
 
@@ -123,7 +125,7 @@ package 计算 digest 后视为不可变。禁止原地修改嵌套 body；任�
 
 | 对象 | 唯一身份 | 不再额外保存 |
 | --- | --- | --- |
-| ContentStore 内容 | `content://sha256/<digest>` | 裸 `version_or_digest` 副本 |
+| ContentStore 内容 | `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` | 裸 `version_or_digest` 副本 |
 | CapabilityPackage | JCS manifest 的 `package_digest` | 坐标、生命周期、provenance 的 hash |
 | Operation descriptor | registry 返回的 descriptor ref/digest | `operation_descriptor_digest` 旁路字段 |
 | IoContract/schema | 各自 content ref digest | schema/semantics digest 副本 |

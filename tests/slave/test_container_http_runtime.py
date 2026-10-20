@@ -50,7 +50,7 @@ async def test_long_container_name_uses_docker_dns_id_for_health_auth_and_execut
     assert await runtime._health(name, 8080, "/healthz")
     assert await runtime._authentication_probe(name, 8080, "/v1/auth/status") == {"status": "authenticated"}
     result = await runtime.invoke(
-        package.model_dump(mode="json"), package.capability_exports[0].model_dump(mode="json"), {},
+        package.model_dump(mode="json"), package.action_exports[0].model_dump(mode="json"), {},
         activation={"workspace_id": "workspace-default", "target_slave": "slave-a",
                     "package_version_ref": package.version_ref, "package_digest": package.package_digest,
                     "instance_name": instance, "runtime_profile": {"container_name": name}},
@@ -77,13 +77,13 @@ def _package(paths: list[str], *, health_path: str = "/healthz") -> CapabilityPa
         source_run_ref="run-1",
         source_closure_version_ref="version-1",
         execution={"kind": "container:http", "version": "1"},
-        capability_exports=[
+        action_exports=[
             {
-                "capability_descriptor_ref": _ref(
-                    f"loom://http/operation-{index}",
+                "action_descriptor_ref": _ref(
+                    f"grip://loom.local/workspaces/workspace-default/actions/http/action-{index}",
                     descriptor_digest=f"{index + 1:064x}",
                 ),
-                "io_contract_ref": _ref("content://sha256/" + f"{index + 20:064x}"),
+                "io_contract_ref": _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + f"{index + 20:064x}"),
                 "effect_class": "NetworkService",
                 "permissions": [],
                 "replay_safety": "DeclaredByPackage",
@@ -519,7 +519,7 @@ async def test_http_redirect_is_not_followed_or_replayed() -> None:
     with pytest.raises(RuntimeError, match="capability_service_http_error"):
         await runtime.invoke(
             package.model_dump(mode="json"),
-            package.capability_exports[0].model_dump(mode="json"),
+            package.action_exports[0].model_dump(mode="json"),
             {"message": "hello"},
             activation={
                 "workspace_id": "workspace-default",
@@ -553,7 +553,7 @@ async def test_reconcile_stopped_requires_exact_package_identity_before_remove()
                 "workspace_id": "workspace-default",
                 "slave_id": "slave-test",
                 "target_slave": "slave-test",
-                "package_version_ref": "capability-package://wrong/v1",
+                "package_version_ref": "grip://loom.local/workspaces/workspace-default/packages/wrong/v1",
                 "package_digest": package.package_digest,
                 "package_payload": package.model_dump(mode="json"),
                 "desired_state": "stopped",

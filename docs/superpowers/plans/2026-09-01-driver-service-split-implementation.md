@@ -1,5 +1,7 @@
 # Driver Service Split Implementation Plan
 
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 Driver 从 Observer 进程移出，部署为拥有 Codex CLI、Docker CLI、Docker socket 和 Compose secrets 的独立服务，同时保持 Observer 唯一公网入口、Driver→Slave 直连和 Codex thread 可恢复。

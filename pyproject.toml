@@ -25,6 +25,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+  "setuptools>=68",
+  "wheel>=0.45",
   "pytest>=8,<9",
   "pytest-asyncio>=0.23,<1",
   "moto[s3]>=5,<6",
@@ -38,4 +40,7 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["loom_v2*", "loom_orchestration*"]
+include = ["loom_v2*", "loom_orchestration*", "migrations*"]
+
+[tool.setuptools.package-data]
+loom_v2 = ["web/static/*"]

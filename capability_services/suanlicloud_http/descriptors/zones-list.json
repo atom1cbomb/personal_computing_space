@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/zones-list",
+  "name": "zones_list",
+  "description": "Zones list through the suanlicloud-http activation."
+}

@@ -8,11 +8,11 @@ import time
 from uuid import uuid4
 
 import pytest
-from alembic import op
+from alembic import command, op
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from loom_v2.db.migrations import apply_migrations
+from loom_v2.db.migrations import _config, apply_migrations
 
 
 pytestmark = pytest.mark.integration
@@ -57,6 +57,27 @@ async def database(postgres_container):
         await engine.dispose()
 
 
+async def test_existing_slave_attempt_survives_action_column_migration(database):
+    engine, _ = database
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda sync: command.upgrade(_config("slave", sync), "004_run_execution_requests"))
+        await connection.execute(text(
+            "INSERT INTO slave_attempts (attempt_id, slave_id, workspace_id, operation, payload, state) "
+            "VALUES ('attempt-existing', 'slave-a', 'workspace-default', 'instances-list', '{}', 'completed')"
+        ))
+        await apply_migrations(connection, "slave")
+        await apply_migrations(connection, "slave")
+        row = (await connection.execute(text(
+            "SELECT action, state FROM slave_attempts WHERE attempt_id = 'attempt-existing'"
+        ))).one()
+        assert tuple(row) == ("instances-list", "completed")
+        columns = (await connection.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'slave_attempts'"
+        ))).scalars().all()
+        assert "action" in columns
+        assert "operation" not in columns
+
+
 @pytest.mark.parametrize("role,own_table,other_table", [
     ("observer", "runs", "slave_attempts"),
     ("slave", "slave_attempts", "runs"),
@@ -90,7 +111,7 @@ async def test_failed_migration_rolls_back_schema_and_version(database, monkeypa
         assert (await connection.execute(text(f"SELECT to_regclass('{other_table}')"))).scalar() is None
         assert (await connection.execute(text(
             f"SELECT version_num FROM loom_{role}_alembic_version"
-            ))).scalar_one() == "004_run_execution_requests"
+            ))).scalar_one() == "005_slave_action_name"
 
 
 @pytest.mark.parametrize("role", ["observer", "slave"])
@@ -136,7 +157,7 @@ asyncio.run(main())
         async with engine.connect() as connection:
             assert (await connection.execute(text(
                 f"SELECT version_num FROM loom_{role}_alembic_version"
-                ))).scalars().all() == ["004_run_execution_requests"]
+                ))).scalars().all() == ["005_slave_action_name"]
     finally:
         for process in processes:
             if process.returncode is None:

@@ -1,5 +1,9 @@
 # 资源与接口能力包
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 状态：实现；遵循 `../spec-design-guidance.md`。
 
 ## 1. 模型

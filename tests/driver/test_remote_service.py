@@ -24,10 +24,10 @@ class DynamicToolProvider:
 
     async def send_turn(self, user_message: str):
         assert "loom_open_run" in self.tool_names
-        operation_ref = "loom://test_double"
+        action_ref = "grip://loom.local/workspaces/workspace-default/actions/test_double"
         descriptor = await self.tool_handler(
             "loom_put_content",
-            {"content": {"schema_version": "operation.v1", "resource_id": operation_ref, "name": "test_double"}, "media_type": "application/vnd.loom.operation-descriptor+json"},
+            {"content": {"schema_version": "action.v1", "resource_id": action_ref, "name": "test_double"}, "media_type": "application/vnd.loom.action-descriptor+json"},
         )
         program = await self.tool_handler(
             "loom_put_content",
@@ -60,9 +60,9 @@ class DynamicToolProvider:
             "loom_apply_plan_patch",
             {
                 "ops": [
-                    {"kind": "set_program_ref", "value": operation_ref},
+                    {"kind": "set_program_ref", "value": action_ref},
                     {"kind": "set_io_contract_ref", "value": contract["resource_ref"]},
-                    {"kind": "set_compute_spec", "value": {"operation_ref": operation_ref}},
+                    {"kind": "set_compute_spec", "value": {"action_ref": action_ref}},
                     {"kind": "add_typed_hole", "value": {"hole_id": "h_dynamic"}},
                 ]
             },
@@ -76,8 +76,8 @@ class DynamicToolProvider:
                                                                                           "package_version": "v1",
                                                                                           "package_type": "function",
                                                                                           "execution": {"kind": "process:json_stdio", "version": "1"},
-                                                                                          "capability_exports": [{
-                                                                                              "capability_descriptor_ref": descriptor["resource_ref"],
+                                                                                          "action_exports": [{
+                                                                                              "action_descriptor_ref": descriptor["resource_ref"],
                                                                                               "io_contract_ref": contract["resource_ref"],
                                                                                               "effect_class": "Sandboxed",
                                                                                               "permissions": [],
@@ -97,10 +97,10 @@ class DynamicToolProvider:
                 "ops": [{"kind": "bind_compute_hole", "value": {
                     "binding_id": "binding-dynamic",
                     "hole_id": "h_dynamic",
-                    "capability_descriptor_ref": descriptor["resource_ref"],
-                    "capability_package_ref": {"resource_id": "capability-package://remote-run-code/v1"},
-                    "target_resource_ref": {"resource_id": "slave-a"},
-                }}, {"kind": "set_execution_payload", "value": {"node_id": operation_ref, "input_ref": input_content["resource_ref"]}}]
+                    "action_descriptor_ref": descriptor["resource_ref"],
+                    "capability_package_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/packages/remote-run-code/v1"},
+                    "target_resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/slaves/slave-a"},
+                }}, {"kind": "set_execution_payload", "value": {"node_id": action_ref, "input_ref": input_content["resource_ref"]}}]
             },
         )
         yield AgentEvent("tool_call", {"tool": "loom_apply_plan_patch"})
@@ -135,7 +135,7 @@ class RecordingContentStore:
         self.contents.append((content, media_type))
         digest = "a" * 64
         return ResourceRef(
-            resource_id=f"content://sha256/{digest}",
+            resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}",
             identity_criterion="content_digest",
         )
 
@@ -189,7 +189,7 @@ class RepositoryControl:
 
 
 @pytest.mark.asyncio
-async def test_remote_driver_runs_packaged_operation_through_slave_http():
+async def test_remote_driver_runs_packaged_action_through_slave_http():
     repository = ObserverRepository()
     seed_embedded_slaves(repository)
     control = RepositoryControl(repository)
@@ -197,7 +197,7 @@ async def test_remote_driver_runs_packaged_operation_through_slave_http():
     slave_app = create_slave_app("slave-a")
     worker = WorkerSession("slave-a", "http://slave-a", transport=httpx.ASGITransport(app=slave_app))
     service = DriverService(control, FakeCodingAgentProvider(), workers={"slave-a": worker})
-    result = await service.run_prompt("conversation-remote", "run the packaged operation", request_id="request-remote")
+    result = await service.run_prompt("conversation-remote", "run the packaged action", request_id="request-remote")
     assert result["status"] == "completed"
     assert result["state"] == "completed"
     assert result["thread_id"].startswith("fake-session:")
@@ -213,7 +213,7 @@ async def test_remote_driver_tracks_dynamic_tool_run_and_dispatches_once():
     worker = WorkerSession("slave-a", "http://slave-a", transport=httpx.ASGITransport(app=slave_app))
     service = DriverService(control, DynamicToolProvider(), workers={"slave-a": worker})
 
-    result = await service.run_prompt("conversation-dynamic-remote", "run the packaged operation", request_id="request-dynamic-remote")
+    result = await service.run_prompt("conversation-dynamic-remote", "run the packaged action", request_id="request-dynamic-remote")
 
     assert result["run_id"]
     assert result["state"] == "completed"

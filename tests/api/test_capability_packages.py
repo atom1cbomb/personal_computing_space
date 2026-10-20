@@ -8,7 +8,8 @@ from loom_v2.contracts.types import CapabilityHealthReport, ClosureContract, Com
 from loom_v2.observer.repository import ObserverRepository
 from loom_v2.testing.observer import create_embedded_app
 from loom_v2.testing.observer import seed_embedded_slaves
-from tests.support.package_fixture import process_package_value, register_test_descriptor, capability_export
+from tests.support.grip_client import invoke, resources
+from tests.support.package_fixture import process_package_value, register_test_descriptor, action_export
 
 
 async def _empty_io_contract_ref(repo: ObserverRepository):
@@ -36,7 +37,7 @@ async def test_user_upload_registers_workspace_package_without_run() -> None:
     manifest = process_package_value(
         repo,
         package_id="uploaded-package",
-        operation_ref="loom://uploaded",
+        action_ref="grip://loom.local/workspaces/workspace-default/actions/uploaded",
         program_content_ref=program_ref,
         io_contract_ref=io_contract_ref,
     )
@@ -49,6 +50,13 @@ async def test_user_upload_registers_workspace_package_without_run() -> None:
         assert package["publication_state"] == "published"
         assert package["source_run_ref"] is None
         assert package["workspace_id"] == "workspace-default"
+        assert package["resource"] == "grip://loom.local/workspaces/workspace-default/packages/uploaded-package/v1"
+        publication_url = f"/api/v1/capability-packages/{package['resource']}/promote"
+        assert client.post(publication_url, json={"approved_digest": package["package_digest"], "target_slaves": ["slave-a"]}).status_code == 422
+        promoted = client.post(publication_url, json={"approved_digest": package["package_digest"], "idempotency_key": "publish-only"})
+        assert promoted.status_code == 200, promoted.text
+        assert promoted.json()["resource"] == package["resource"]
+        assert resources(client, "activation") == []
 
         listed = client.get("/api/v1/capability-packages").json()
         assert [item["package_id"] for item in listed].count("uploaded-package") == 1
@@ -67,55 +75,38 @@ async def test_uploaded_workspace_package_can_be_activated_without_run(resource_
     manifest = process_package_value(
         repo,
         package_id="uploaded-activation",
-        operation_ref="loom://uploaded-activation",
+        action_ref="grip://loom.local/workspaces/workspace-default/actions/uploaded-activation",
         program_content_ref=program_ref,
         io_contract_ref=io_contract_ref,
     )
     with TestClient(create_embedded_app(repo)) as client:
         uploaded = client.post("/api/v1/capability-packages", json=manifest).json()
+        n = client.app.state.grip.names
+        package = uploaded["resource"]
         target_fields = {}
         if resource_bound:
-            resource_ref = {"resource_id": "resource://test/vm"}
-            resource = client.post("/api/v1/resources", json={
-                "resource_ref": resource_ref,
-                "package_ref": {
-                    "resource_id": f"capability-package://{uploaded['package_id']}/{uploaded['package_version']}",
-                    "version_or_digest": uploaded["package_digest"],
-                },
-                "state": "running",
+            resource = invoke(client, n.root, n.action("register-resource"), {
+                "resource_id": "grip://loom.local/workspaces/workspace-default/resources/test/vm", "package": package, "state": "running",
             })
-            assert resource.status_code == 200, resource.text
-            target_fields = {"target_resource_ref": resource_ref, "instance_name": "vm-test"}
-        response = client.post(
-            f"/api/v1/capability-packages/capability-package://{uploaded['package_id']}/{uploaded['package_version']}/promote",
-            json={
-                "approved_digest": uploaded["package_digest"],
-                "target_slaves": ["slave-a"],
-                **target_fields,
-            },
-        )
-        assert response.status_code == 200, response.text
-        assert response.json()["health_reports"][0]["activation_state"] == "ready"
-
-        capabilities = client.get("/api/v1/capabilities").json()
-        slave_a = next(item for item in capabilities if item["slave_id"] == "slave-a")
-        assert any(
-            activation["package_version_ref"] == f"capability-package://{uploaded['package_id']}/{uploaded['package_version']}"
-            for activation in slave_a["activations"]
-        )
+            target_fields = {"target": resource["resource"], "instance_name": "vm-test"}
+        response = invoke(client, n.name("slaves", "slave-a"), n.action("activate-package"), {
+            "package": package, "idempotency_key": "activate-uploaded", **target_fields,
+        })
+        assert response["state"] == "ready"
+        assert any(r["metadata"]["package"] == package for r in resources(client, "activation"))
 
 
 @pytest.mark.asyncio
 async def test_failed_activation_can_retry_without_cleanup():
     repo = ObserverRepository()
     io_ref = await _empty_io_contract_ref(repo)
-    descriptor = register_test_descriptor(repo, "loom://retryable-service/exec")
+    descriptor = register_test_descriptor(repo, "grip://loom.local/workspaces/workspace-default/actions/retryable-service/exec")
     package = await repo.register_workspace_package("workspace-default", {
         "package_type": "service",
         "package_id": "retryable-service",
         "package_version": "v1",
         "execution": {"kind": "container:http", "version": "1"},
-        "capability_exports": [capability_export(descriptor, io_ref, effect_class="RemoteExecution", replay_safety="NotReplaySafe", runtime_binding={"path": "/v1/exec"})],
+        "action_exports": [action_export(descriptor, io_ref, effect_class="RemoteExecution", replay_safety="NotReplaySafe", runtime_binding={"path": "/v1/exec"})],
         "body": {"image_ref": "registry.example/service@sha256:" + "a" * 64, "container_port": 8080, "health_path": "/healthz"},
     })
     first = await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="attempt-1", instance_name="retry")
@@ -163,9 +154,9 @@ async def test_capability_get_command_normalizes_resource_ref_dict():
         run.draft_digest,
         "materialize-cg",
         [
-            {"kind": "set_program_ref", "value": "loom://check"},
+            {"kind": "set_program_ref", "value": "grip://loom.local/workspaces/workspace-default/actions/check"},
             {"kind": "add_typed_hole", "value": {"hole_id": "h"}},
-            {"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="cgpkg", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)},
+            {"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="cgpkg", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)},
         ],
     )
     package = (await repo.get_run(run.run_id)).capability_packages[0]
@@ -200,9 +191,9 @@ async def test_candidate_is_run_bound_and_cannot_be_used_by_another_run():
         first.draft_digest,
         "materialize-a",
         [
-            {"kind": "set_program_ref", "value": "loom://matmul"},
+            {"kind": "set_program_ref", "value": "grip://loom.local/workspaces/workspace-default/actions/matmul"},
             {"kind": "add_typed_hole", "value": {"hole_id": "h"}},
-            {"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg", operation_ref="loom://matmul", program_content_ref=program_ref, io_contract_ref=io_contract_ref)},
+            {"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg", action_ref="grip://loom.local/workspaces/workspace-default/actions/matmul", program_content_ref=program_ref, io_contract_ref=io_contract_ref)},
         ],
     )
     package = (await repo.get_run(first.run_id)).capability_packages[0]
@@ -213,11 +204,11 @@ async def test_candidate_is_run_bound_and_cannot_be_used_by_another_run():
         second.draft_digest,
         "bind-b",
         [
-            {"kind": "set_program_ref", "value": "loom://matmul"},
+            {"kind": "set_program_ref", "value": "grip://loom.local/workspaces/workspace-default/actions/matmul"},
             {"kind": "add_typed_hole", "value": {"hole_id": "h"}},
             {"kind": "bind_compute_hole", "value": ComputeBinding(
-                binding_id="binding-b", hole_id="h", capability_descriptor_ref=ResourceRef(resource_id="run-code"),
-                capability_package_ref=ResourceRef(resource_id=package.version_ref), target_resource_ref=ResourceRef(resource_id="slave-a"),
+                binding_id="binding-b", hole_id="h", action_descriptor_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/resources/run-code"),
+                capability_package_ref=ResourceRef(resource_id=package.version_ref), target_resource_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/slaves/slave-a"),
 
             ).model_dump(mode="json")},
         ],
@@ -241,7 +232,7 @@ async def test_same_run_package_coordinate_rejects_digest_conflict():
         [
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": process_package_value(repo, package_id="same-coordinate", operation_ref="loom://check", program_content_ref=first_program_ref, io_contract_ref=io_contract_ref),
+                "value": process_package_value(repo, package_id="same-coordinate", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=first_program_ref, io_contract_ref=io_contract_ref),
             }
         ],
     )
@@ -254,7 +245,7 @@ async def test_same_run_package_coordinate_rejects_digest_conflict():
             [
                 {
                     "kind": "materialize_capability_package_candidate",
-                    "value": process_package_value(repo, package_id="same-coordinate", operation_ref="loom://check", program_content_ref=second_program_ref, io_contract_ref=io_contract_ref),
+                    "value": process_package_value(repo, package_id="same-coordinate", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=second_program_ref, io_contract_ref=io_contract_ref),
                 }
             ],
         )
@@ -276,7 +267,7 @@ async def test_same_package_coordinate_across_runs_resolves_by_digest():
             [
                 {
                     "kind": "materialize_capability_package_candidate",
-                        "value": process_package_value(repo, package_id="cross-run-coordinate", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
+                        "value": process_package_value(repo, package_id="cross-run-coordinate", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
                 }
             ],
         )
@@ -308,7 +299,7 @@ async def test_package_lookup_rejects_legacy_coordinate_aliases() -> None:
                 "value": process_package_value(
                     repo,
                     package_id="canonical-package",
-                    operation_ref="loom://check",
+                    action_ref="grip://loom.local/workspaces/workspace-default/actions/check",
                     program_content_ref=program_ref,
                     io_contract_ref=io_contract_ref,
                 ),
@@ -344,7 +335,7 @@ async def test_promoting_different_digest_same_reusable_coordinate_is_rejected()
             [
                 {
                     "kind": "materialize_capability_package_candidate",
-                        "value": process_package_value(repo, package_id="promote-coordinate", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
+                        "value": process_package_value(repo, package_id="promote-coordinate", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
                 }
             ],
         )
@@ -367,13 +358,25 @@ async def test_promotion_derives_reusable_version_without_mutating_candidate():
     io_contract_ref = await _empty_io_contract_ref(repo)
     await repo.apply_patch(
         run.run_id, run.draft_version, run.draft_digest, "materialize-promote",
-        [{"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-promote", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)}],
+        [{"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-promote", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)}],
     )
     await repo.fail_run(run.run_id, "test")
     candidate = (await repo.get_run(run.run_id)).capability_packages[0]
-    reusable = await repo.promote_capability_package(candidate.version_ref, approved_digest=candidate.package_digest)
+    with TestClient(create_embedded_app(repo)) as client:
+        listed = client.get(f"/api/v1/runs/{run.run_id}/capability-packages").json()
+        assert listed[0]["resource"] == candidate.version_ref
+        response = client.post(f"/api/v1/capability-packages/{listed[0]['resource']}/promote",
+                               json={"approved_digest": candidate.package_digest})
+        assert response.status_code == 200, response.text
+        promoted = response.json()
+        assert promoted["resource"] != candidate.version_ref
+        assert promoted["resource"] in [r["uri"] for r in resources(client, "capability-package")]
+        assert candidate.publication_state == "candidate"
+        abandoned = client.post(f"/api/v1/capability-packages/{candidate.version_ref}/abandon")
+        assert abandoned.status_code == 200, abandoned.text
+        assert abandoned.json()["resource"] == candidate.version_ref
+    reusable = await repo.get_capability_package(promoted["resource"])
     assert candidate.scope == "run_bound"
-    assert candidate.publication_state == "candidate"
     assert reusable.scope == "workspace_reusable"
     assert reusable.publication_state == "published"
     assert reusable.package_version != candidate.package_version
@@ -390,7 +393,7 @@ async def test_candidate_ref_promotion_is_idempotent():
         run.draft_version,
         run.draft_digest,
         "materialize-promote-idempotent",
-        [{"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-idempotent", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)}],
+        [{"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-idempotent", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)}],
     )
     await repo.fail_run(run.run_id, "test")
     candidate = (await repo.get_run(run.run_id)).capability_packages[0]
@@ -420,7 +423,7 @@ async def test_candidate_ref_promotion_is_idempotent_under_concurrent_retries():
         run.draft_version,
         run.draft_digest,
         "materialize-promote-concurrent",
-        [{"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-concurrent", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)}],
+        [{"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-concurrent", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref)}],
     )
     await repo.fail_run(run.run_id, "test")
     candidate = (await repo.get_run(run.run_id)).capability_packages[0]
@@ -430,7 +433,7 @@ async def test_candidate_ref_promotion_is_idempotent_under_concurrent_retries():
         for _ in range(3)
     ))
 
-    assert {result.version_ref for result in results} == {f"capability-package://{candidate.package_id}/{candidate.package_version}-reusable"}
+    assert {result.version_ref for result in results} == {f"grip://loom.local/workspaces/workspace-default/packages/{candidate.package_id}/{candidate.package_version}-reusable"}
     published = [
         package
         for package in await repo.list_capability_packages(run_id=run.run_id, include_abandoned=True)
@@ -454,7 +457,7 @@ async def test_materialization_requires_io_contract_and_preuploaded_program_ref(
         },
         media_type="application/vnd.loom.io-contract+json",
     )
-    descriptor_ref = register_test_descriptor(repo, "loom://check")
+    descriptor_ref = register_test_descriptor(repo, "grip://loom.local/workspaces/workspace-default/actions/check")
 
     with pytest.raises(ValueError, match="io_contract_ref"):
         await repo.apply_patch(
@@ -469,8 +472,8 @@ async def test_materialization_requires_io_contract_and_preuploaded_program_ref(
                         "package_id": "pkg-contract-required",
                         "package_type": "function",
                         "execution": {"kind": "process:json_stdio", "version": "1"},
-                        "capability_exports": [{
-                            "capability_descriptor_ref": descriptor_ref.model_dump(mode="json"),
+                        "action_exports": [{
+                            "action_descriptor_ref": descriptor_ref.model_dump(mode="json"),
                             "effect_class": "Sandboxed",
                             "permissions": [],
                             "replay_safety": "DeclaredByPackage",
@@ -496,7 +499,7 @@ async def test_materialization_requires_io_contract_and_preuploaded_program_ref(
                         "package_id": "pkg-inline-program",
                         "package_type": "function",
                         "execution": {"kind": "process:json_stdio", "version": "1"},
-                        "capability_exports": [capability_export(descriptor_ref, contract_ref)],
+                        "action_exports": [action_export(descriptor_ref, contract_ref)],
                         "body": {"program": "print(1)"},
                     },
                 }
@@ -511,7 +514,7 @@ async def test_observer_materializes_generic_http_service_envelope() -> None:
         "run-http-package", "conversation-http-package", "serve echo"
     )
     io_contract_ref = await _empty_io_contract_ref(repo)
-    descriptor_ref = register_test_descriptor(repo, "loom://http/echo")
+    descriptor_ref = register_test_descriptor(repo, "grip://loom.local/workspaces/workspace-default/actions/http/echo")
 
     await repo.apply_patch(
         run.run_id,
@@ -525,8 +528,8 @@ async def test_observer_materializes_generic_http_service_envelope() -> None:
                     "package_id": "pkg-http-service",
                     "package_type": "service",
                     "execution": {"kind": "container:http", "version": "1"},
-                    "capability_exports": [
-                        capability_export(
+                    "action_exports": [
+                        action_export(
                             descriptor_ref,
                             io_contract_ref,
                             effect_class="NetworkService",
@@ -546,23 +549,23 @@ async def test_observer_materializes_generic_http_service_envelope() -> None:
 
     package = (await repo.get_run(run.run_id)).capability_packages[0]
     assert package.package_type == "service"
-    assert package.capability_exports[0].runtime_binding == {"path": "/v1/echo"}
+    assert package.action_exports[0].runtime_binding == {"path": "/v1/echo"}
 
 
 @pytest.mark.asyncio
-async def test_observer_rejects_unresolvable_operation_descriptor() -> None:
+async def test_observer_rejects_unresolvable_action_descriptor() -> None:
     repo = ObserverRepository()
     run = await repo.open_run(
         "run-missing-descriptor", "conversation-missing-descriptor", "reject"
     )
     io_contract_ref = await _empty_io_contract_ref(repo)
     missing_descriptor = ResourceRef(
-        resource_id="loom://missing/descriptor",
+        resource_id="grip://loom.local/workspaces/workspace-default/actions/missing/descriptor",
         version_or_digest="a" * 64,
         identity_criterion="descriptor_digest",
     )
 
-    with pytest.raises(ValueError, match="operation_descriptor_unavailable"):
+    with pytest.raises(ValueError, match="action_descriptor_unavailable"):
         await repo.apply_patch(
             run.run_id,
             run.draft_version,
@@ -575,8 +578,8 @@ async def test_observer_rejects_unresolvable_operation_descriptor() -> None:
                         "package_id": "pkg-missing-descriptor",
                         "package_type": "service",
                         "execution": {"kind": "container:http", "version": "1"},
-                        "capability_exports": [
-                            capability_export(
+                        "action_exports": [
+                            action_export(
                                 missing_descriptor,
                                 io_contract_ref,
                                 runtime_binding={"path": "/v1/echo"},
@@ -626,7 +629,7 @@ async def test_binding_package_with_different_io_contract_is_not_ready() -> None
         goal="check",
         body=TaskClosure(
             closure_id="closure-package-contract",
-            program={"operation_ref": "loom://check", "io_contract_ref": closure_contract_ref.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/check", "io_contract_ref": closure_contract_ref.model_dump(mode="json")},
         ),
     )
     run = await repo.open_run("run-package-contract", "conversation-package-contract", "check", closure_contract=closure)
@@ -639,7 +642,7 @@ async def test_binding_package_with_different_io_contract_is_not_ready() -> None
             {"kind": "add_typed_hole", "value": {"hole_id": "h_check"}},
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": process_package_value(repo, package_id="pkg-contract-mismatch", operation_ref="loom://check", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
+                "value": process_package_value(repo, package_id="pkg-contract-mismatch", action_ref="grip://loom.local/workspaces/workspace-default/actions/check", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
             },
         ],
     )
@@ -655,9 +658,9 @@ async def test_binding_package_with_different_io_contract_is_not_ready() -> None
                 "value": {
                     "binding_id": "binding-contract-mismatch",
                     "hole_id": "h_check",
-                    "capability_descriptor_ref": package.capability_exports[0].capability_descriptor_ref.model_dump(mode="json"),
+                    "action_descriptor_ref": package.action_exports[0].action_descriptor_ref.model_dump(mode="json"),
                     "capability_package_ref": {"resource_id": package.version_ref},
-                    "target_resource_ref": {"resource_id": "slave-a"},
+                    "target_resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/slaves/slave-a"},
                 },
             }
         ],

@@ -53,11 +53,11 @@ class SubmissionBuilder:
             "package_ref": self.orchestrator_package.model_dump(mode="json"),
         }
         if self.input_binding is not None:
-            operation_ref = body.program.get("operation_ref") or "loom://orchestrate"
-            body.program = {**body.program, "operation_ref": operation_ref}
+            action_ref = body.program.get("action_ref") or "grip://loom.local/workspaces/workspace-default/actions/orchestrate"
+            body.program = {**body.program, "action_ref": action_ref}
             body.node_input_bindings = [
                 *body.node_input_bindings,
-                {"node_id": operation_ref, "input_ref": self.input_binding.model_dump(mode="json")},
+                {"node_id": action_ref, "input_ref": self.input_binding.model_dump(mode="json")},
             ]
         return ClosureContract(
             closure_id=closure_id,

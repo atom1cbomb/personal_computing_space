@@ -65,7 +65,7 @@ class PluginServer:
                 deadline = payload.get("deadline_seconds")
                 result = await self.runtime.invoke(
                     _mapping(payload, "package"),
-                    _mapping(payload, "capability_export"),
+                    _mapping(payload, "action_export"),
                     business_payload,
                     activation=_mapping(payload, "activation"),
                     attempt_id=str(payload.get("attempt_id") or request_id),

@@ -51,6 +51,8 @@ def render_project(config: DeploymentConfig, machine_name: str) -> RenderedProje
         "postgres_password": config.postgres_password,
         "minio_secret_key": config.minio_secret_key,
     }
+    if machine.role == "observer" and config.grip_token is not None:
+        secret_files["grip_token"] = config.grip_token
     return RenderedProject(
         machine=machine.name,
         role=machine.role,
@@ -114,7 +116,12 @@ def _render_observer(config: DeploymentConfig, machine: MachineConfig) -> tuple[
                 "-c",
                 'export LOOM_INTERNAL_API_SECRET="$$(cat /run/secrets/internal_api_secret)" && exec uvicorn loom_v2.observer.app:app --host 0.0.0.0 --port 8080',
             ],
-            "environment": _role_environment(config, machine, config.database_url(machine)),
+            "environment": {
+                **_role_environment(config, machine, config.database_url(machine)),
+                "LOOM_GRIP_AUTHORITY": config.grip_authority,
+                "LOOM_GRIP_TOKEN": "${LOOM_GRIP_TOKEN:-}",
+                "LOOM_PUBLIC_BASE_URL": config.public_base_url,
+            },
             "ports": [f"{machine.service_port}:8080"],
             "secrets": ["internal_api_secret"],
             "depends_on": {"postgres": {"condition": "service_healthy"}},
@@ -128,6 +135,11 @@ def _render_observer(config: DeploymentConfig, machine: MachineConfig) -> tuple[
         "secrets": {"internal_api_secret": {"file": "./secrets/internal_api_secret"}},
         "volumes": {f"{machine.name}-postgres-data": {}},
     }
+    if config.grip_token is not None:
+        app["command"][2] = 'export LOOM_GRIP_TOKEN="$$(cat /run/secrets/grip_token)" && ' + app["command"][2]
+        app["environment"].pop("LOOM_GRIP_TOKEN")
+        app["secrets"].append("grip_token")
+        document["secrets"]["grip_token"] = {"file": "./secrets/grip_token"}
     env = _common_env(config, database_url=config.database_url(machine))
     return document, env
 

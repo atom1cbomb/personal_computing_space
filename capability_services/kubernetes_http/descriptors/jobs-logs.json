@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/jobs-logs",
+  "name": "jobs_logs",
+  "description": "Jobs logs through the kubernetes-http activation."
+}

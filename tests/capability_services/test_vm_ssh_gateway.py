@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from loom_orchestration.naming import content_uri
 from capability_services.vm_ssh_http.server import VmSshGateway
 from loom_v2.contracts.io_schema import validate_schema
 from loom_v2.contracts.types import IoContract
@@ -61,10 +62,10 @@ def test_package_contract_refs_match_policy_validated_artifacts():
     manifest = json.loads((root / "package.example.json").read_text())
     contract = json.loads((root / "contracts/exec.io.json").read_text())
     parsed = IoContract.model_validate(contract)
-    assert parsed.success_semantics is None
+    assert parsed.success_validator_ref is not None
     for name, reference in (("exec-input.json", parsed.input_schema_ref), ("exec-output.json", parsed.output_schema_ref)):
         schema = json.loads((root / "schemas" / name).read_text())
         validate_schema(schema)
-        assert reference.resource_id == f"content://sha256/{digest_bytes(canonical_json_bytes(schema))}"
-    assert manifest["capability_exports"][0]["io_contract_ref"]["resource_id"] == f"content://sha256/{digest_bytes(canonical_json_bytes(contract))}"
+        assert reference.resource_id == content_uri(digest_bytes(canonical_json_bytes(schema)), f"vm-ssh-http/schemas/{Path(name).stem}")
+    assert manifest["action_exports"][0]["io_contract_ref"]["resource_id"] == content_uri(digest_bytes(canonical_json_bytes(contract)), "vm-ssh-http/contracts/exec")
     assert manifest["body"]["persistent_state"] is True

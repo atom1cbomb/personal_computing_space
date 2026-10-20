@@ -36,7 +36,7 @@ Loom 的分布式与框架的分布式回答的不是同一个问题。
 | --- | --- | --- |
 | 目的 | **扩展**：负载扛不住时增加机器 | **联邦**：把已存在且互不相同的资源纳入可用执行面 |
 | 执行目标 | 同质、可替换、由使用者 provision | 异构、已存在、不归系统所有 |
-| 分发单位 | node / task（应用代码中的函数）或 message | `(package_ref, capability_descriptor_ref, input_refs)` 能力引用 |
+| 分发单位 | node / task（应用代码中的函数）或 message | `(package_ref, action_descriptor_ref, input_refs)` 能力引用 |
 | 前提 | worker 具备同一份代码与 runtime | Slave 不需要持有 Driver 的代码 |
 | 连接方式 | worker 连 queue / broker，或 A2A 直连对方 endpoint | Driver 不连 Slave，由 Observer 中继 |
 | 就绪状态 | 启动即就绪 | provision、install、authenticate 三段独立状态 |
@@ -49,7 +49,7 @@ Loom 的分布式与框架的分布式回答的不是同一个问题。
 
 ### 4.1 组合是契约级，不是代码级
 
-框架中的组合边连接的是同一进程或同一部署内的函数，两端必须共享代码与类型。Loom 的节点选择的是 `(package_ref, capability_descriptor_ref, input_refs)`，两端只通过 `io_contract` 对接。因此两个从未设计过要协作的能力包可以组合，跨机器、跨技术栈、跨组织边界都是同一套机制。
+框架中的组合边连接的是同一进程或同一部署内的函数，两端必须共享代码与类型。Loom 的节点选择的是 `(package_ref, action_descriptor_ref, input_refs)`，两端只通过 `io_contract` 对接。因此两个从未设计过要协作的能力包可以组合，跨机器、跨技术栈、跨组织边界都是同一套机制。
 
 ### 4.2 编排是数据，不是有权限的代码
 

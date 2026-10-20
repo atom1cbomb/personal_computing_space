@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/collections-documents",
+  "name": "collections_documents",
+  "description": "Collections documents through the outline-http activation."
+}

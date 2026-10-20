@@ -23,13 +23,13 @@ MAX_RESPONSE = 8 * 1024 * 1024
 DEFAULT_ENDPOINT = "https://docs.cs.ac.cn/api"
 API_KEY_FILENAME = "outline_key"
 
-# These are deliberately named operations rather than a general Outline
-# proxy.  The read operations support discovery and retrieval; the write
-# operations cover normal document maintenance while leaving user/admin,
+# These are deliberately named actions rather than a general Outline
+# proxy.  The read actions support discovery and retrieval; the write
+# actions cover normal document maintenance while leaving user/admin,
 # attachment, API-key, and permanent-delete methods outside this package.
-OPERATIONS: dict[str, str] = {
+ACTIONS: dict[str, str] = {
     # Internal probe used by the generic authentication handshake. It is not
-    # exposed as a capability export or as a /v1/<operation> route.
+    # exposed as a capability export or as a /v1/<action> route.
     "auth_info": "/auth.info",
     "collections_list": "/collections.list",
     "collections_info": "/collections.info",
@@ -121,10 +121,10 @@ class OutlineGateway:
             raise OutlineGatewayError("request_too_large", 413)
         return body
 
-    def call(self, operation: str, parameters: dict[str, Any] | None = None) -> Any:
+    def call(self, action: str, parameters: dict[str, Any] | None = None) -> Any:
         """Call one allowlisted Outline method and return its JSON response."""
-        if operation not in OPERATIONS:
-            raise OutlineGatewayError("operation_not_allowed", 400)
+        if action not in ACTIONS:
+            raise OutlineGatewayError("action_not_allowed", 400)
         if parameters is None:
             parameters = {}
         if not isinstance(parameters, dict):
@@ -138,7 +138,7 @@ class OutlineGateway:
         try:
             with httpx.stream(
                 "POST",
-                self.endpoint + OPERATIONS[operation],
+                self.endpoint + ACTIONS[action],
                 content=body,
                 headers=headers,
                 timeout=self.timeout,
@@ -192,14 +192,14 @@ class OutlineGateway:
         if path in {"/v1/auth/start", "/v1/auth/status"}:
             return self.auth_status()
         if not path.startswith("/v1/"):
-            raise OutlineGatewayError("operation_not_allowed", 404)
-        operation = ROUTES.get(path.removeprefix("/v1/"))
-        if operation is None:
-            raise OutlineGatewayError("operation_not_allowed", 404)
+            raise OutlineGatewayError("action_not_allowed", 404)
+        action = ROUTES.get(path.removeprefix("/v1/"))
+        if action is None:
+            raise OutlineGatewayError("action_not_allowed", 404)
         parameters = payload.get("parameters", payload)
         if not isinstance(parameters, dict):
             raise OutlineGatewayError("request_json_invalid", 400)
-        return {"operation": operation, "result": self.call(operation, parameters)}
+        return {"action": action, "result": self.call(action, parameters)}
 
 
 class Handler(BaseHTTPRequestHandler):

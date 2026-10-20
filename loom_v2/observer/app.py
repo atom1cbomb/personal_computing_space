@@ -13,14 +13,11 @@ from loom_v2.settings import Settings
 from loom_v2.contracts.types import CapabilityHealthReport
 from loom_v2.contracts.api import (
     AgentLeaseRequest,
-    CapabilityActivationRequest,
+    CapabilityPublishRequest,
     CapabilityHealthRequest,
     CapabilityPackageUploadRequest,
-    ResourceCreateRequest,
     ContentPutRequest,
     IdempotencyRequest,
-    PublicSlave,
-    PublicSlaveList,
     ResolveRequest,
     RunCancelRequest,
     RunResubmitRequest,
@@ -28,11 +25,9 @@ from loom_v2.contracts.api import (
 )
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
-from loom_v2.contracts.refs import select_slave_agents
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.gateway import ObserverDriverGateway
-from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
 from loom_v2.observer.browser_auth import BrowserAuth
 from loom_v2.observer.slave_gateway import ObserverSlaveGateway, SlaveForwardError
 from loom_v2.auth import InternalAuth
@@ -79,13 +74,13 @@ def create_app(
         app.state.repo,
         workspace_id=settings.workspace_id,
         internal_api_secret=settings.internal_api_secret,
-        timeout=settings.worker_operation_timeout_seconds,
+        timeout=settings.worker_action_timeout_seconds,
     )
     app.state.slave_gateway = ObserverSlaveGateway(
         app.state.repo,
         workspace_id=settings.workspace_id,
         token=settings.internal_api_secret,
-        timeout=settings.worker_operation_timeout_seconds,
+        timeout=settings.worker_action_timeout_seconds,
     )
     # Observer production composition only owns the repository and gateways.
     # Embedded Driver/Slave wiring lives in
@@ -97,6 +92,13 @@ def create_app(
     app.state.workers = {}
     static_dir = Path(__file__).resolve().parents[1] / "web" / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    from .grip import GripService
+    app.state.grip = GripService(app, settings)
+
+    @app.post("/.well-known/grip")
+    async def grip(request: Request):
+        return await app.state.grip.handle(request)
 
     @app.get("/healthz")
     async def health() -> dict[str, object]:
@@ -165,7 +167,7 @@ def create_app(
             if projected is None:
                 continue
             capabilities = dict(agent.get("capabilities") or {})
-            capabilities["operations"] = sorted(projected.get("operations", set()))
+            capabilities["actions"] = sorted(projected.get("actions", set()))
             agent["capabilities"] = capabilities
         # Driver only needs logical identities and capability snapshots.  The
         # Observer-owned relay keeps endpoint URLs out of the Driver plane.
@@ -364,7 +366,7 @@ def create_app(
 
     @internal_router.post("/internal/v1/slaves/{slave_id}/forward")
     async def forward_slave(slave_id: str, payload: dict[str, Any]) -> Response:
-        """Relay a fixed Worker operation through Observer's active lease."""
+        """Relay a fixed Worker action through Observer's active lease."""
         path = payload.get("path")
         request_payload = payload.get("payload")
         allowed = {
@@ -420,7 +422,7 @@ def create_app(
         if "content" not in payload.model_fields_set:
             raise HTTPException(status_code=400, detail="content_required")
         try:
-            ref = await app.state.repo.put_content(payload.content, media_type=str(payload.media_type or ""))
+            ref = await app.state.repo.put_content(payload.content, media_type=str(payload.media_type or ""), name=payload.name)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return ref.model_dump(mode="json")
@@ -548,115 +550,6 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
 
-    @app.get("/api/v1/slaves", response_model=PublicSlaveList)
-    async def public_slaves(
-        available_only: bool = False, workspace_id: str | None = None,
-    ) -> PublicSlaveList:
-        # Public access is bound to this Observer's workspace, not an arbitrary
-        # caller-supplied registry scope. Do not mutate the registry cache.
-        if workspace_id is not None and workspace_id != settings.workspace_id:
-            raise HTTPException(status_code=403, detail="workspace_binding_mismatch")
-        agents = await app.state.repo.list_agents(settings.workspace_id, role="slave")
-        # Prefer active instances; when all are offline show the latest report.
-        agents.sort(key=lambda agent: str(agent.get("last_seen_at") or ""), reverse=True)
-        selected = select_slave_agents(agents)
-        slaves = []
-        for slave_id, agent in sorted(selected.items()):
-            available = agent.get("lease_state") == "active"
-            if available_only and not available:
-                continue
-            caps = agent.get("capabilities") or {}
-            slaves.append(PublicSlave(
-                slave_id=slave_id,
-                available=available,
-                lease_state=agent["lease_state"],
-                last_seen_at=agent.get("last_seen_at"),
-                base_operations=sorted(caps.get("base_operations", caps.get("operations", []))),
-                executor_descriptors=caps.get("executor_descriptors", []),
-                runtime_plugin_descriptors=caps.get("runtime_plugin_descriptors", caps.get("runtime_plugins", [])),
-                term_support=caps.get("term_support", []),
-            ))
-        return PublicSlaveList(workspace_id=settings.workspace_id, slaves=slaves)
-
-    @app.get("/api/v1/capabilities")
-    async def capabilities() -> list[dict[str, Any]]:
-        await app.state.repo.refresh_slaves(settings.workspace_id)
-        registered = list(app.state.repo.slave_agents.values())
-        if registered:
-            records = await app.state.repo._all_records()
-            result: list[dict[str, Any]] = []
-            for agent in registered:
-                caps = agent.get("capabilities") or {}
-                active_activations = [
-                    activation.model_dump(mode="json")
-                    for record in records
-                    for activation in record.capability_activations
-                    if activation.target_slave == agent["agent_id"]
-                    and activation.activation_state == "ready"
-                ]
-                for package in await app.state.repo.list_capability_packages(
-                    workspace_id=settings.workspace_id,
-                    include_abandoned=True,
-                ):
-                    active_activations.extend(
-                        activation.model_dump(mode="json")
-                        for activation in await app.state.repo.list_package_activations(package)
-                        if activation.target_slave == agent["agent_id"]
-                        and activation.activation_state == "ready"
-                    )
-                result.append(
-                    {
-                        "slave_id": agent["agent_id"],
-                        "available": agent.get("lease_state") == "active",
-                        "replica": "ready" if agent.get("lease_state") == "active" else "unavailable",
-                        "operations": sorted(app.state.repo.slave_capabilities.get(str(agent["agent_id"]), {}).get("operations", set())),
-                        "term_support": caps.get("term_support", []),
-                        "activations": active_activations,
-                        "executor_descriptors": caps.get("executor_descriptors", []),
-                        "runtime_plugin_descriptors": caps.get("runtime_plugin_descriptors", caps.get("runtime_plugins", [])),
-                    }
-                )
-            return result
-        if not app.state.embedded:
-            return []
-        records = await app.state.repo._all_records()
-        result = []
-        for slave_id, slave in app.state.slaves.items():
-            activation_map = {
-                (activation.package_version_ref, activation.target_slave): activation
-                for activation in slave.activations.values()
-            }
-            for record in records:
-                for activation in record.capability_activations:
-                    if activation.target_slave == slave_id and activation.activation_state == "ready":
-                        activation_map.setdefault(
-                            (activation.package_version_ref, activation.target_slave),
-                            activation,
-                        )
-            for package in await app.state.repo.list_capability_packages(
-                workspace_id=settings.workspace_id,
-                include_abandoned=True,
-            ):
-                for activation in await app.state.repo.list_package_activations(package):
-                    if activation.target_slave == slave_id and activation.activation_state == "ready":
-                        activation_map.setdefault(
-                            (activation.package_version_ref, activation.target_slave),
-                            activation,
-                        )
-            result.append(
-                {
-                    "slave_id": slave_id,
-                    "available": slave.available,
-                    "replica": slave.replica.state,
-                    "operations": sorted(slave.capability_snapshot()),
-                    "term_support": [support.model_dump(mode="json") for support in slave.term_support()],
-                    "activations": [activation.model_dump(mode="json") for activation in activation_map.values()],
-                    "executor_descriptors": [{"package_type": descriptor.package_type, "kind": descriptor.kind, "version": descriptor.version, "operations": sorted(descriptor.operations), "descriptor_ref": descriptor.descriptor_ref, "digest": descriptor.digest} for descriptor in slave.executor_registry.descriptors()],
-                    "runtime_plugin_descriptors": [descriptor.__dict__ | {"supports": [support.to_mapping() for support in descriptor.supports]} for descriptor in slave.runtime_plugin_host.descriptors()] if slave.runtime_plugin_host is not None else [],
-                }
-            )
-        return result
-
     @app.post("/api/v1/capability-packages")
     async def upload_capability_package(payload: CapabilityPackageUploadRequest) -> dict[str, Any]:
         try:
@@ -666,7 +559,7 @@ def create_app(
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=409 if "conflict" in str(exc) or "digest" in str(exc) else 422, detail=str(exc)) from exc
-        return package.model_dump(mode="json")
+        return {**package.model_dump(mode="json"), "resource": package.version_ref}
 
     @app.get("/api/v1/capability-packages")
     async def capability_packages(run_id: str | None = None, include_abandoned: bool = False) -> list[dict[str, Any]]:
@@ -678,69 +571,19 @@ def create_app(
             result.append(item)
         return result
 
-    @app.get("/api/v1/capability-descriptors")
-    async def capability_descriptor(resource_id: str, version_or_digest: str) -> dict[str, Any]:
-        """Resolve an operation descriptor through the public data plane."""
+    @app.get("/api/v1/action-descriptors")
+    async def action_descriptor(resource_id: str, version_or_digest: str) -> dict[str, Any]:
+        """Resolve an action descriptor through the public data plane."""
         try:
             ref = ResourceRef(
                 resource_id=resource_id,
                 version_or_digest=version_or_digest,
                 identity_criterion="descriptor_digest",
             )
-            descriptor = await app.state.repo.get_operation_descriptor(ref)
+            descriptor = await app.state.repo.get_action_descriptor(ref)
         except (FileNotFoundError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=404, detail=str(exc) or "operation_descriptor_not_found") from exc
+            raise HTTPException(status_code=404, detail=str(exc) or "action_descriptor_not_found") from exc
         return {"resource_ref": ref.model_dump(mode="json"), "descriptor": descriptor}
-
-    @app.post("/api/v1/resources")
-    async def register_resource(payload: ResourceCreateRequest) -> dict[str, Any]:
-        try:
-            resource = await app.state.repo.register_resource(
-                settings.workspace_id,
-                payload.model_dump(mode="json"),
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="resource_reference_not_found") from exc
-        except ValueError as exc:
-            status = 409 if "conflict" in str(exc) or "digest" in str(exc) else 422
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
-        return resource.model_dump(mode="json")
-
-    @app.get("/api/v1/resources")
-    async def list_resources() -> list[dict[str, Any]]:
-        return [
-            item.model_dump(mode="json")
-            for item in await app.state.repo.list_resources(settings.workspace_id)
-        ]
-
-    @app.get("/api/v1/resources/{resource_id:path}/activations")
-    async def resource_activations(
-        resource_id: str,
-        package_ref: str | None = None,
-        instance_name: str | None = None,
-        activation_state: str | None = None,
-    ) -> list[dict[str, Any]]:
-        try:
-            activations = await app.state.repo.list_resource_activations(
-                settings.workspace_id,
-                resource_id,
-                package_ref=package_ref,
-                instance_name=instance_name,
-                activation_state=activation_state,
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="resource_not_found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return [item.model_dump(mode="json") for item in activations]
-
-    @app.get("/api/v1/resources/{resource_id:path}")
-    async def get_resource(resource_id: str) -> dict[str, Any]:
-        try:
-            resource = await app.state.repo.get_resource(settings.workspace_id, resource_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="resource_not_found") from exc
-        return resource.model_dump(mode="json")
 
     @app.get("/api/v1/runs/{run_id}/capability-packages")
     async def run_capability_packages(run_id: str) -> list[dict[str, Any]]:
@@ -766,113 +609,17 @@ def create_app(
         return item
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/promote")
-    async def promote_capability_package(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
-        payload = payload or CapabilityActivationRequest()
+    async def promote_capability_package(package_ref: str, payload: CapabilityPublishRequest) -> dict[str, Any]:
         try:
             await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
-            package = await app.state.repo.promote_capability_package(package_ref, idempotency_key=payload.idempotency_key, approved_digest=payload.approved_digest)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        targets = payload.target_slaves
-        # Publishing an interface package is supported, but it has no runtime
-        # implementation and therefore can never be activated on a target.
-        if targets and package.is_interface:
-            raise HTTPException(status_code=409, detail="capability_package_not_executable")
-        reports = await execute_activation_targets(
-            app.state.repo,
-            package,
-            targets,
-            desired_state="running",
-            workspace_id=settings.workspace_id,
-            workers=app.state.workers,
-            slaves=app.state.slaves,
-            compute_binding=payload.compute_binding.model_dump(mode="json") if payload.compute_binding else None,
-            idempotency_key=payload.idempotency_key,
-            instance_name=payload.instance_name,
-            target_resource_ref=payload.target_resource_ref.model_dump(mode="json") if payload.target_resource_ref else None,
-            instance_config=payload.instance_config,
-            slave_gateway=None if app.state.embedded else app.state.slave_gateway,
-        )
-        return {"package": package.model_dump(mode="json"), "health_reports": reports}
-
-    @app.post("/api/v1/capability-packages/{package_ref:path}/deactivate")
-    async def deactivate_capability_package(package_ref: str, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
-        payload = payload or CapabilityActivationRequest()
-        try:
-            package = await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
-            approved_digest = payload.approved_digest
-            if not approved_digest:
-                raise ValueError("approved_digest_required")
-            if str(approved_digest).lower() != package.package_digest.lower():
-                raise ValueError("capability_package_digest_mismatch")
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        targets = payload.target_slaves
-        if not targets:
-            raise HTTPException(status_code=400, detail="target_slave_required")
-        reports = await execute_activation_targets(
-            app.state.repo,
-            package,
-            targets,
-            desired_state="stopped",
-            workspace_id=settings.workspace_id,
-            workers=app.state.workers,
-            slaves=app.state.slaves,
-            idempotency_key=payload.idempotency_key,
-            instance_name=payload.instance_name,
-            target_resource_ref=payload.target_resource_ref.model_dump(mode="json") if payload.target_resource_ref else None,
-            instance_config=payload.instance_config,
-            slave_gateway=None if app.state.embedded else app.state.slave_gateway,
-        )
-        return {"package": package.model_dump(mode="json"), "health_reports": reports}
-
-    @app.post("/api/v1/capability-packages/{package_ref:path}/auth/start")
-    async def start_capability_auth(package_ref: str, request: Request, payload: CapabilityActivationRequest | None = None) -> dict[str, Any]:
-        payload = payload or CapabilityActivationRequest()
-        try:
-            package = await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
-            if not payload.approved_digest:
-                raise ValueError("approved_digest_required")
-            if payload.approved_digest.lower() != package.package_digest.lower():
-                raise ValueError("capability_package_digest_mismatch")
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        targets = payload.target_slaves
-        if not targets:
-            raise HTTPException(status_code=400, detail="target_slave_required")
-        activations = await app.state.repo.list_package_activations(package)
-        for target in targets:
-            activation = next(
-                (item for item in activations if item.target_slave == str(target) and item.instance_name == payload.instance_name),
-                None,
+            package = await app.state.repo.promote_capability_package(
+                package_ref, idempotency_key=payload.idempotency_key, approved_digest=payload.approved_digest,
             )
-            if activation is None:
-                raise HTTPException(status_code=409, detail="activation_not_found")
-            if payload.activation_revision is not None and activation.activation_revision != payload.activation_revision:
-                raise HTTPException(status_code=409, detail="activation_revision_conflict")
-        authentication = (package.body or {}).get("authentication") if isinstance(package.body, dict) else None
-        browser_path = authentication.get("browser_path") if isinstance(authentication, dict) else None
-        if browser_path:
-            return await app.state.browser_auth.start(request, package, targets, payload.instance_name)
-        reports = await execute_auth_targets(
-            app.state.repo,
-            package,
-            targets,
-            workspace_id=settings.workspace_id,
-            workers=app.state.workers,
-            slaves=app.state.slaves,
-            approved_digest=package.package_digest,
-            instance_name=payload.instance_name,
-            slave_gateway=None if app.state.embedded else app.state.slave_gateway,
-        )
-        return {"package": package.model_dump(mode="json"), "health_reports": reports}
-
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {**package.model_dump(mode="json"), "resource": package.version_ref}
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/abandon")
     async def abandon_capability_package(package_ref: str, payload: IdempotencyRequest | None = None) -> dict[str, Any]:
@@ -881,7 +628,7 @@ def create_app(
             package = await app.state.repo.abandon_capability_package(package_ref, idempotency_key=payload.idempotency_key if payload else None)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
-        return package.model_dump(mode="json")
+        return {**package.model_dump(mode="json"), "resource": package.version_ref}
 
     @app.get("/")
     async def home() -> FileResponse:

@@ -39,7 +39,7 @@ async def test_content_refs_drive_readiness_dispatch_and_terminal_evidence():
         goal="average scores",
         body=TaskClosure(
             closure_id="closure-scores-e2e",
-            program={"operation_ref": "loom://average", "io_contract_ref": io_contract_ref.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/average", "io_contract_ref": io_contract_ref.model_dump(mode="json")},
         ),
     )
     record = await repo.open_run("run-scores-e2e", "conversation-scores-e2e", "average scores", closure_contract=closure)
@@ -50,7 +50,7 @@ async def test_content_refs_drive_readiness_dispatch_and_terminal_evidence():
         record.draft_digest,
         "scores-input-wrapped",
         [
-            {"kind": "set_execution_payload", "value": {"node_id": "loom://average", "input_ref": wrapped_ref.model_dump(mode="json")}},
+            {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/average", "input_ref": wrapped_ref.model_dump(mode="json")}},
         ],
     )
     assert any(item["code"] == "payload_schema_mismatch" for item in bad.readiness["blockers"])
@@ -62,11 +62,11 @@ async def test_content_refs_drive_readiness_dispatch_and_terminal_evidence():
         bad.draft_digest,
         "scores-materialize",
         [
-            {"kind": "set_execution_payload", "value": {"node_id": "loom://average", "input_ref": input_ref.model_dump(mode="json")}},
+            {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/average", "input_ref": input_ref.model_dump(mode="json")}},
             {"kind": "add_typed_hole", "value": {"hole_id": "h_average"}},
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": process_package_value(repo, package_id="scores-package", operation_ref="loom://average", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
+                "value": process_package_value(repo, package_id="scores-package", action_ref="grip://loom.local/workspaces/workspace-default/actions/average", program_content_ref=program_ref, io_contract_ref=io_contract_ref),
             },
         ],
     )
@@ -74,12 +74,12 @@ async def test_content_refs_drive_readiness_dispatch_and_terminal_evidence():
     binding = ComputeBinding(
         binding_id="binding-scores-e2e",
         hole_id="h_average",
-        capability_descriptor_ref=package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
         capability_package_ref=ResourceRef(
             resource_id=package.version_ref,
             version_or_digest=package.package_digest,
         ),
-        target_resource_ref=ResourceRef(resource_id="slave-a"),
+        target_resource_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/slaves/slave-a"),
 
     )
     bound = await repo.apply_patch(

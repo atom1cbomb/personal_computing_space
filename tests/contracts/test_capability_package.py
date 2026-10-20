@@ -46,8 +46,8 @@ async def test_package_digest_and_scope_are_explicit():
         package_closure_version_ref="closure-pkg-v1",
         source_run_ref="run-1",
         source_closure_version_ref="committed-1",
-        capability_exports=[{
-            "capability_descriptor_ref": ResourceRef(resource_id="loom://matmul", version_or_digest="a" * 64, identity_criterion="descriptor_digest"),
+        action_exports=[{
+            "action_descriptor_ref": ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/actions/matmul", version_or_digest="a" * 64, identity_criterion="descriptor_digest"),
             "io_contract_ref": contract,
             "effect_class": "Sandboxed",
             "permissions": [],
@@ -62,7 +62,7 @@ async def test_package_digest_and_scope_are_explicit():
 
 
 def test_closure_digest_ignores_resource_access_binding():
-    left = TaskClosure.model_validate({"data": {"logical_inputs": [{"resource_id": "content://sha256/" + "a" * 64, "access_binding": {"media_type": "text/plain", "endpoint": "one"}}]}})
+    left = TaskClosure.model_validate({"data": {"logical_inputs": [{"resource_id": "grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "access_binding": {"media_type": "text/plain", "endpoint": "one"}}]}})
     right = left.model_copy(deep=True)
     right.data.logical_inputs[0].access_binding = {"media_type": "text/plain", "endpoint": "two", "bucket": "other"}
     assert left.canonical_digest() == right.canonical_digest()
@@ -71,7 +71,7 @@ def test_closure_digest_ignores_resource_access_binding():
 def test_phase_three_lifecycle_contracts_require_revision_and_idempotency():
     command = CapabilityProvisionCommand(
         command_id="command-1",
-        package_version_ref="capability-package://pkg/v1",
+        package_version_ref="grip://loom.local/workspaces/workspace-default/packages/pkg/v1",
         package_digest="a" * 64,
         target_slave="slave-a",
         idempotency_key="request-1",
@@ -96,22 +96,22 @@ def test_phase_three_lifecycle_contracts_require_revision_and_idempotency():
 
 def test_package_digest_ignores_ref_access_and_lifecycle_metadata():
     descriptor = ResourceRef(
-        resource_id="loom://matmul",
+        resource_id="grip://loom.local/workspaces/workspace-default/actions/matmul",
         version_or_digest="a" * 64,
         identity_criterion="descriptor_digest",
         access_binding={"endpoint": "slave-a"},
         provenance=[{"source": "run-1"}],
     )
-    program_ref = ResourceRef(resource_id="content://sha256/" + "b" * 64, identity_criterion="content_digest")
-    contract_ref = ResourceRef(resource_id="content://sha256/" + "c" * 64, identity_criterion="content_digest")
+    program_ref = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "b" * 64, identity_criterion="content_digest")
+    contract_ref = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "c" * 64, identity_criterion="content_digest")
     left = CapabilityPackageVersion(
         package_id="pkg",
         package_version="v1",
         package_closure_version_ref="closure-1",
         source_run_ref="run-1",
         source_closure_version_ref="version-1",
-        capability_exports=[{
-            "capability_descriptor_ref": descriptor,
+        action_exports=[{
+            "action_descriptor_ref": descriptor,
             "io_contract_ref": contract_ref,
             "effect_class": "Sandboxed",
             "permissions": [],
@@ -136,6 +136,21 @@ def test_package_digest_ignores_ref_access_and_lifecycle_metadata():
         }
     )
     right = CapabilityPackageVersion.model_validate(right_payload)
-    right.capability_exports[0].capability_descriptor_ref.access_binding = {"endpoint": "slave-b"}
-    right.capability_exports[0].capability_descriptor_ref.provenance = [{"source": "run-2"}]
+    right.action_exports[0].action_descriptor_ref.access_binding = {"endpoint": "slave-b"}
+    right.action_exports[0].action_descriptor_ref.provenance = [{"source": "run-2"}]
     assert right.package_digest == left.package_digest
+
+
+def test_old_business_descriptor_version_and_manifest_field_are_rejected():
+    from pydantic import ValidationError
+    from loom_orchestration.metadata import validate_action_descriptor
+    from loom_v2.contracts.types import ActionExport
+
+    with pytest.raises(ValueError, match="action_descriptor_version_invalid"):
+        validate_action_descriptor({"schema_version": "operation.v1"})
+    with pytest.raises(ValidationError) as error:
+        ActionExport.model_validate({
+            "capability_descriptor_ref": {"resource_id": "grip://loom.local/actions/old"},
+            "io_contract_ref": {}, "effect_class": "Sandboxed", "replay_safety": "DeclaredByPackage",
+        })
+    assert any(e["loc"] == ("capability_descriptor_ref",) and e["type"] == "extra_forbidden" for e in error.value.errors())

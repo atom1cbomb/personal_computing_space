@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-archive",
+  "name": "documents_archive",
+  "description": "Documents archive through the outline-http activation."
+}

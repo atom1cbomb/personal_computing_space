@@ -22,10 +22,10 @@ def _export(
     permissions: list[str] | None = None,
 ) -> dict[str, object]:
     return {
-        "capability_descriptor_ref": _resource_ref(
+        "action_descriptor_ref": _resource_ref(
             descriptor_id, descriptor_digest=descriptor_digest
         ),
-        "io_contract_ref": _resource_ref("content://sha256/" + io_digest),
+        "io_contract_ref": _resource_ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + io_digest),
         "effect_class": "NetworkService",
         "permissions": permissions or [],
         "replay_safety": "DeclaredByPackage",
@@ -42,8 +42,8 @@ def http_package_payload() -> dict[str, object]:
         "source_run_ref": "run-1",
         "source_closure_version_ref": "version-1",
         "execution": {"kind": "container:http", "version": "1"},
-        "capability_exports": [
-            _export("loom://http/a", "a" * 64, "c" * 64, "/v1/a")
+        "action_exports": [
+            _export("grip://loom.local/workspaces/workspace-default/actions/http/a", "a" * 64, "c" * 64, "/v1/a")
         ],
         "body": {
             "image_ref": "registry.example/loom/service@sha256:" + "d" * 64,
@@ -68,12 +68,12 @@ def http_package_payload() -> dict[str, object]:
             ),
         ),
         (
-            lambda value: value["capability_exports"][0]["runtime_binding"].update(
+            lambda value: value["action_exports"][0]["runtime_binding"].update(
                 {"unknown": True}
             ),
         ),
         (
-            lambda value: value["capability_exports"][0].update(
+            lambda value: value["action_exports"][0].update(
                 {"runtime_binding": {"path": "relative"}}
             ),
         ),
@@ -124,26 +124,26 @@ def test_http_contract_rejects_invalid_credential_profile(profile: str) -> None:
 
 def test_duplicate_descriptor_export_is_rejected() -> None:
     payload = http_package_payload()
-    payload["capability_exports"].append(
-        _export("loom://http/a", "a" * 64, "e" * 64, "/v1/b")
+    payload["action_exports"].append(
+        _export("grip://loom.local/workspaces/workspace-default/actions/http/a", "a" * 64, "e" * 64, "/v1/b")
     )
 
-    with pytest.raises(ValueError, match="capability_export_duplicate"):
+    with pytest.raises(ValueError, match="action_export_duplicate"):
         CapabilityPackageVersion.model_validate(payload)
 
 
 def test_export_and_permission_reordering_does_not_change_digest() -> None:
     left_payload = http_package_payload()
-    left_payload["capability_exports"] = [
+    left_payload["action_exports"] = [
         _export(
-            "loom://http/b",
+            "grip://loom.local/workspaces/workspace-default/actions/http/b",
             "b" * 64,
             "e" * 64,
             "/v1/b",
             permissions=["network", "read"],
         ),
         _export(
-            "loom://http/a",
+            "grip://loom.local/workspaces/workspace-default/actions/http/a",
             "a" * 64,
             "c" * 64,
             "/v1/a",
@@ -151,13 +151,13 @@ def test_export_and_permission_reordering_does_not_change_digest() -> None:
         ),
     ]
     right_payload = deepcopy(left_payload)
-    right_payload["capability_exports"].reverse()
-    for capability_export in right_payload["capability_exports"]:
-        capability_export["permissions"].reverse()
-        capability_export["capability_descriptor_ref"]["access_binding"] = {
+    right_payload["action_exports"].reverse()
+    for action_export in right_payload["action_exports"]:
+        action_export["permissions"].reverse()
+        action_export["action_descriptor_ref"]["access_binding"] = {
             "endpoint": "elsewhere"
         }
-        capability_export["capability_descriptor_ref"]["provenance"] = [
+        action_export["action_descriptor_ref"]["provenance"] = [
             {"source": "promotion"}
         ]
 
@@ -169,12 +169,12 @@ def test_export_and_permission_reordering_does_not_change_digest() -> None:
 
 def test_content_backed_descriptor_digest_participates_in_package_identity() -> None:
     left_payload = http_package_payload()
-    descriptor_ref = left_payload["capability_exports"][0][
-        "capability_descriptor_ref"
+    descriptor_ref = left_payload["action_exports"][0][
+        "action_descriptor_ref"
     ]
-    descriptor_ref["resource_id"] = "content://sha256/" + "f" * 64
+    descriptor_ref["resource_id"] = "grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "f" * 64
     right_payload = deepcopy(left_payload)
-    right_payload["capability_exports"][0]["capability_descriptor_ref"][
+    right_payload["action_exports"][0]["action_descriptor_ref"][
         "version_or_digest"
     ] = "e" * 64
 

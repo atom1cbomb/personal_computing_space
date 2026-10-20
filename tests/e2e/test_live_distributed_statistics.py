@@ -90,14 +90,14 @@ def _upload_package(client, package_id, descriptor, contract, program, *, orches
     response = client.post("/api/v1/capability-packages", json={
         "package_id": package_id, "package_version": "v1", "package_type": "function",
         "execution": {"kind": "container:python_orchestrator" if orchestration_body else "process:json_stdio", "version": "1"},
-        "capability_exports": [{"capability_descriptor_ref": descriptor, "io_contract_ref": contract,
+        "action_exports": [{"action_descriptor_ref": descriptor, "io_contract_ref": contract,
                                 "effect_class": "Sandboxed", "permissions": [],
                                 "replay_safety": "DeterministicByEventLog" if orchestration_body else "DeclaredByPackage"}],
         "body": {"program_content_ref": program, **(orchestration_body or {})},
     })
     response.raise_for_status()
     package = response.json()
-    return {"resource_id": f"capability-package://{package['package_id']}/{package['package_version']}",
+    return {"resource_id": package["resource"],
             "version_or_digest": package["package_digest"]}
 
 
@@ -144,9 +144,9 @@ def test_live_distributed_statistics_across_both_slaves():
             for i in range(1, 5)
         ]
         input_ref = _put(client, {"partitions": partition_refs}, "application/json")
-        summarize_descriptor = _put(client, {"schema_version": "operation.v1", "resource_id": "loom://summarize", "name": "summarize"}, "application/vnd.loom.operation-descriptor+json")
-        merge_descriptor = _put(client, {"schema_version": "operation.v1", "resource_id": "loom://merge-summaries", "name": "merge-summaries"}, "application/vnd.loom.operation-descriptor+json")
-        orchestration_descriptor = _put(client, {"schema_version": "operation.v1", "resource_id": "loom://orchestrate", "name": "orchestrate"}, "application/vnd.loom.operation-descriptor+json")
+        summarize_descriptor = _put(client, {"schema_version": "action.v1", "resource_id": "grip://loom.local/workspaces/workspace-default/actions/summarize", "name": "summarize"}, "application/vnd.loom.action-descriptor+json")
+        merge_descriptor = _put(client, {"schema_version": "action.v1", "resource_id": "grip://loom.local/workspaces/workspace-default/actions/merge-summaries", "name": "merge-summaries"}, "application/vnd.loom.action-descriptor+json")
+        orchestration_descriptor = _put(client, {"schema_version": "action.v1", "resource_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "name": "orchestrate"}, "application/vnd.loom.action-descriptor+json")
 
         # Register reusable packages before submitting the complete plan.
         summarize_ref = _upload_package(client, f"summarize-{conversation_ref}", summarize_descriptor, summarize_contract, summarize_program)
@@ -170,7 +170,7 @@ def test_live_distributed_statistics_across_both_slaves():
             "execution": {"kind": "container:python_orchestrator", "version": "1"},
             "package_ref": orchestration_ref,
         }
-        closure["body"]["node_input_bindings"] = [{"node_id": "loom://orchestrate", "input_ref": input_ref}]
+        closure["body"]["node_input_bindings"] = [{"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": input_ref}]
         submitted = client.post("/api/v1/run-submissions", json={
             "request_id": conversation_ref, "conversation_ref": conversation_ref, "plan": closure,
         })
@@ -200,7 +200,7 @@ def test_live_distributed_statistics_across_both_slaves():
 
         # 9. Verify the aggregate result is correct and content-addressed.
         resource_ref = run["outcome"]["resource_ref"]
-        assert isinstance(resource_ref, dict) and resource_ref["resource_id"].startswith("content://sha256/")
+        assert isinstance(resource_ref, dict) and resource_ref["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")
         value = run["outcome"]["value"]
         assert value["count"] == 12
         assert value["sum"] == 57

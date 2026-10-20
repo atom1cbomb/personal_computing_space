@@ -1,6 +1,7 @@
 """Local and remote execution waiters share ownership/cancellation semantics."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -80,6 +81,34 @@ async def test_authoritative_cancellation_stops_execution(execution_lane):
 
 
 @pytest.mark.asyncio
+async def test_execution_deadline_stops_sandbox_before_settlement(execution_lane):
+    driver, state, wait, _, failure, _, _, cancelled = execution_lane
+    claim = {"run": dict(state), "request": {"driver_epoch": 1,
+        "deadline_at": (datetime.now(timezone.utc) + timedelta(seconds=0.1)).isoformat()}}
+
+    async def fail(*args, **kwargs):
+        assert cancelled.is_set()
+        driver._execution_loop_stop.set()
+
+    failure.side_effect = fail
+    if wait.__name__.endswith("local"):
+        driver.control_client = None
+        driver.repository.claim_next_execution = AsyncMock(return_value=claim)
+    else:
+        previous_command = driver.control_client.command
+
+        async def command(name, arguments, **kwargs):
+            if name == "execution.claim_next":
+                return claim
+            return await previous_command(name, arguments, **kwargs)
+
+        driver.control_client.command = command
+    await asyncio.wait_for(driver.run_execution_loop(), 3)
+    assert driver._execution_tasks == {}
+    failure.assert_awaited_once_with("run", {"code": "execution_deadline_exceeded"})
+
+
+@pytest.mark.asyncio
 async def test_cancelling_waiter_preserves_execution_for_next_waiter(execution_lane):
     driver, state, wait, dispatch, failure, entered, release, cancelled = execution_lane
     first = asyncio.create_task(wait("run", "prompt"))
@@ -118,11 +147,11 @@ async def test_execution_loop_claims_durable_submission_and_settles_outcome():
         plan=ClosureContract(closure_id="execution-loop-closure", goal="execute", body={"closure_id": "execution-loop-closure"}),
     )
 
-    async def executor(_operation: str, payload: dict) -> ExecutionResult:
+    async def executor(_action: str, payload: dict) -> ExecutionResult:
         value = {"payload": payload}
         digest = hashlib.sha256(canonical_json_bytes(value)).hexdigest()
         return ExecutionResult(
-            resource_ref=ResourceRef(resource_id=f"content://sha256/{digest}", identity_criterion="content_digest"),
+            resource_ref=ResourceRef(resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}", identity_criterion="content_digest"),
             value=value,
             replay_safety="Idempotent",
             terminal_state="completed",

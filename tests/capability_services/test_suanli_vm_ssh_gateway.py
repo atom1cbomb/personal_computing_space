@@ -9,7 +9,7 @@ def test_vm_gateway_uses_activation_target_and_tofu_options(tmp_path: Path) -> N
     instance.write_text(
         json.dumps(
             {
-                "target_resource_ref": {"resource_id": "suanli://vm/i-123"},
+                "target_resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/suanli/vm/i-123"},
                 "host": "10.0.0.7",
                 "port": 22,
                 "user": "root",

@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .types import (
-    CapabilityExport,
+    ActionExport,
     CapabilityDeprovisionCommand,
     CapabilityHealthReport,
     CapabilityPackageVersion,
@@ -44,25 +44,8 @@ class PublicRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class PublicSlave(BaseModel):
-    """Workspace resource discovery, without internal routing or lease tokens."""
-
-    slave_id: str
-    available: bool
-    lease_state: str
-    last_seen_at: str | None = None
-    base_operations: list[str] = Field(default_factory=list)
-    executor_descriptors: list[dict[str, Any]] = Field(default_factory=list)
-    runtime_plugin_descriptors: list[dict[str, Any]] = Field(default_factory=list)
-    term_support: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class PublicSlaveList(BaseModel):
-    workspace_id: str
-    slaves: list[PublicSlave]
-
-
 class ContentPutRequest(PublicRequest):
+    name: str | None = None
     content: Any | None = None
     media_type: Any = ""
 
@@ -74,16 +57,9 @@ class CapabilityPackageUploadRequest(PublicRequest):
     package_version: str = Field(min_length=1)
     package_type: str = Field(default="function", min_length=1)
     execution: ExecutionContract = Field(default_factory=ExecutionContract)
-    capability_exports: list[CapabilityExport] = Field(min_length=1)
+    action_exports: list[ActionExport] = Field(min_length=1)
     body: dict[str, Any] | None = None
     package_digest: str | None = None
-
-
-class ResourceCreateRequest(PublicRequest):
-    resource_ref: ResourceRef
-    package_ref: ResourceRef
-    managed_by_ref: ResourceRef | None = None
-    state: str = "unknown"
 
 
 class RunSubmissionRequest(BaseModel):
@@ -109,7 +85,7 @@ class RunResubmitRequest(BaseModel):
 class RunCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    request_id: str = Field(min_length=1, max_length=256)
+    request_id: str | None = Field(default=None, min_length=1, max_length=256, description="Original submission request ID, if supplied")
     reason: str | dict[str, Any] = "user_cancel"
 
 
@@ -131,15 +107,9 @@ class IdempotencyRequest(PublicRequest):
     idempotency_key: str | None = None
 
 
-class CapabilityActivationRequest(PublicRequest):
-    target_slaves: list[str] = Field(default_factory=list)
-    approved_digest: str | None = None
+class CapabilityPublishRequest(ContractModel):
+    approved_digest: str = Field(min_length=1)
     idempotency_key: str | None = None
-    compute_binding: ComputeBinding | None = None
-    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-    target_resource_ref: ResourceRef | None = None
-    instance_config: dict[str, Any] = Field(default_factory=dict)
-    activation_revision: int | None = Field(default=None, ge=1)
 
 
 class CapabilityHealthRequest(ContractModel):
@@ -170,7 +140,7 @@ class SlaveDispatchRequest(ContractModel):
     execution_epoch: int = 1
     workspace_id: str | None = None
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-    operation: str = Field(min_length=1)
+    action: str = Field(min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
     closure: TaskClosure | None = None
     binding: ComputeBinding | None = None
@@ -213,9 +183,8 @@ class SlaveBrowserRequest(SlaveAuthStartRequest):
 __all__ = [
     "AgentLeaseRequest",
     "CapabilityHealthRequest",
-    "CapabilityActivationRequest",
+    "CapabilityPublishRequest",
     "CapabilityPackageUploadRequest",
-    "ResourceCreateRequest",
     "ContentPutRequest",
     "DriverMessageRequest",
     "IdempotencyRequest",

@@ -7,13 +7,13 @@ from loom_v2.testing.observer import create_embedded_app as create_app
 from loom_v2.observer.repository import ObserverRepository
 
 
-def _binding(operation: str = "run_code", target: str = "slave-a", *, package_ref: dict | None = None, descriptor_ref: dict | None = None) -> dict:
+def _binding(action: str = "run_code", target: str = "slave-a", *, package_ref: dict | None = None, descriptor_ref: dict | None = None) -> dict:
     return {
-        "binding_id": f"binding-{operation}",
+        "binding_id": f"binding-{action}",
         "hole_id": "h_run_code",
-        "capability_descriptor_ref": descriptor_ref or {"resource_id": "executor://process:json_stdio/1"},
+        "action_descriptor_ref": descriptor_ref or {"resource_id": "grip://loom.local/workspaces/workspace-default/executors/process:json_stdio/1"},
         "capability_package_ref": package_ref,
-        "target_resource_ref": {"resource_id": target},
+        "target_resource_ref": {"resource_id": f"grip://loom.local/workspaces/workspace-default/slaves/{target}"},
         "bound_by": "test-driver",
     }
 
@@ -24,8 +24,8 @@ def _add_run_code_hole(client: TestClient, suffix: str = "default"):
         "goal": "run test code",
         "body": {
             "closure_id": f"closure-readiness-{suffix}",
-            "program": {"operation_ref": "loom://run_code"},
-            "compute": {"operation_ref": "loom://run_code", "typed_holes": [{"hole_id": "h_run_code"}]},
+            "program": {"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code"},
+            "compute": {"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code", "typed_holes": [{"hole_id": "h_run_code"}]},
         },
     }
     response = client.post(
@@ -61,10 +61,10 @@ def test_run_code_binding_requires_package_and_then_allows_submission():
 
     program = put("import json,sys; print(json.dumps(json.load(sys.stdin)))", "text/x-python")
     io = put({"schema_version": "io.v1"}, "application/vnd.loom.io-contract+json")
-    descriptor = put({"schema_version": "operation.v1", "resource_id": "loom://run_code", "name": "run_code"}, "application/vnd.loom.operation-descriptor+json")
+    descriptor = put({"schema_version": "action.v1", "resource_id": "grip://loom.local/workspaces/workspace-default/actions/run_code", "name": "run_code"}, "application/vnd.loom.action-descriptor+json")
     package = client.post("/api/v1/capability-packages", json={
         "package_id": "readiness-run-code", "package_version": "v1",
-        "capability_exports": [{"capability_descriptor_ref": descriptor, "io_contract_ref": io,
+        "action_exports": [{"action_descriptor_ref": descriptor, "io_contract_ref": io,
                                 "effect_class": "Sandboxed", "replay_safety": "DeclaredByPackage"}],
         "body": {"program_content_ref": program},
     })
@@ -72,7 +72,7 @@ def test_run_code_binding_requires_package_and_then_allows_submission():
     body["program"]["io_contract_ref"] = io
     body["compute_bindings"] = [_binding(
         descriptor_ref=descriptor,
-        package_ref={"resource_id": "capability-package://readiness-run-code/v1",
+        package_ref={"resource_id": "grip://loom.local/workspaces/workspace-default/packages/readiness-run-code/v1",
                      "version_or_digest": package.json()["package_digest"]},
     )]
     submitted = client.post("/api/v1/run-submissions", json=request)
@@ -105,7 +105,7 @@ async def test_input_schema_requires_bound_ref_and_rejects_wrapped_payload() -> 
         goal="validate scores",
         body=TaskClosure(
             closure_id="closure-input-schema",
-            program={"operation_ref": "loom://test_input_validation", "io_contract_ref": contract_ref.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_input_validation", "io_contract_ref": contract_ref.model_dump(mode="json")},
         ),
     )
     record = await repo.open_run("run-input-schema", "task-input-schema", "validate scores", closure_contract=contract)
@@ -120,7 +120,7 @@ async def test_input_schema_requires_bound_ref_and_rejects_wrapped_payload() -> 
         record.draft_version,
         record.draft_digest,
         "input-wrapped",
-        [{"kind": "set_execution_payload", "value": {"node_id": "loom://test_input_validation", "input_ref": wrapped_ref.model_dump(mode="json")}}],
+        [{"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/test_input_validation", "input_ref": wrapped_ref.model_dump(mode="json")}}],
     )
     mismatch = next(item for item in wrapped.readiness["blockers"] if item["code"] == "payload_schema_mismatch")
     assert mismatch["schema_digest"] == schema_ref.digest
@@ -132,7 +132,7 @@ async def test_input_schema_requires_bound_ref_and_rejects_wrapped_payload() -> 
         wrapped.draft_version,
         wrapped.draft_digest,
         "input-valid",
-        [{"kind": "set_execution_payload", "value": {"node_id": "loom://test_input_validation", "input_ref": input_ref.model_dump(mode="json")}}],
+        [{"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/test_input_validation", "input_ref": input_ref.model_dump(mode="json")}}],
     )
     assert not any(item["code"].startswith("payload_") for item in valid.readiness["blockers"])
 
@@ -156,7 +156,7 @@ async def test_commit_and_start_reuse_input_readiness_blockers() -> None:
         goal="validate input",
         body=TaskClosure(
             closure_id="closure-commit-input",
-            program={"operation_ref": "loom://test_input_validation", "io_contract_ref": contract_ref.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_input_validation", "io_contract_ref": contract_ref.model_dump(mode="json")},
         ),
     )
     record = await repo.open_run("run-commit-input", "task-commit-input", "validate input", closure_contract=contract)
@@ -187,7 +187,7 @@ async def test_program_inline_io_fields_are_not_an_executable_contract() -> None
         body=TaskClosure(
             closure_id="closure-inline-schema",
             program={
-                "operation_ref": "loom://test_input_validation",
+                "action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_input_validation",
                 "io_contract_ref": contract_ref.model_dump(mode="json"),
                 "input_schema": {"type": "object"},
                 "output_schema": {"type": "object"},

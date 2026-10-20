@@ -93,7 +93,7 @@ async def test_dynamic_distributed_map_reduce_analysis():
                 resource_budget={"max_nodes": 6, "max_live_nodes": 2},
                 body=TaskClosure(
                     closure_id="closure-dynamic-analysis",
-                    program={"operation_ref": "loom://orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
+                    program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
                 ),
             ).model_dump(mode="json")
         },
@@ -103,14 +103,14 @@ async def test_dynamic_distributed_map_reduce_analysis():
         "loom_apply_plan_patch",
         {
             "ops": [
-                {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
+                {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
                 {
                     "kind": "materialize_capability_package_candidate",
-                    "value": process_package_value(repo, package_id="summarize", operation_ref="loom://summarize", program_content_ref=summarize_program, io_contract_ref=summarize_contract),
+                    "value": process_package_value(repo, package_id="summarize", action_ref="grip://loom.local/workspaces/workspace-default/actions/summarize", program_content_ref=summarize_program, io_contract_ref=summarize_contract),
                 },
                 {
                     "kind": "materialize_capability_package_candidate",
-                    "value": process_package_value(repo, package_id="merge-summaries", operation_ref="loom://merge-summaries", program_content_ref=merge_program, io_contract_ref=merge_contract),
+                    "value": process_package_value(repo, package_id="merge-summaries", action_ref="grip://loom.local/workspaces/workspace-default/actions/merge-summaries", program_content_ref=merge_program, io_contract_ref=merge_contract),
                 },
             ]
         },
@@ -120,8 +120,8 @@ async def test_dynamic_distributed_map_reduce_analysis():
     merge_package = next(item for item in packages if item.package_id == "merge-summaries")
     summarize_ref = ResourceRef(resource_id=summarize_package.version_ref, version_or_digest=summarize_package.package_digest)
     merge_ref = ResourceRef(resource_id=merge_package.version_ref, version_or_digest=merge_package.package_digest)
-    summarize_descriptor_ref = summarize_package.capability_exports[0].capability_descriptor_ref
-    merge_descriptor_ref = merge_package.capability_exports[0].capability_descriptor_ref
+    summarize_descriptor_ref = summarize_package.action_exports[0].action_descriptor_ref
+    merge_descriptor_ref = merge_package.action_exports[0].action_descriptor_ref
     orchestration_source = f'''SUMMARIZE = {summarize_ref.model_dump(mode="json")}
 SUMMARIZE_DESCRIPTOR = {summarize_descriptor_ref.model_dump(mode="json")}
 MERGE = {merge_ref.model_dump(mode="json")}
@@ -141,7 +141,7 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
             "ops": [
                 {
                     "kind": "materialize_capability_package_candidate",
-                    "value": orchestration_package_value(repo, package_id="orchestrate", operation_ref="loom://orchestrate", program_content_ref=orchestration_program, io_contract_ref=parent_contract, allowed_node_package_refs=[summarize_ref, merge_ref], max_nodes=6, max_live_nodes=2),
+                    "value": orchestration_package_value(repo, package_id="orchestrate", action_ref="grip://loom.local/workspaces/workspace-default/actions/orchestrate", program_content_ref=orchestration_program, io_contract_ref=parent_contract, allowed_node_package_refs=[summarize_ref, merge_ref], max_nodes=6, max_live_nodes=2),
                 }
             ]
         },
@@ -177,4 +177,4 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
     accepted = [event for event in record.events if event["phase"] == "node_accepted"]
     assert {event["selected_target"] for event in accepted[:2]} == {"slave-a", "slave-b"}
     assert all((event.get("package_ref") or {}).get("version_or_digest") for event in accepted)
-    assert record.outcome["resource_ref"]["resource_id"].startswith("content://sha256/")
+    assert record.outcome["resource_ref"]["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")

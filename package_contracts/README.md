@@ -9,7 +9,7 @@ Place declarative `*.json` package contract files in this directory. Each file m
   "schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
-    "required": ["package_type", "execution", "capability_exports", "body"],
+    "required": ["package_type", "execution", "action_exports", "body"],
     "properties": {
       "package_type": {"const": "example"},
       "execution": {
@@ -21,7 +21,7 @@ Place declarative `*.json` package contract files in this directory. Each file m
         },
         "additionalProperties": false
       },
-      "capability_exports": {"type": "array", "minItems": 1},
+      "action_exports": {"type": "array", "minItems": 1},
       "body": {"type": "object"}
     },
     "additionalProperties": false

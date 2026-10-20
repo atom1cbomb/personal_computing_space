@@ -6,6 +6,8 @@ __pycache__/
 secrets/*
 !secrets/*.example
 *.egg-info/
+dist/
+build/
 data/
 logs/
 .worktrees/

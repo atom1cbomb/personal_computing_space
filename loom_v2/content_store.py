@@ -8,6 +8,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from loom_orchestration.grip import Names
+from loom_orchestration.naming import content_digest, content_uri, default_content_name
+
 import boto3
 from botocore.exceptions import ClientError
 
@@ -42,9 +45,12 @@ class ContentStore:
         secret_key: str | None,
         region: str = "us-east-1",
         prefix: str = "",
+        authority: str = "loom.local",
+        workspace: str = "workspace-default",
     ) -> None:
         if not endpoint_url or not bucket or not access_key or not secret_key:
             raise ValueError("s3_configuration_missing")
+        self.names = Names(authority, workspace)
         self.endpoint_url = endpoint_url.rstrip("/")
         self.bucket = bucket
         self.access_key = access_key
@@ -65,19 +71,20 @@ class ContentStore:
             secret_key=settings.s3_secret_key,
             region=settings.s3_region,
             prefix=settings.s3_prefix,
+            authority=settings.grip_authority,
+            workspace=settings.workspace_id,
         )
 
     @staticmethod
     def digest(content: bytes) -> str:
-        # ContentStore digests are the public SHA-256 object identity and must
-        # remain compatible with existing content://sha256 refs.
+        # Byte storage uses SHA-256; the public URI also carries a readable name.
         return digest_bytes(content)
 
     @staticmethod
     def _normalize_digest(value: str | None) -> str:
         raw = (value or "").strip()
-        if raw.startswith("content://sha256/"):
-            raw = raw.removeprefix("content://sha256/")
+        if raw.startswith("grip://"):
+            raw = content_digest(raw) or ""
         elif raw.startswith("sha256:"):
             raw = raw.removeprefix("sha256:")
         if not _DIGEST_RE.fullmatch(raw):
@@ -168,10 +175,11 @@ class ContentStore:
         if declared != digest or actual_size != size or actual_type != media_type:
             raise ValueError("content_integrity_conflict")
 
-    async def put(self, content: bytes, *, media_type: str = "application/octet-stream") -> ResourceRef:
+    async def put(self, content: bytes, *, media_type: str = "application/octet-stream", name: str | None = None) -> ResourceRef:
         if not isinstance(content, bytes):
             raise TypeError("content_must_be_bytes")
         digest = self.digest(content)
+        resource_id = content_uri(digest, name or default_content_name(media_type), names=self.names)
         size = len(content)
         key = self._key(digest)
         await self._ensure_bucket()
@@ -203,11 +211,34 @@ class ContentStore:
                 head = await asyncio.to_thread(self._head_sync, digest)
                 self._validate_head(head, digest=digest, size=size, media_type=media_type)
 
+        # Persist the complete name independently of deduplicated byte storage.
+        await asyncio.to_thread(
+            self._sync_client().put_object,
+            Bucket=self.bucket, Key=self._key(self._name_key(resource_id)),
+            Body=resource_id.encode("utf-8"), ContentType="text/plain",
+        )
         return ResourceRef(
-            resource_id=f"content://sha256/{digest}",
+            resource_id=resource_id,
             identity_criterion="content_digest",
             access_binding={"media_type": media_type},
         )
+
+    @staticmethod
+    def _name_key(resource_id: str) -> str:
+        return "_names/" + digest_bytes(resource_id.encode("utf-8"))
+
+    async def _require_name(self, ref: ResourceRef | str) -> None:
+        target = ref.resource_id if isinstance(ref, ResourceRef) else ref
+        if not target.startswith("grip://"):
+            return  # Internal blob access uses an explicit checksum.
+        if not target.startswith(self.names.root + "/content/"):
+            raise FileNotFoundError("content_not_found")
+        try:
+            bound = await asyncio.to_thread(self._get_sync, self._name_key(target))
+        except _NotFound as exc:
+            raise FileNotFoundError("content_not_found") from exc
+        if bound != target.encode("utf-8"):
+            raise FileNotFoundError("content_not_found")
 
     def _get_sync(self, digest: str) -> bytes:
         self._ensure_bucket_sync()
@@ -225,6 +256,7 @@ class ContentStore:
 
     async def get(self, ref: ResourceRef | str, *, expected_digest: str | None = None) -> bytes:
         digest = self._digest_from_ref(ref)
+        await self._require_name(ref)
         if expected_digest is None:
             expected = None
         else:
@@ -255,20 +287,22 @@ class ContentStore:
     async def exists(self, ref: ResourceRef | str) -> bool:
         digest = self._digest_from_ref(ref)
         try:
+            await self._require_name(ref)
             await asyncio.to_thread(self._head_sync, digest)
             return True
-        except _NotFound:
+        except (_NotFound, FileNotFoundError):
             return False
 
     async def stat(self, ref: ResourceRef | str) -> ContentStat | None:
         digest = self._digest_from_ref(ref)
         try:
+            await self._require_name(ref)
             return await asyncio.to_thread(self._stat_sync, digest)
-        except _NotFound:
+        except (_NotFound, FileNotFoundError):
             return None
 
 
-async def put_typed_content(store: ContentStore, content: Any, *, media_type: str) -> ResourceRef:
+async def put_typed_content(store: ContentStore, content: Any, *, media_type: str, name: str | None = None) -> ResourceRef:
     """Validate and canonicalize uploads shared by local and remote Drivers."""
 
     normalized_media_type = str(media_type or "").split(";", 1)[0].strip().lower()
@@ -278,7 +312,7 @@ async def put_typed_content(store: ContentStore, content: Any, *, media_type: st
         "application/json",
         "application/schema+json",
         "application/vnd.loom.io-contract+json",
-        "application/vnd.loom.operation-descriptor+json",
+        "application/vnd.loom.action-descriptor+json",
     }
     parsed: Any | None = None
     if normalized_media_type in json_media_types:
@@ -300,8 +334,10 @@ async def put_typed_content(store: ContentStore, content: Any, *, media_type: st
                 IoContract.model_validate(parsed)
             except Exception as exc:
                 raise ValueError("io_contract_invalid") from exc
-        elif normalized_media_type == "application/vnd.loom.operation-descriptor+json" and not isinstance(parsed, dict):
-            raise ValueError("operation_descriptor_invalid")
+        elif normalized_media_type == "application/vnd.loom.action-descriptor+json":
+            from loom_v2.contracts.resource_effects import validate_action_descriptor
+
+            validate_action_descriptor(parsed)
         body = canonical_json_bytes(parsed)
     elif isinstance(content, str):
         body = content.encode("utf-8")
@@ -309,12 +345,12 @@ async def put_typed_content(store: ContentStore, content: Any, *, media_type: st
         body = bytes(content)
     else:
         raise TypeError("content_must_be_string_or_bytes")
-    ref = await store.put(body, media_type=normalized_media_type)
-    if normalized_media_type != "application/vnd.loom.operation-descriptor+json":
+    ref = await store.put(body, media_type=normalized_media_type, **({"name": name} if name is not None else {}))
+    if normalized_media_type != "application/vnd.loom.action-descriptor+json":
         return ref
     return ResourceRef(
         resource_id=ref.resource_id,
-        version_or_digest=digest_json(parsed, domain="loom/operation-descriptor/v1"),
+        version_or_digest=digest_json(parsed, domain="loom/action-descriptor/v1"),
         identity_criterion="descriptor_digest",
         access_binding=ref.access_binding,
     )

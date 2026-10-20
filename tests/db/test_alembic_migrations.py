@@ -16,8 +16,8 @@ def _scripts() -> ScriptDirectory:
 
 def test_alembic_has_one_linear_head_and_safe_revision_names() -> None:
     scripts = _scripts()
-    assert scripts.get_heads() == ["004_run_execution_requests"]
+    assert scripts.get_heads() == ["005_slave_action_name"]
 
-    revisions = list(scripts.walk_revisions(base="base", head="004_run_execution_requests"))
-    assert [script.revision for script in revisions] == ["004_run_execution_requests", "003_workspace_resources", "002_workspace_packages", "001_release_baseline"]
+    revisions = list(scripts.walk_revisions(base="base", head="005_slave_action_name"))
+    assert [script.revision for script in revisions] == ["005_slave_action_name", "004_run_execution_requests", "003_workspace_resources", "002_workspace_packages", "001_release_baseline"]
     assert all(len(script.revision) <= 32 for script in revisions)

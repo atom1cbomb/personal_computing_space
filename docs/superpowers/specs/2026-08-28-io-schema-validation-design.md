@@ -1,5 +1,7 @@
 # 能力 I/O 契约校验设计（Capability I/O Schema Validation）
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 **日期：** 2026-08-28
 **状态：** 设计（按审核意见修订，待评审）
 **对应文档：** `docs/superpowers/specs/2026-08-24-single-user-workspace-v2-design.md`（权威输入：`../computility/单用户单Workspace核心架构设计v2.md`）；`docs/superpowers/specs/2026-08-27-minio-content-store-design.md`（内容存储唯一实现为 MinIO/S3）
@@ -49,8 +51,8 @@ v2 文档已经为 I/O 契约留好了语义锚点，但本实现尚未落地为
 ```text
 IoContract = {
   schema_version: "io.v1",
-  input_schema_ref: ResourceRef | null,   // content://sha256/<digest>
-  output_schema_ref: ResourceRef | null,  // content://sha256/<digest>
+  input_schema_ref: ResourceRef | null,   // grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>
+  output_schema_ref: ResourceRef | null,  // grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>
   success_semantics: StructuredValue | null,
   success_validator_ref: ResourceRef | null,
 }
@@ -58,8 +60,8 @@ IoContract = {
 
 - **wire 格式**：JSON Schema 2020-12 的最小子集：`type` / `required` / `properties` / `items` / `enum` / `const` / `minimum` / `maximum`。本版本不实现 `format` assertion；不支持的关键字拒绝，不静默忽略。
 - **内容寻址**：schema 正文和 IoContract 正文都必须写入 MinIO/S3 ContentStore。schema 与 IoContract 均使用 UTF-8 的 RFC 8785/JCS 规范化 JSON；`io_contract_ref.version_or_digest` 是契约身份，`input_schema_ref.version_or_digest` / `output_schema_ref.version_or_digest` 是对应 schema 身份；`ResourceRef.access_binding` 不参与任何契约 digest。
-- `io_contract_ref` 指向 `content://sha256/<digest>` 的规范化 IoContract 正文；schema 引用的 media type 为 `application/schema+json`，IoContract 引用的 media type 为 `application/vnd.loom.io-contract+json`。
-- **身份不变量**：`input_schema_ref=null` 表示没有 JSON 输入，非空则节点必须绑定输入；`output_schema_ref=null` 表示没有 JSON 输出。所有引用必须是 `content://sha256/<digest>`，引用中的 digest 必须与 ContentStore 正文重算结果一致；不一致返回结构化 conflict。
+- `io_contract_ref` 指向 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` 的规范化 IoContract 正文；schema 引用的 media type 为 `application/schema+json`，IoContract 引用的 media type 为 `application/vnd.loom.io-contract+json`。
+- **身份不变量**：`input_schema_ref=null` 表示没有 JSON 输入，非空则节点必须绑定输入；`output_schema_ref=null` 表示没有 JSON 输出。所有引用必须是 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>`，引用中的 digest 必须与 ContentStore 正文重算结果一致；不一致返回结构化 conflict。
 - **写入规则**：schema 和 IoContract 必须先通过 ContentStore 写入接口取得引用，再在 patch 中引用；Observer 校验引用与正文 digest 一致，持久化模型中不存在 inline schema。
 - **契约字段**：可执行 Node 必须声明 `io_contract_ref`。v2 中 `ProgramApplication.input_schema` / `output_schema` / `success_semantics` 保留为应用视图，由 `io_contract_ref` 解析得到，不再在 `ProgramApplication` 中重复持久化。无输入/无 JSON 输出统一用对应 schema ref 为 `null` 表示。
 

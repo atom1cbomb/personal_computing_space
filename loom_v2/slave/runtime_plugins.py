@@ -23,7 +23,7 @@ import httpx
 
 from loom_v2.contracts.package_contracts import package_contract_registry
 from loom_v2.contracts.types import (
-    CapabilityExport,
+    ActionExport,
     CapabilityDeprovisionCommand,
     CapabilityPackageVersion,
     CapabilityProvisionCommand,
@@ -123,6 +123,12 @@ class RuntimePluginDescriptor:
             raise RuntimePluginError("runtime_plugin_descriptor_invalid")
         if len(set(descriptor.supports)) != len(descriptor.supports):
             raise RuntimePluginError("runtime_plugin_descriptor_invalid")
+        if descriptor.runtime_descriptor_ref:
+            from loom_orchestration.grip import uri
+            try:
+                uri(descriptor.runtime_descriptor_ref)
+            except ValueError as exc:
+                raise RuntimePluginError("runtime_plugin_descriptor_invalid") from exc
         if descriptor.runtime_descriptor_digest and not re.fullmatch(r"[0-9a-f]{64}", descriptor.runtime_descriptor_digest):
             raise RuntimePluginError("runtime_plugin_descriptor_invalid")
         return descriptor
@@ -136,7 +142,7 @@ class RuntimePlugin(Protocol):
     async def invoke(
         self,
         package: CapabilityPackageVersion,
-        capability_export: CapabilityExport,
+        action_export: ActionExport,
         payload: dict[str, Any],
         *,
         activation: dict[str, Any],
@@ -459,7 +465,7 @@ class ProcessRuntimePlugin:
     async def invoke(
         self,
         package: CapabilityPackageVersion,
-        capability_export: CapabilityExport,
+        action_export: ActionExport,
         payload: dict[str, Any],
         *,
         activation: dict[str, Any],
@@ -471,7 +477,7 @@ class ProcessRuntimePlugin:
             "/v1/invoke",
             {
                 "package": package.model_dump(mode="json"),
-                "capability_export": capability_export.model_dump(mode="json"),
+                "action_export": action_export.model_dump(mode="json"),
                 "payload": payload,
                 "activation": activation,
                 "workspace_id": activation.get("workspace_id"),
@@ -697,14 +703,14 @@ class RuntimePluginHost:
     async def invoke(
         self,
         package: CapabilityPackageVersion,
-        capability_export: CapabilityExport,
+        action_export: ActionExport,
         payload: dict[str, Any],
         *,
         activation: dict[str, Any],
         attempt_id: str,
         deadline_seconds: float | None = None,
     ) -> dict[str, Any]:
-        return await self.get(package).invoke(package, capability_export, payload, activation=activation, attempt_id=attempt_id, deadline_seconds=deadline_seconds)
+        return await self.get(package).invoke(package, action_export, payload, activation=activation, attempt_id=attempt_id, deadline_seconds=deadline_seconds)
 
     async def inspect(self, package: CapabilityPackageVersion, activation: dict[str, Any]) -> dict[str, Any]:
         payload = dict(activation)

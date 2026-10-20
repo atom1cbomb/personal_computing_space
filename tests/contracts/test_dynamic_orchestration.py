@@ -5,8 +5,8 @@ from loom_v2.contracts.types import CapabilityPackageVersion, DynamicNode, NodeI
 
 
 def _ref(resource_id: str, digest: str | None = None) -> ResourceRef:
-    criterion = "content_digest" if resource_id.startswith("content://sha256/") else None
-    return ResourceRef(resource_id=resource_id, version_or_digest=None if resource_id.startswith("content://sha256/") else digest, identity_criterion=criterion)
+    criterion = "content_digest" if resource_id.startswith("grip://loom.local/workspaces/workspace-default/content/document/sha256/") else None
+    return ResourceRef(resource_id=resource_id, version_or_digest=None if resource_id.startswith("grip://loom.local/workspaces/workspace-default/content/document/sha256/") else digest, identity_criterion=criterion)
 
 
 def _orchestration_package(**overrides):
@@ -18,15 +18,15 @@ def _orchestration_package(**overrides):
         "source_closure_version_ref": "draft-1",
         "package_type": "function",
         "execution": {"kind": "container:python_orchestrator", "version": "1"},
-        "capability_exports": [{
-            "capability_descriptor_ref": ResourceRef(resource_id="loom://orchestrate", version_or_digest="d" * 64, identity_criterion="descriptor_digest"),
-            "io_contract_ref": _ref("content://sha256/" + "b" * 64, "b" * 64),
+        "action_exports": [{
+            "action_descriptor_ref": ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/actions/orchestrate", version_or_digest="d" * 64, identity_criterion="descriptor_digest"),
+            "io_contract_ref": _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "b" * 64, "b" * 64),
             "effect_class": "Sandboxed",
             "permissions": [],
             "replay_safety": "DeterministicByEventLog",
             "runtime_binding": {},
         }],
-        "body": {"program_content_ref": _ref("content://sha256/" + "a" * 64, "a" * 64).model_dump(mode="json"), "allowed_node_package_refs": [_ref("capability-package://summarize/v1", "c" * 64).model_dump(mode="json")], "max_nodes": 10, "max_live_nodes": 2},
+        "body": {"program_content_ref": _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "a" * 64).model_dump(mode="json"), "allowed_node_package_refs": [_ref("grip://loom.local/workspaces/workspace-default/packages/summarize/v1", "c" * 64).model_dump(mode="json")], "max_nodes": 10, "max_live_nodes": 2},
     }
     body = dict(fields["body"])
     for key, val in overrides.items():
@@ -40,7 +40,7 @@ def _orchestration_package(**overrides):
 def test_orchestration_package_carries_allowlist_and_limits():
     package = _orchestration_package()
 
-    assert package.body["allowed_node_package_refs"][0]["resource_id"] == "capability-package://summarize/v1"
+    assert package.body["allowed_node_package_refs"][0]["resource_id"] == "grip://loom.local/workspaces/workspace-default/packages/summarize/v1"
     assert package.body["max_nodes"] == 10
     assert package.body["max_live_nodes"] == 2
     assert package.package_digest
@@ -72,13 +72,13 @@ def test_orchestration_fields_are_rejected_for_other_executors():
 
 
 def test_node_intent_and_dynamic_node_round_trip():
-    package_ref = _ref("capability-package://summarize/v1", "c" * 64)
-    input_ref = _ref("content://sha256/" + "d" * 64, "d" * 64)
+    package_ref = _ref("grip://loom.local/workspaces/workspace-default/packages/summarize/v1", "c" * 64)
+    input_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "d" * 64, "d" * 64)
     intent = NodeIntent(
         intent_id="intent-1",
         execution_id="execution-1",
         package_ref=package_ref,
-        capability_descriptor_ref=ResourceRef(resource_id="loom://summarize", version_or_digest="e" * 64, identity_criterion="descriptor_digest"),
+        action_descriptor_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/actions/summarize", version_or_digest="e" * 64, identity_criterion="descriptor_digest"),
         input_refs=[input_ref],
     )
     node = DynamicNode(
@@ -86,10 +86,10 @@ def test_node_intent_and_dynamic_node_round_trip():
         parent_execution_ref="execution-1",
         intent_id="intent-1",
         package_ref=package_ref,
-        capability_descriptor_ref=intent.capability_descriptor_ref,
+        action_descriptor_ref=intent.action_descriptor_ref,
         input_refs=[input_ref],
     )
 
     assert intent.model_dump(mode="json")["package_ref"]["version_or_digest"] == "c" * 64
     assert node.state == "accepted"
-    assert node.model_dump(mode="json")["input_refs"][0]["resource_id"].startswith("content://sha256/")
+    assert node.model_dump(mode="json")["input_refs"][0]["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/document/sha256/")

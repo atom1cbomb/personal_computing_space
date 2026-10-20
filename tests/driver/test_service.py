@@ -59,10 +59,10 @@ async def test_driver_applies_fake_patches_continuously_and_starts_execution():
     assert result["state"] == "completed"
     assert result["patches"] >= 3
     assert result["closure_version"].startswith("committed-")
-    assert result["resource_ref"].startswith("content://sha256/")
+    assert result["resource_ref"].startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")
     assert result["outcome"]["value"] == {"value": 6}
     assert result["outcome"]["provenance"]["execution"] == {"kind": "process:json_stdio", "version": "1"}
-    assert result["outcome"]["provenance"]["package_version_ref"].startswith("capability-package://fake-run-code/")
+    assert result["outcome"]["provenance"]["package_version_ref"].startswith("grip://loom.local/workspaces/workspace-default/packages/fake-run-code/")
     assert result["conversation_ref"] == "conversation-1"
     assert result["assistant_text"] == "I will refine the closure in multiple patches."
     conversation = await repo.get_conversation("conversation-1")
@@ -82,12 +82,12 @@ class RunCodeClosureProvider:
 
     async def send_turn(self, user_message: str):
         assert "loom_open_run" in self.tool_names
-        operation_ref = "loom://test_double"
+        action_ref = "grip://loom.local/workspaces/workspace-default/actions/test_double"
         descriptor = await self.tool_handler(
             "loom_put_content",
             {
-                "media_type": "application/vnd.loom.operation-descriptor+json",
-                "content": {"schema_version": "operation.v1", "resource_id": operation_ref, "name": "test_double"},
+                "media_type": "application/vnd.loom.action-descriptor+json",
+                "content": {"schema_version": "action.v1", "resource_id": action_ref, "name": "test_double"},
             },
         )
         program = await self.tool_handler(
@@ -144,9 +144,9 @@ class RunCodeClosureProvider:
         await apply_patch(
             "run-code-program",
             [
-                {"kind": "set_program_ref", "value": operation_ref},
+                {"kind": "set_program_ref", "value": action_ref},
                 {"kind": "set_io_contract_ref", "value": contract_ref},
-                {"kind": "set_compute_spec", "value": {"operation_ref": operation_ref}},
+                {"kind": "set_compute_spec", "value": {"action_ref": action_ref}},
                 {"kind": "add_typed_hole", "value": {"hole_id": "h_run_code"}},
             ],
         )
@@ -161,8 +161,8 @@ class RunCodeClosureProvider:
                                  "package_version": "v1",
                                  "package_type": "function",
                                  "execution": {"kind": "process:json_stdio", "version": "1"},
-                                 "capability_exports": [{
-                                     "capability_descriptor_ref": descriptor["resource_ref"],
+                                 "action_exports": [{
+                                     "action_descriptor_ref": descriptor["resource_ref"],
                                      "io_contract_ref": contract_ref,
                                      "effect_class": "Sandboxed",
                                      "permissions": [],
@@ -185,12 +185,12 @@ class RunCodeClosureProvider:
                     "value": {
                         "binding_id": "binding-run-code",
                         "hole_id": "h_run_code",
-                        "capability_descriptor_ref": descriptor["resource_ref"],
-                        "capability_package_ref": {"resource_id": "capability-package://run-code-package/v1"},
-                        "target_resource_ref": {"resource_id": "slave-a"},
+                        "action_descriptor_ref": descriptor["resource_ref"],
+                        "capability_package_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/packages/run-code-package/v1"},
+                        "target_resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/slaves/slave-a"},
                     },
                 },
-                {"kind": "set_execution_payload", "value": {"node_id": operation_ref, "input_ref": input_ref}},
+                {"kind": "set_execution_payload", "value": {"node_id": action_ref, "input_ref": input_ref}},
             ],
         )
         yield AgentEvent("tool_call", {"tool": "loom_apply_plan_patch"})
@@ -344,7 +344,7 @@ async def test_driver_enforces_absolute_conversation_deadline():
 
 
 @pytest.mark.asyncio
-async def test_driver_dispatches_committed_operation_to_bound_slave():
+async def test_driver_dispatches_committed_action_to_bound_slave():
     repo = _seeded_repository()
     driver = DriverService(repo, RunCodeClosureProvider(), slaves={"slave-a": SlaveService("slave-a", content_store=repo.content_store)})
 

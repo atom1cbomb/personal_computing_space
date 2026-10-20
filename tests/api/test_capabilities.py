@@ -3,13 +3,12 @@ from datetime import datetime, timedelta, timezone
 
 from loom_v2.testing.observer import create_embedded_app as create_app, seed_embedded_slaves
 from loom_v2.observer.repository import ObserverRepository
+from tests.support.grip_client import resources
 
 
 def test_capabilities_expose_term_support_without_granting_access():
     client = TestClient(create_app())
-    response = client.get("/api/v1/capabilities")
-    assert response.status_code == 200
-    payload = response.json()
+    payload = [r["metadata"] for r in resources(client, "slave")]
     assert {item["slave_id"] for item in payload} == {"slave-a", "slave-b"}
     assert any(term["kind"] == "loom.compute.precision.v1" for item in payload for term in item["term_support"])
 
@@ -25,7 +24,7 @@ def test_capability_availability_is_derived_from_slave_lease():
     slave_a["last_seen_at"] = datetime.now(timezone.utc) - timedelta(seconds=60)
 
     with TestClient(create_app(repository)) as client:
-        payload = client.get("/api/v1/capabilities").json()
+        payload = [r["metadata"] for r in resources(client, "slave")]
 
     availability = {item["slave_id"]: item["available"] for item in payload}
     assert availability == {"slave-a": False, "slave-b": True}

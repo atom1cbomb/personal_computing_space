@@ -17,15 +17,15 @@
       "status_path": "/v1/auth/status"
     }
   },
-  "capability_exports": [
+  "action_exports": [
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/collections-list",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/collections-list",
+        "version_or_digest": "c463200ea480558840ebc2ac56e1790f70af0a30f4f35f9ca40c5e4a32d6685e",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/4e453554c914e2d93ee60cdd33c17a08cc513a980ddf43e6d9a6d554faea7b28",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/collections-list/sha256/fca08256bd68d0ce6d762991ee8979ad6fa4d2e984abe5e0991b77b4ae786b13",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -38,13 +38,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/collections-info",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/collections-info",
+        "version_or_digest": "27272e25e88d016d3362420c33753f201ad98cfc8039590141805b27f352a143",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/d24d000337ca035a7c3195090e7ea1e2e0360da6618ede708b4d07fa579c8624",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/collections-info/sha256/939569f5a78d60c94fe8bc9361eadb8188be78d7310497a3b576be2e0aedb4ca",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -57,13 +57,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/collections-documents",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/collections-documents",
+        "version_or_digest": "f48bd8fc895cf2a83f1abaac0cf9ed5dd1951970c9324f46244307b6c22830aa",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/f45163243ea106107872ef1bc35c76d90917a59e49777a2752003b607abc51a2",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/collections-documents/sha256/f2d005ccf2fa6ddff9de5d6ea975986071bb1862ebd336dd010dd2e60a63d7ca",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -76,13 +76,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-list",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-list",
+        "version_or_digest": "7ca32e72bdd5727a611191cf582fbf6d643210b481506fc723d2a07997a873ec",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/c3235b4b9c58b3771961e88fc3d6bd8ae90dc278c20f4d93ddc928ae162cf60f",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-list/sha256/e6b25b96f077e7766b29f98f036e14de01bf5dffb18692883c33fb64c75d44f2",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -95,13 +95,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-info",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-info",
+        "version_or_digest": "4914dad18d0d7e7e0317660705fd483dbbb2a0f3bff69b2799b40f3f024d1ea4",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/5a1c816144d759726aabc24abe28e77f63021465dc1edcf4476ca40074d41d21",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-info/sha256/4d6861b23f73921f5c556c26e78ed2f6419315719e189535ef31c4288018e579",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -114,13 +114,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-documents",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000006",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-documents",
+        "version_or_digest": "84e9237c46e460b4c9b97842b94c0b70d8b6340e35738e937dc8296f51945a66",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/686beee0b70296ceeee6810af1c3c2f194e95d6c032c061e90aa0b6f77ce2fb8",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-documents/sha256/bec52aa7ebc21d544727835a7ec25c0fdaa5ecfd6745a7f7c91c3ead8ac5db51",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -133,13 +133,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-search-titles",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000007",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-search-titles",
+        "version_or_digest": "25c6a55b69b1c00e99155c0d888f209525ccfb49e008671026a2efb387e9c927",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/875103393e0cd54463218590321886bce1e598f53fcfac24d6a332a98e2ff37b",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-search-titles/sha256/437eb77ffe76f54a36a388f77e2d4fed39a6532792ff96cb3ff15b185a5915b3",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -152,13 +152,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-search",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000008",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-search",
+        "version_or_digest": "4e18053d11b8db638748d4e4e89d78b78ec729ff36f00a21f88d8ab3683e1707",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/2d78d2286cfb87af104c18437d13ca3947077d2aed635c1c0877906f75407d64",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-search/sha256/60e542aca0de6e937c3683da7e20567a0b50a57a391c175bdb40256417e269ab",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -171,13 +171,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-create",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000009",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-create",
+        "version_or_digest": "8921cb2bea6df2db35082ef9b4643fcb6f82c106f72f5ff9966562d06720fd90",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/c990c7927fd678e3af949ddd9574cf03304032b5918a467a2b9f34da1f27b1b4",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-create/sha256/502672d36685da94e84263def8c16a969a7305d1750cff284448b46738af5791",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -190,13 +190,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-update",
-        "version_or_digest": "000000000000000000000000000000000000000000000000000000000000000a",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-update",
+        "version_or_digest": "04ef8a88bb988a5626004aebe1a5ea0f39631bde606d13143f8abefb406dcb34",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/adb817156bb69eb0921bca10958bf4278737eced81ead755e899f06a1afaa276",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-update/sha256/fa486def24c9471d8fb0bd4523f0de1f7cf8ac0334669e35c39c4fd97a26e964",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -209,13 +209,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-archive",
-        "version_or_digest": "000000000000000000000000000000000000000000000000000000000000000b",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-archive",
+        "version_or_digest": "f5d82d5812a528e31e03261835aa0f1e70ff8b03a374f1fd61409ed4d3822abd",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/88bab416cc94ed318eb11af7b0eb49800c5e1e77a215c1afabf7d5efd28864a1",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-archive/sha256/9e1a9257a156825a4f85f5d29beb7c48d5321f98d020e442717af6af9368e9e9",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -228,13 +228,13 @@
       }
     },
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://outline/documents-restore",
-        "version_or_digest": "000000000000000000000000000000000000000000000000000000000000000c",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-restore",
+        "version_or_digest": "7050b2ece8abde3358730b079237981d73a7a72f7fbe79dc2392dca3179d8cb8",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/dd5d829400ab68989e4231334c2e96d610655c7f2cacd5e4e4021cac378500cf",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-restore/sha256/79a639ffd78b22f839a6696e6bc3dd820358244377a3bb66aed1c1d9da4787ca",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",

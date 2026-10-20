@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "operation": {
+    "action": {
       "type": "string",
       "const": "documents_list"
     },
@@ -11,7 +11,7 @@
     }
   },
   "required": [
-    "operation",
+    "action",
     "result"
   ]
 }

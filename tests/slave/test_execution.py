@@ -44,19 +44,19 @@ def test_default_registry_rejects_removed_builtin_executor():
 
 @pytest.mark.asyncio
 async def test_slave_rejects_unbound_typed_hole_before_execution():
-    service = SlaveService("slave-a", supported_operations={"test_double"})
-    closure = TaskClosure(program={"operation_ref": "loom://test_double"}, compute=ComputeSpec(operation_ref="loom://test_double", typed_holes=[TypedHole(hole_id="h_test_double")]))
+    service = SlaveService("slave-a", supported_actions={"test_double"})
+    closure = TaskClosure(program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_double"}, compute=ComputeSpec(action_ref="grip://loom.local/workspaces/workspace-default/actions/test_double", typed_holes=[TypedHole(hole_id="h_test_double")]))
 
     with pytest.raises(RuntimeError, match="typed_hole_unbound:h_test_double"):
         await service.run("attempt-unbound", "test_double", {"value": 2}, closure=closure)
 
 
 @pytest.mark.asyncio
-async def test_slave_rejects_unsupported_operation():
+async def test_slave_rejects_unsupported_action():
     service = SlaveService("slave-a")
 
-    with pytest.raises(RuntimeError, match="capability_unavailable:unknown_operation"):
-        await service.run("attempt-unsupported", "unknown_operation", {"value": 2})
+    with pytest.raises(RuntimeError, match="capability_unavailable:unknown_action"):
+        await service.run("attempt-unsupported", "unknown_action", {"value": 2})
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ async def test_slave_rejects_unbound_run_code_without_package():
 
 @pytest.mark.asyncio
 async def test_subprocess_capability_timeout_is_independently_configurable(monkeypatch):
-    monkeypatch.setenv("LOOM_CAPABILITY_OPERATION_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("LOOM_CAPABILITY_ACTION_TIMEOUT_SECONDS", "0.01")
     adapter = ProcessJSONStdioV1Adapter()
     program = b"import time; time.sleep(0.10); print('{}')"
 
@@ -87,7 +87,7 @@ async def test_slave_provision_rejects_package_without_io_contract():
         package_closure_version_ref="closure",
         source_run_ref="run",
         source_closure_version_ref="version",
-        capability_exports=[],
+        action_exports=[],
         body={"program_content_ref": program_ref.model_dump(mode="json")},
         package_digest="",
     )
@@ -144,14 +144,14 @@ async def test_slave_admission_reads_bound_input_from_content_store_not_driver_p
     input_ref = await service.content_store.put(canonical_json_bytes({"text": "from-store"}), media_type="application/json")
     fixture = await make_run_code_fixture(
         service,
-        operation="test_store_input",
+        action="test_store_input",
         io_contract_ref=contract_ref,
         program=b'import json,sys; d=json.load(sys.stdin); print(json.dumps({"text": d["text"]}))',
     )
     await provision_run_code_fixture(service, fixture)
     closure = fixture.closure(io_contract_ref=contract_ref, input_refs=[input_ref])
 
-    result = await service.run("attempt-admission-ref", fixture.operation, {"text": "tampered-driver-payload"}, closure=closure, binding=fixture.binding)
+    result = await service.run("attempt-admission-ref", fixture.action, {"text": "tampered-driver-payload"}, closure=closure, binding=fixture.binding)
 
     assert result.value == {"text": "from-store"}
 
@@ -166,7 +166,7 @@ async def test_slave_admission_rejects_bound_input_that_fails_input_schema():
     input_ref = await service.content_store.put(canonical_json_bytes({"payload": {"scores": [1, 2]}}), media_type="application/json")
     fixture = await make_run_code_fixture(
         service,
-        operation="test_invalid_input",
+        action="test_invalid_input",
         io_contract_ref=contract_ref,
         program=b'import json,sys; print(json.dumps({"ok": True}))',
     )
@@ -174,7 +174,7 @@ async def test_slave_admission_rejects_bound_input_that_fails_input_schema():
     closure = fixture.closure(io_contract_ref=contract_ref, input_refs=[input_ref])
 
     with pytest.raises(RuntimeError, match="payload_schema_mismatch"):
-        await service.run("attempt-admission-invalid", fixture.operation, {"scores": [1, 2]}, closure=closure, binding=fixture.binding)
+        await service.run("attempt-admission-invalid", fixture.action, {"scores": [1, 2]}, closure=closure, binding=fixture.binding)
 
 
 @pytest.mark.asyncio
@@ -183,14 +183,14 @@ async def test_slave_terminal_output_schema_pass_emits_validation_evidence():
     contract_ref = await _contract_ref(service, output_schema={"type": "object", "required": ["text"]})
     fixture = await make_run_code_fixture(
         service,
-        operation="test_output_pass",
+        action="test_output_pass",
         io_contract_ref=contract_ref,
         program=b'import json,sys; d=json.load(sys.stdin); print(json.dumps({"text": d["text"]}))',
     )
     await provision_run_code_fixture(service, fixture)
     closure = fixture.closure(io_contract_ref=contract_ref)
 
-    result = await service.run("attempt-output-pass", fixture.operation, {"text": "hello"}, closure=closure, binding=fixture.binding)
+    result = await service.run("attempt-output-pass", fixture.action, {"text": "hello"}, closure=closure, binding=fixture.binding)
 
     assert result.terminal_state == "completed"
     assert result.validation_evidence
@@ -204,14 +204,14 @@ async def test_slave_terminal_evidence_uses_dispatch_execution_epoch():
     contract_ref = await _contract_ref(service, output_schema={"type": "object", "required": ["text"]})
     fixture = await make_run_code_fixture(
         service,
-        operation="test_output_epoch",
+        action="test_output_epoch",
         io_contract_ref=contract_ref,
         program=b'import json,sys; d=json.load(sys.stdin); print(json.dumps({"text": d["text"]}))',
     )
     await provision_run_code_fixture(service, fixture)
     closure = fixture.closure(io_contract_ref=contract_ref)
 
-    result = await service.run("attempt-output-epoch", fixture.operation, {"text": "hello"}, closure=closure, binding=fixture.binding, execution_epoch=7)
+    result = await service.run("attempt-output-epoch", fixture.action, {"text": "hello"}, closure=closure, binding=fixture.binding, execution_epoch=7)
 
     assert result.validation_evidence[0]["execution_epoch"] == 7
 
@@ -222,14 +222,14 @@ async def test_slave_terminal_output_schema_failure_is_not_completed():
     contract_ref = await _contract_ref(service, output_schema={"type": "object", "required": ["missing"]})
     fixture = await make_run_code_fixture(
         service,
-        operation="test_output_failure",
+        action="test_output_failure",
         io_contract_ref=contract_ref,
         program=b'import json,sys; print(json.dumps({"text": "hello"}))',
     )
     await provision_run_code_fixture(service, fixture)
     closure = fixture.closure(io_contract_ref=contract_ref)
 
-    result = await service.run("attempt-output-fail", fixture.operation, {"text": "hello"}, closure=closure, binding=fixture.binding)
+    result = await service.run("attempt-output-fail", fixture.action, {"text": "hello"}, closure=closure, binding=fixture.binding)
 
     assert result.terminal_state == "failed"
     assert result.terminal_error["code"] == "output_schema_mismatch"
@@ -246,14 +246,14 @@ async def test_slave_without_validator_requires_attestation_for_semantic_success
     )
     fixture = await make_run_code_fixture(
         service,
-        operation="test_attestation",
+        action="test_attestation",
         io_contract_ref=contract_ref,
         program=b'import json,sys; d=json.load(sys.stdin); print(json.dumps({"text": d["text"]}))',
     )
     await provision_run_code_fixture(service, fixture)
     closure = fixture.closure(io_contract_ref=contract_ref)
 
-    result = await service.run("attempt-attestation", fixture.operation, {"text": "hello"}, closure=closure, binding=fixture.binding)
+    result = await service.run("attempt-attestation", fixture.action, {"text": "hello"}, closure=closure, binding=fixture.binding)
 
     assert result.terminal_state == "decision_required"
     assert result.terminal_error["code"] == "attestation_required"
@@ -274,14 +274,14 @@ async def test_slave_validator_plugin_failure_is_structured():
     )
     fixture = await make_run_code_fixture(
         service,
-        operation="test_validator_failure",
+        action="test_validator_failure",
         io_contract_ref=contract_ref,
         program=b'import json,sys; d=json.load(sys.stdin); print(json.dumps({"text": d["text"]}))',
     )
     await provision_run_code_fixture(service, fixture)
 
     closure = fixture.closure(io_contract_ref=contract_ref)
-    result = await service.run("attempt-validator-fail", fixture.operation, {"text": "hello"}, closure=closure, binding=fixture.binding)
+    result = await service.run("attempt-validator-fail", fixture.action, {"text": "hello"}, closure=closure, binding=fixture.binding)
 
     assert result.terminal_state == "failed"
     assert result.terminal_error["code"] == "success_validation_failed"

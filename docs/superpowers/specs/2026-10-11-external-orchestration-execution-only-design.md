@@ -1,5 +1,9 @@
 # 外部 Agent 编排与 Driver 执行专用化
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 **日期：** 2026-10-11
 
 **状态：** 实现中（公共提交库、资源 activation 反查和执行协议已落地）
@@ -113,6 +117,8 @@ loom_orchestration/
 
 ```python
 class OrchestrationContext(Protocol):
+    async def sleep(self, seconds: float) -> None: ...
+
     async def read_json(self, ref: ResourceRef) -> Any: ...
 
     async def materialize_json(self, *, step_id: str, value: Any) -> ResourceRef: ...
@@ -339,7 +345,7 @@ Driver 从同一源码重放，通过 `(execution_id, step_id)` 复用已完成�
 
 `awaiting_auth` 是执行中的可恢复暂停，不是 repair，也不是新 Run。登录会话过期时，外部 agent 可在同一 activation 上重新发起认证，Run 继续等待。认证等待计入既有绝对 execution deadline，重新登录或重启不延长预算。取消、超时、activation 被替换或不可恢复失败时，Observer 将已登记的 cleanup ledger 作为受限 cleanup continuation 放回执行队列；Driver 在沙箱已释放后继续处理清理，记录失败及仍存活的资源。等待本身不触发 cleanup，不能在用户登录时销毁 VM。无法证明有副作用步骤的结果时进入 `execution_recovery_required`，交由外部 agent 处理。
 
-这要求同步扩展 sandbox 协议、公共编排库类型、preflight stub/allowlist、内部宿主命令、Run/execution request 状态机和投影，而不只是添加 Python Protocol。sandbox 至少增加 `materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、带 resource/activation binding 的 `emit_node`，以及 `activation_wait` 的暂停帧。`defer_cleanup` 登记的精确 operation、输入映射、访问实例及预算必须由 Observer 校验并持久化；终态清理使用预留预算，不能绕过 Run 的效果授权。新增原语和认证等待属于待实现能力，当前仅有 `read_json`、`emit_node`、`result` 无法完成这一闭环。
+这要求同步扩展 sandbox 协议、公共编排库类型、preflight stub/allowlist、内部宿主命令、Run/execution request 状态机和投影，而不只是添加 Python Protocol。sandbox 包括 `materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、带 resource/activation binding 的 `emit_node`，以及 `activation_wait` 的暂停帧。`defer_cleanup` 登记的精确 operation、输入映射及预算由 Observer 校验并持久化；终态清理使用预留预算，不能绕过 Run 的效果授权。具体执行顺序、映射子集、`cleaning_up` 投影与清理 deadline 见 metadata 补充设计第 4.2 节。访问实例停用仍须程序明确表达，不由 Driver 自动推导。
 
 状态机固定为：
 

@@ -20,13 +20,13 @@ def _ref(resource_id: str, digest: str, criterion: str) -> dict[str, object]:
     ).model_dump(mode="json")
 
 
-def _export(*, descriptor_id: str = "loom://test/echo", digest: str = "a" * 64) -> dict[str, object]:
+def _export(*, descriptor_id: str = "grip://loom.local/workspaces/workspace-default/actions/test/echo", digest: str = "a" * 64) -> dict[str, object]:
     return {
-        "capability_descriptor_ref": _ref(
+        "action_descriptor_ref": _ref(
             descriptor_id, digest, "descriptor_digest"
         ),
         "io_contract_ref": _ref(
-            "content://sha256/" + "b" * 64, "b" * 64, "content_digest"
+            "grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "b" * 64, "b" * 64, "content_digest"
         ),
         "effect_class": "Pure",
         "permissions": [],
@@ -61,7 +61,7 @@ def _package_payload(
         "source_run_ref": "run-1",
         "source_closure_version_ref": "version-1",
         "execution": {"kind": execution_kind, "version": "1"},
-        "capability_exports": [_export()],
+        "action_exports": [_export()],
         "body": body,
     }
 
@@ -152,14 +152,14 @@ def test_custom_body_resource_id_property_is_not_mistaken_for_resource_ref() -> 
         _package_payload(
             package_type=key[0],
             execution_kind=key[1],
-            body={"record": {"resource_id": "resource-1", "policy": "left"}},
+            body={"record": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/resource-1", "policy": "left"}},
         )
     )
     right = CapabilityPackageVersion.model_validate(
         _package_payload(
             package_type=key[0],
             execution_kind=key[1],
-            body={"record": {"resource_id": "resource-1", "policy": "right"}},
+            body={"record": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/resource-1", "policy": "right"}},
         )
     )
 
@@ -187,7 +187,7 @@ def test_operator_contract_directory_loads_declarative_schema(tmp_path: Path) ->
         {
             "package_type": key[0],
             "execution": {"kind": key[1], "version": key[2]},
-            "capability_exports": [_export()],
+            "action_exports": [_export()],
             "body": {"message": "loaded"},
         },
     )

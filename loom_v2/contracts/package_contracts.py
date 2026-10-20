@@ -4,6 +4,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+from loom_orchestration.naming import CONTENT_PATTERN
+
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -20,7 +22,7 @@ DRIVER_ORCHESTRATOR_KEY: PackageContractKey = (
 
 
 _LOWER_SHA256 = r"[0-9a-f]{64}"
-_CONTENT_RESOURCE_ID_PATTERN = rf"^content://sha256/{_LOWER_SHA256}$"
+_CONTENT_RESOURCE_ID_PATTERN = CONTENT_PATTERN
 _ORIGIN_PATH_PATTERN = r"^/(?!/)[^?#\\\u0000-\u0020\u007f]*$"
 _OCI_DIGEST_REF_PATTERN = (
     rf"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/"
@@ -33,7 +35,7 @@ _RESOURCE_REF_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["resource_id"],
     "properties": {
-        "resource_id": {"type": "string", "minLength": 1},
+        "resource_id": {"type": "string", "pattern": "^grip://[a-z0-9.-]+/"},
         "version_or_digest": {"type": ["string", "null"]},
         "access_binding": {"type": "object"},
         "identity_criterion": {"type": ["string", "null"]},
@@ -75,13 +77,13 @@ def _contract_schema(
     *,
     max_exports: int | None = None,
 ) -> dict[str, Any]:
-    capability_exports: dict[str, Any] = {
+    action_exports: dict[str, Any] = {
         "type": "array",
         "minItems": 1,
         "items": {
             "type": "object",
             "required": [
-                "capability_descriptor_ref",
+                "action_descriptor_ref",
                 "io_contract_ref",
                 "effect_class",
                 "permissions",
@@ -89,7 +91,7 @@ def _contract_schema(
                 "runtime_binding",
             ],
             "properties": {
-                "capability_descriptor_ref": {"$ref": "#/$defs/descriptor_ref"},
+                "action_descriptor_ref": {"$ref": "#/$defs/descriptor_ref"},
                 "io_contract_ref": {"$ref": "#/$defs/content_ref"},
                 "effect_class": {"type": "string"},
                 "permissions": {"type": "array", "items": {"type": "string"}},
@@ -100,11 +102,11 @@ def _contract_schema(
         },
     }
     if max_exports is not None:
-        capability_exports["maxItems"] = max_exports
+        action_exports["maxItems"] = max_exports
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
-        "required": ["package_type", "execution", "capability_exports", "body"],
+        "required": ["package_type", "execution", "action_exports", "body"],
         "properties": {
             "package_type": {"const": package_type},
             "execution": {
@@ -116,7 +118,7 @@ def _contract_schema(
                 },
                 "additionalProperties": False,
             },
-            "capability_exports": capability_exports,
+            "action_exports": action_exports,
             "body": body,
         },
         "additionalProperties": False,
@@ -297,7 +299,7 @@ class PackageContractRegistry:
             or not isinstance(execution_schema, dict)
             or not isinstance(execution_properties, dict)
             or not isinstance(required, list)
-            or not {"package_type", "execution", "capability_exports", "body"}
+            or not {"package_type", "execution", "action_exports", "body"}
             <= set(required)
             or schema.get("additionalProperties") is not False
             or not isinstance(package_type_schema, dict)
@@ -306,7 +308,7 @@ class PackageContractRegistry:
             or execution_kind_schema.get("const") != normalized_key[1]
             or not isinstance(execution_version_schema, dict)
             or execution_version_schema.get("const") != normalized_key[2]
-            or "capability_exports" not in properties
+            or "action_exports" not in properties
             or "body" not in properties
         ):
             raise ValueError("package_contract_schema_invalid")

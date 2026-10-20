@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from typing import Any
 from uuid import uuid4
@@ -13,10 +15,17 @@ from loom_v2.internal_http import InternalHttpClient
 from loom_v2.settings import Settings
 
 
+logger = logging.getLogger(__name__)
+
+
 class ObserverControlClient:
     """Small authenticated client for Observer's fixed Driver RPC surface."""
 
     ALLOWED_COMMANDS = DRIVER_COMMANDS
+    READ_ONLY_COMMANDS = frozenset({
+        "run.get", "run.recovery.list", "execution.get",
+        "capability.list", "capability.get", "capability.activations",
+    })
 
     def __init__(
         self,
@@ -55,17 +64,25 @@ class ObserverControlClient:
 
     async def _request(self, method: str, path: str, payload: dict[str, Any] | None = None, *, timeout: float | None = None) -> dict[str, Any]:
         request_timeout = timeout if timeout is not None else self.timeout
-        try:
-            self._http.transport = self.transport
-            response = await self._http.request(
-                method,
-                f"{self.observer_url}{path}",
-                json=payload,
-                headers=self._headers(),
-                timeout=request_timeout,
-            )
-        except (TimeoutError, httpx.TimeoutException, httpx.TransportError) as exc:
-            raise RuntimeError("observer_unavailable") from exc
+        command = (payload or {}).get("command") if path == "/internal/v1/driver/commands" else None
+        attempts = 3 if method == "GET" or command in self.READ_ONLY_COMMANDS else 1
+        for attempt in range(attempts):
+            try:
+                self._http.transport = self.transport
+                response = await self._http.request(
+                    method,
+                    f"{self.observer_url}{path}",
+                    json=payload,
+                    headers=self._headers(),
+                    timeout=request_timeout,
+                )
+                break
+            except (TimeoutError, httpx.TimeoutException, httpx.TransportError) as exc:
+                logger.warning("observer_transport_failure method=%s command=%s exception=%s attempt=%s",
+                               method, command, type(exc).__name__, attempt + 1)
+                if attempt + 1 == attempts:
+                    raise RuntimeError("observer_unavailable") from exc
+                await asyncio.sleep(0.1 * (attempt + 1))
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail", "observer_request_failed")

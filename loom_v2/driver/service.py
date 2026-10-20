@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from loom_orchestration.grip import Names
+
 import asyncio
 import shutil
 from datetime import datetime, timezone
@@ -12,7 +14,7 @@ from uuid import uuid4
 from loom_v2.coding_agents.base import CodingAgentError, CodingAgentProvider
 from loom_v2.contracts.types import CapabilityProvisionCommand, ComputeBinding, ResourceRef, TaskClosure
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
-from loom_v2.contracts.refs import input_binding_for, operation_name
+from loom_v2.contracts.refs import input_binding_for, action_name
 from loom_v2.observer.repository import ObserverRepository
 from loom_v2.driver.worker import WorkerSession
 from loom_v2.slave.service import SlaveService
@@ -123,8 +125,8 @@ class DriverService:
             return await self._run_prompt_remote(conversation_ref, prompt, request_id=request_id)
         # A live app-server conversation is allowed to stay quiet while the
         # coding agent thinks.  This wait is an absolute safety deadline, not
-        # an idle/progress timeout; child operations enforce their own
-        # operation-specific limits at the Worker/Slave boundary.
+        # an idle/progress timeout; child actions enforce their own
+        # action-specific limits at the Worker/Slave boundary.
         work = asyncio.create_task(self._run_prompt(conversation_ref, prompt, request_id=request_id))
         try:
             done, _pending = await asyncio.wait({work}, timeout=self.deadline_seconds)
@@ -778,10 +780,22 @@ class DriverService:
                         await asyncio.sleep(0.25)
                         continue
                     run = claim["run"]
-                    if str(run.get("state") or "") != "running":
+                    if str(run.get("state") or "") not in {"running", "cleaning_up"}:
                         continue
                     run_id = str(run["run_id"])
                     owner_epoch = (claim.get("request") or {}).get("driver_epoch")
+                    if run["state"] == "cleaning_up":
+                        if self.control_client is not None:
+                            await self._refresh_remote_workers()
+                        runtime = DynamicOrchestrationRuntime(
+                            repository=self.remote_repository if self.control_client is not None else self.repository,
+                            executor=self.orchestration_executor,
+                            slaves=self.slaves, workers=self.workers,
+                            driver_id=self.control_client.driver_id if self.control_client else None,
+                            driver_epoch=int(owner_epoch or 0),
+                        )
+                        await runtime.run_cleanup(run_id)
+                        continue
                     deadline = (claim.get("request") or {}).get("deadline_at")
                     remaining = self.settings.execution_timeout_seconds
                     if deadline:
@@ -794,6 +808,11 @@ class DriverService:
                             else:
                                 await self._execute_and_wait_local(run_id, "")
                     except TimeoutError:
+                        expired_keys = [key for key in self._execution_tasks if key.startswith((f"local:{run_id}:", f"remote:{run_id}:"))]
+                        expired_tasks = [self._execution_tasks.pop(key) for key in expired_keys]
+                        for task in expired_tasks:
+                            task.cancel()
+                        await asyncio.gather(*expired_tasks, return_exceptions=True)
                         if self.control_client is not None:
                             await self.control_client.command("run.fail", {"run_id": run_id, "reason": {"code": "execution_deadline_exceeded"}})
                         else:
@@ -862,10 +881,10 @@ class DriverService:
         worker = self.workers.get(target)
         if worker is None:
             raise RuntimeError(f"capability_unavailable:{target}")
-        operation = operation_name(snapshot.program.operation_ref or snapshot.compute.operation_ref) or "run_code"
-        payload = await self._execution_payload(snapshot, operation, prompt)
+        action = action_name(snapshot.program.action_ref or snapshot.compute.action_ref) or "run_code"
+        payload = await self._execution_payload(snapshot, action, prompt)
         binding = snapshot.compute_bindings[0] if snapshot.compute_bindings else None
-        if binding is not None and binding.capability_package_ref is not None and self.remote_repository is not None:
+        if binding is not None and binding.capability_package_ref is not None and binding.expected_activation_revision is None and self.remote_repository is not None:
             package = await self.remote_repository.get_capability_package(binding.capability_package_ref, run_id=run_id)
             idempotency_key = f"run-{execution_id}-{package.package_digest}-{target}"
             desired = await self.remote_repository.set_capability_desired(
@@ -876,7 +895,7 @@ class DriverService:
                 run_id=run_id,
                 activation_closure_version_ref=(current.get("committed") or {}).get("version_id") or package.package_closure_version_ref,
                 compute_binding_ref=binding.binding_id,
-                instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
+                instance_name=binding.instance_name,
             )
             provision_command = CapabilityProvisionCommand(
                 command_id=f"provision-{package.package_id}-{target}",
@@ -888,6 +907,7 @@ class DriverService:
                 compute_binding=binding,
                 idempotency_key=desired.last_idempotency_key,
                 activation_revision=desired.activation_revision,
+                instance_name=binding.instance_name,
             )
             report = await worker.provision(
                 command=provision_command,
@@ -900,7 +920,7 @@ class DriverService:
                 {"run_id": run_id, "report": report.model_dump(mode="json")},
                 request_id=f"health:{execution_id}:{target}:{package.package_digest}",
             )
-        result = await worker.dispatch(attempt_id=str(attempt["attempt_id"]), execution_id=str(execution_id), execution_epoch=execution_epoch, workspace_id=getattr(control, "workspace_id", "workspace-default"), operation=operation, payload=payload, closure=snapshot, binding=binding, driver_id=getattr(control, "driver_id", None), driver_epoch=getattr(control, "driver_epoch", None))
+        result = await worker.dispatch(attempt_id=str(attempt["attempt_id"]), execution_id=str(execution_id), execution_epoch=execution_epoch, workspace_id=getattr(control, "workspace_id", "workspace-default"), action=action, payload=payload, closure=snapshot, binding=binding, driver_id=getattr(control, "driver_id", None), driver_epoch=getattr(control, "driver_epoch", None))
         if expected_epoch is not None:
             self._assert_turn_epoch(None, control, expected_epoch=expected_epoch)
         await control.command("run.result", {"run_id": run_id, "result": {"attempt_id": attempt["attempt_id"], "execution_id": execution_id, "execution_epoch": execution_epoch, "resource_ref": result.resource_ref.model_dump(mode="json"), "value": result.value, "terminal_state": result.terminal_state, "terminal_error": result.terminal_error, "validation_evidence": result.validation_evidence, "provenance": result.provenance}}, request_id=f"execution:{execution_id}:{execution_epoch}")
@@ -917,7 +937,7 @@ class DriverService:
                 continue
             self.workers[slave_id] = WorkerSession(
                 slave_id,
-                operation_timeout=self.settings.worker_operation_timeout_seconds,
+                action_timeout=self.settings.worker_action_timeout_seconds,
                 internal_api_secret=getattr(self.control_client, "internal_api_secret", None),
                 settings=self.settings,
                 observer_url=self.settings.observer_url,
@@ -954,7 +974,7 @@ class DriverService:
         try:
             async def local_cancelled() -> bool:
                 current = await self.repository.get_run(run_id)
-                return current.state == "cancelled"
+                return current.state in {"cancelled", "cleaning_up"}
 
             if await _wait_for_execution_or_cancel(task, local_cancelled):
                 completed, _result = task.result()
@@ -995,7 +1015,7 @@ class DriverService:
         try:
             async def remote_cancelled() -> bool:
                 current = await control.command("run.get", {"run_id": run_id})
-                return current.get("state") == "cancelled"
+                return current.get("state") in {"cancelled", "cleaning_up"}
 
             if await _wait_for_execution_or_cancel(task, remote_cancelled):
                 task.result()
@@ -1040,9 +1060,9 @@ class DriverService:
                 driver_epoch=getattr(self.control_client, "driver_epoch", None),
             )
             return await runtime.run(run_id)
-        operation = operation_name(snapshot.program.operation_ref or snapshot.compute.operation_ref) or "run_code"
-        payload = await self._execution_payload(snapshot, operation, prompt)
-        binding = self._binding_for_operation(snapshot)
+        action = action_name(snapshot.program.action_ref or snapshot.compute.action_ref) or "run_code"
+        payload = await self._execution_payload(snapshot, action, prompt)
+        binding = self._binding_for_action(snapshot)
         current_attempt = next(
             (
                 item
@@ -1053,8 +1073,12 @@ class DriverService:
             None,
         )
         target = str(current_attempt.get("target")) if current_attempt is not None else binding.target_resource_ref.resource_id if binding is not None else "slave-a"
-        if binding is not None and binding.target_resource_ref.resource_id != target:
-            binding = binding.model_copy(update={"target_resource_ref": ResourceRef(resource_id=target)})
+        names = Names(self.settings.grip_authority, self.settings.workspace_id)
+        if target.startswith(names.root + "/slaves/"):
+            from urllib.parse import unquote
+            target = unquote(target.removeprefix(names.root + "/slaves/"))
+        if binding is not None and binding.target_resource_ref.resource_id != names.name("slaves", target):
+            binding = binding.model_copy(update={"target_resource_ref": ResourceRef(resource_id=names.name("slaves", target))})
         attempt_id = next(
             (
                 item["attempt_id"]
@@ -1070,7 +1094,7 @@ class DriverService:
         if self.workers or self.slaves:
             worker = self.workers.get(target)
             if worker is not None:
-                if binding is not None and binding.capability_package_ref is not None:
+                if binding is not None and binding.capability_package_ref is not None and binding.expected_activation_revision is None:
                     package = await self.repository.get_capability_package(binding.capability_package_ref, run_id=run_id)
                     idempotency_key = f"run-{execution_id}-{package.package_digest}-{target}"
                     desired = await self.repository.set_capability_desired(
@@ -1081,7 +1105,7 @@ class DriverService:
                         run_id=run_id,
                         activation_closure_version_ref=record.committed.version_id if record.committed else package.package_closure_version_ref,
                         compute_binding_ref=binding.binding_id,
-                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
+                        instance_name=binding.instance_name,
                     )
                     command = CapabilityProvisionCommand(
                         command_id=f"provision-{package.package_id}-{target}",
@@ -1093,7 +1117,7 @@ class DriverService:
                         compute_binding=binding,
                         idempotency_key=desired.last_idempotency_key,
                         activation_revision=desired.activation_revision,
-                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
+                        instance_name=binding.instance_name,
                     )
                     report = await worker.provision(command=command, package=package, driver_id=getattr(self.control_client, "driver_id", None), driver_epoch=getattr(self.control_client, "driver_epoch", None))
                     await self.repository.record_capability_health(report, run_id=run_id)
@@ -1103,7 +1127,7 @@ class DriverService:
                     execution_id=execution_id,
                     execution_epoch=execution_epoch,
                     workspace_id=workspace_id,
-                    operation=operation,
+                    action=action,
                     payload=payload,
                     closure=snapshot,
                     binding=binding,
@@ -1114,7 +1138,7 @@ class DriverService:
                 slave = self.slaves.get(target)
                 if slave is None:
                     raise RuntimeError(f"capability_unavailable:{target}")
-                if binding is not None and binding.capability_package_ref is not None:
+                if binding is not None and binding.capability_package_ref is not None and binding.expected_activation_revision is None:
                     package = await self.repository.get_capability_package(binding.capability_package_ref, run_id=run_id)
                     idempotency_key = f"run-{execution_id}-{package.package_digest}-{target}"
                     desired = await self.repository.set_capability_desired(
@@ -1125,7 +1149,7 @@ class DriverService:
                         run_id=run_id,
                         activation_closure_version_ref=record.committed.version_id if record.committed else package.package_closure_version_ref,
                         compute_binding_ref=binding.binding_id,
-                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
+                        instance_name=binding.instance_name,
                     )
                     command = CapabilityProvisionCommand(
                         command_id=f"provision-{package.package_id}-{target}",
@@ -1137,13 +1161,13 @@ class DriverService:
                         compute_binding=binding,
                         idempotency_key=desired.last_idempotency_key,
                         activation_revision=desired.activation_revision,
-                        instance_name=getattr(binding, "activation_ref", "").rsplit("#", 1)[-1] if getattr(binding, "activation_ref", None) else "default",
+                        instance_name=binding.instance_name,
                     )
                     report = await slave.provision(command, package)
                     await self.repository.record_capability_health(report, run_id=run_id)
                 result = await slave.run(
                     attempt_id,
-                    operation,
+                    action,
                     payload,
                     closure=snapshot,
                     binding=binding,
@@ -1152,7 +1176,7 @@ class DriverService:
         else:
             if self.executor is None:
                 raise RuntimeError("node_target_unavailable")
-            result = await self.executor(operation, payload)
+            result = await self.executor(action, payload)
         completed = await self.repository.record_result(
             run_id,
             {
@@ -1169,20 +1193,20 @@ class DriverService:
         )
         return completed, result
 
-    async def _execution_payload(self, snapshot: TaskClosure, operation: str, prompt: str) -> dict[str, Any]:
+    async def _execution_payload(self, snapshot: TaskClosure, action: str, prompt: str) -> dict[str, Any]:
         # Executable input is always a content-addressed NodeInputBinding.
         # Resolve it at dispatch time so the closure carries only semantic
         # references and no mutable/raw payload in metadata.
-        operation_ref = snapshot.program.operation_ref or snapshot.compute.operation_ref
+        action_ref = snapshot.program.action_ref or snapshot.compute.action_ref
         repository = self.remote_repository if self.remote_repository is not None else self.repository
-        binding = input_binding_for(snapshot, operation_ref)
+        binding = input_binding_for(snapshot, action_ref)
         if binding is not None:
             value = await repository._load_json_content(binding.input_ref)
             return dict(value) if isinstance(value, dict) else {"value": value}
         return {}
 
     @staticmethod
-    def _binding_for_operation(snapshot: TaskClosure) -> ComputeBinding | None:
+    def _binding_for_action(snapshot: TaskClosure) -> ComputeBinding | None:
         if not snapshot.compute_bindings:
             return None
         return snapshot.compute_bindings[0]

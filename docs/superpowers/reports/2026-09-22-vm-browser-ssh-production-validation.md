@@ -7,7 +7,7 @@
 - 创建 Run：`run-b78571450e2e`。
 - 临时实例：`c91000ea-bbc5-4af9-a9de-2bf2d6bfa7d6`，名称 `loom-e2e-vm-a43c915452`。
 - 配置：Debian 12、4 vCPU、8589934592 字节内存、50 GiB 磁盘，IP `9.0.16.163`。
-- 访问包：`capability-package://suanli-vm-ssh-http/v1`，实例名 `vm-c91000`。
+- 访问包：`grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v1`，实例名 `vm-c91000`。
 - 用户通过 localhost SSH 隧道完成浏览器登录，Observer 查询得到 `ready / authenticated`。
 - SSH 经 Observer 内部 Slave relay → Slave → HTTP 能力包 → VM 执行，未直接 SSH 绕过能力包。
 - Attempt：`attempt-vm-c91000-ssh-2`；命令 `id && cat /etc/os-release && uname -a`。

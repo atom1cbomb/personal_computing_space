@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from loom_orchestration.naming import content_uri
+
 import argparse
 import asyncio
 import json
@@ -30,7 +32,7 @@ class _SelfTestContentStore:
         body = content if isinstance(content, bytes) else content.encode("utf-8") if isinstance(content, str) else canonical_json_bytes(content)
         digest = ContentStore.digest(body)
         self.values.setdefault(digest, (body, media_type))
-        return ResourceRef(resource_id=f"content://sha256/{digest}", identity_criterion="content_digest")
+        return ResourceRef(resource_id=content_uri(digest, "self-test"), identity_criterion="content_digest")
 
     async def get(self, ref: ResourceRef, *, expected_digest: str | None = None) -> bytes:
         digest = (expected_digest or ref.digest or ref.resource_id.rsplit("/", 1)[-1]).lower()

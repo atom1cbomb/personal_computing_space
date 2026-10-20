@@ -1,5 +1,7 @@
 # 删除遗留内置能力实现计划
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](../specs/2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 > **目标 spec：** `docs/superpowers/specs/2026-09-06-remove-legacy-builtins-design.md`
 >
 > 本计划有意采用破坏性清理：不保留 `echo`、`hash`、`sort` 的兼容 alias、自动翻译或旧闭包迁移。`run_code` 只通过 `subprocess_json_v1` 执行已绑定的 capability package。
@@ -202,7 +204,7 @@
 
   为 `FakeCodingAgentProvider` 增加与 Codex fake transport 等价的 `set_tool_handler` 保存路径，使 legacy local `start()` 和 `begin_turn()` 都能拿到 MCP handler。provider 先调用 `loom_put_content` 上传程序和 IoContract，然后 yield `open_run` 让 Driver 建立 Run，再通过 handler 执行程序/compute/typed-hole/package/binding patch、readiness、commit 和 start；每次直接 handler 调用都 yield 对应的 normalized `tool_call` 事件，避免重复执行同一 mutation。
 
-  package operation 使用 `test_double` 或 `test_sum`；binding 的 descriptor ref 为 `executor://subprocess_json_v1/1`，package ref 和 realization digest 使用 materialization 返回/派生的值。
+  package operation 使用 `test_double` 或 `test_sum`；binding 的 descriptor ref 为 `grip://loom.local/workspaces/workspace-default/executors/subprocess_json_v1/1`，package ref 和 realization digest 使用 materialization 返回/派生的值。
 
 - [x] **Step 4: 更新 CLI self-test**
 
@@ -239,7 +241,7 @@
   Run:
 
   ```bash
-  rg -n --hidden -S 'BuiltinV1Adapter|builtin_v1|loom://echo|loom://hash|loom://sort' loom_v2 tests README.md
+  rg -n --hidden -S 'BuiltinV1Adapter|builtin_v1|grip://loom.local/workspaces/workspace-default/operations/echo|grip://loom.local/workspaces/workspace-default/operations/hash|grip://loom.local/workspaces/workspace-default/operations/sort' loom_v2 tests README.md
   ```
 
   Expected: 无运行时、测试或 README 命中；本设计/实现计划和明确的历史说明可以保留这些字符串作为删除对象记录。

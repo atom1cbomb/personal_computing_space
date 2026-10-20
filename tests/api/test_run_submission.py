@@ -69,11 +69,11 @@ def test_claim_and_driver_settlement_are_projected_to_submission_query():
     assert claim is not None
     assert claim["request"]["request_id"] == "external-settle-1"
 
-    async def execute(_operation: str, payload: dict) -> ExecutionResult:
+    async def execute(_action: str, payload: dict) -> ExecutionResult:
         value = {"ok": True}
         digest = hashlib.sha256(canonical_json_bytes(value)).hexdigest()
         return ExecutionResult(
-            resource_ref=ResourceRef(resource_id=f"content://sha256/{digest}", identity_criterion="content_digest"),
+            resource_ref=ResourceRef(resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}", identity_criterion="content_digest"),
             value=value,
             replay_safety="Idempotent",
             terminal_state="completed",

@@ -42,8 +42,8 @@ class TermSupport(BaseModel):
     evidence_kinds: set[str] = Field(default_factory=set)
     support_version: str = "1"
 
-    def can(self, operation: str, stage: str) -> bool:
-        return operation in self.support and stage in self.execution_stages
+    def can(self, action: str, stage: str) -> bool:
+        return action in self.support and stage in self.execution_stages
 
 
 class VocabularyRegistryEntry(BaseModel):

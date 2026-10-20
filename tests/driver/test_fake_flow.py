@@ -9,7 +9,7 @@ async def fake_tool_handler(tool: str, arguments: dict[str, object]) -> dict[str
         digest = "a" * 64
         return {
             "resource_ref": ResourceRef(
-                resource_id=f"content://sha256/{digest}",
+                resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}",
                 identity_criterion="content_digest",
             ).model_dump(mode="json")
         }

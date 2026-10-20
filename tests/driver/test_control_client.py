@@ -17,6 +17,49 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command", sorted(ObserverControlClient.READ_ONLY_COMMANDS))
+async def test_control_client_retries_read_only_transport_failure(command, caplog):
+    requests = []
+
+    async def respond(request):
+        requests.append(request)
+        if len(requests) == 1:
+            raise httpx.RemoteProtocolError("sensitive transport details")
+        return httpx.Response(200, json={"ok": True})
+
+    client = ObserverControlClient("http://observer", driver_id="driver", instance_id="instance",
+        lease_id="lease-secret", driver_epoch=1, internal_api_secret="api-secret", transport=httpx.MockTransport(respond))
+    try:
+        assert await client.command(command, {"run_id": "run-1"}) == {"ok": True}
+    finally:
+        await client.close()
+    assert len(requests) == 2
+    assert requests[0].content == requests[1].content
+    assert "RemoteProtocolError" in caplog.text
+    assert all(value not in caplog.text for value in ["sensitive transport details", "lease-secret", "api-secret"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command, expected_attempts", [("run.get", 3), ("node.execute", 1), ("activation.ensure_program", 1)])
+async def test_control_client_transport_retry_is_bounded_and_never_replays_mutations(command, expected_attempts):
+    requests = []
+
+    async def respond(request):
+        requests.append(request)
+        raise httpx.ReadTimeout("timed out")
+
+    client = ObserverControlClient("http://observer", driver_id="driver", instance_id="instance",
+        lease_id="lease", driver_epoch=1, transport=httpx.MockTransport(respond))
+    try:
+        with pytest.raises(RuntimeError, match="observer_unavailable") as error:
+            await client.command(command)
+    finally:
+        await client.close()
+    assert isinstance(error.value.__cause__, httpx.ReadTimeout)
+    assert len(requests) == expected_attempts
+
+
+@pytest.mark.asyncio
 async def test_control_client_sends_lease_fenced_command():
     transport = RecordingTransport(httpx.Response(200, json={"run_id": "run-1"}))
     client = ObserverControlClient(
@@ -59,15 +102,15 @@ async def test_control_client_lists_capability_packages():
         "source_closure_version_ref": "committed-1",
         "package_type": "function",
         "execution": {"kind": "process:json_stdio", "version": "1"},
-        "capability_exports": [{
-            "capability_descriptor_ref": {"resource_id": "loom://summarize", "version_or_digest": "a" * 64, "identity_criterion": "descriptor_digest"},
-            "io_contract_ref": {"resource_id": "content://sha256/" + "b" * 64, "identity_criterion": "content_digest"},
+        "action_exports": [{
+            "action_descriptor_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/actions/summarize", "version_or_digest": "a" * 64, "identity_criterion": "descriptor_digest"},
+            "io_contract_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "b" * 64, "identity_criterion": "content_digest"},
             "effect_class": "Sandboxed",
             "permissions": [],
             "replay_safety": "DeclaredByPackage",
             "runtime_binding": {},
         }],
-        "body": {"program_content_ref": {"resource_id": "content://sha256/" + "c" * 64, "identity_criterion": "content_digest"}},
+        "body": {"program_content_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "c" * 64, "identity_criterion": "content_digest"}},
     }
     transport = RecordingTransport(httpx.Response(200, json={"packages": [package]}))
     client = ObserverControlClient(

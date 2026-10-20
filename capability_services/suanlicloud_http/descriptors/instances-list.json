@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-list",
+  "name": "instances_list",
+  "description": "Describe instances by identity, including lowercase lifecycle state and guest IP addresses for readiness and access binding."
+}

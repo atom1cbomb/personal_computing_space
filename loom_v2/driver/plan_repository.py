@@ -8,7 +8,7 @@ from loom_v2.contracts.types import ClosureVersion
 
 
 class PlanRepository(Protocol):
-    """Planning operations shared by DriverTools implementations."""
+    """Planning actions shared by DriverTools implementations."""
 
     async def get_run(self, run_id: str) -> Any: ...
 

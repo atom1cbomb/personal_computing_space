@@ -48,6 +48,7 @@ async def execute_activation_targets(
     target_resource_ref: ResourceRef | dict[str, Any] | None = None,
     instance_config: dict[str, Any] | None = None,
     slave_gateway: Any | None = None,
+    expected_revision: int | None = None,
 ) -> list[dict[str, Any]]:
     """Execute one promote/deactivate command for each selected target.
 
@@ -76,6 +77,7 @@ async def execute_activation_targets(
             instance_name=instance_name,
             target_resource_ref=target_resource_ref,
             instance_config=dict(instance_config or {}),
+            **({"expected_revision": expected_revision} if expected_revision is not None else {}),
         )
         command_values: dict[str, Any] = {
             "command_id": f"{'provision' if desired_state == 'running' else 'deprovision'}-{package.package_id}-{target}",
@@ -156,6 +158,7 @@ async def execute_auth_targets(
     approved_digest: str | None = None,
     instance_name: str = "default",
     slave_gateway: Any | None = None,
+    activation_revision: int | None = None,
 ) -> list[dict[str, Any]]:
     """Start authentication on existing activations without changing lifecycle."""
     if approved_digest is not None and approved_digest.lower() != package.package_digest.lower():
@@ -173,9 +176,10 @@ async def execute_auth_targets(
                     target_slave=target,
                     workspace_id=workspace_id,
                     instance_name=instance_name,
+                    **({"activation_revision": activation_revision} if activation_revision is not None else {}),
                 )
             elif slave is not None:
-                report = await slave.auth_start(package, instance_name=instance_name)
+                report = await slave.auth_start(package, instance_name=instance_name, activation_revision=activation_revision)
             elif slave_gateway is not None:
                 response = await slave_gateway.forward(
                     target,
@@ -186,6 +190,7 @@ async def execute_auth_targets(
                         "workspace_id": workspace_id,
                         "instance_name": instance_name,
                         "browser_auth": None,
+                        "activation_revision": activation_revision,
                         **(fencing or {}),
                     },
                 )

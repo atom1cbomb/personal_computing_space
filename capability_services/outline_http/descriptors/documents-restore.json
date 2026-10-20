@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-restore",
+  "name": "documents_restore",
+  "description": "Documents restore through the outline-http activation."
+}

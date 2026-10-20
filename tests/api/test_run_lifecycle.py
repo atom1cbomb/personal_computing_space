@@ -30,8 +30,8 @@ async def test_readiness_failure_keeps_run_in_thinking() -> None:
         record.draft_digest,
         "readiness-blocker",
         [
-            {"kind": "set_program_ref", "value": "loom://run_code"},
-            {"kind": "set_compute_spec", "value": {"operation_ref": "loom://run_code"}},
+            {"kind": "set_program_ref", "value": "grip://loom.local/workspaces/workspace-default/actions/run_code"},
+            {"kind": "set_compute_spec", "value": {"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code"}},
             {"kind": "add_typed_hole", "value": {"hole_id": "h_run_code"}},
         ],
     )
@@ -72,7 +72,7 @@ async def test_attestation_accept_preserves_raw_execution_result() -> None:
     current = await repo.get_run(record.run_id)
     value = {"text": "candidate"}
     digest = _digest(value)
-    resource_ref = {"resource_id": "result-candidate", "version_or_digest": digest}
+    resource_ref = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result-candidate", "version_or_digest": digest}
 
     pending = await repo.record_result(
         record.run_id,

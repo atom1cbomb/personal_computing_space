@@ -2,9 +2,12 @@
   "package_type": "service",
   "package_id": "suanli-vm-ssh-http",
   "package_version": "v2",
-  "execution": {"kind": "container:http", "version": "1"},
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
   "body": {
-    "image_ref": "localhost:5000/loom/suanli-vm-ssh-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "image_ref": "localhost:5000/loom/suanli-vm-ssh-gateway@sha256:<replace-after-build>",
     "container_port": 8080,
     "health_path": "/healthz",
     "network_profile": "egress",
@@ -20,21 +23,25 @@
       }
     }
   },
-  "capability_exports": [
+  "action_exports": [
     {
-      "capability_descriptor_ref": {
-        "resource_id": "loom://suanli-vm/exec",
-        "version_or_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/exec",
+        "version_or_digest": "89f2bb99cf00d448dd14bd66e8980a6d33bc5b8445115903b1f24cab5998d564",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "content://sha256/2ed0753aae06c382e67dc9865d5e13246a3b912acb3d751a266f6ea381fb335b",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-vm-ssh-http/contracts/exec/sha256/64d6b763b64f18198057fc9077c923df01bbe3dd4fb06ae7f84a6cea2d7f73ed",
         "identity_criterion": "content_digest"
       },
       "effect_class": "RemoteExecution",
-      "permissions": ["suanli.vm.ssh"],
+      "permissions": [
+        "suanli.vm.ssh"
+      ],
       "replay_safety": "NotReplaySafe",
-      "runtime_binding": {"path": "/v1/exec"}
+      "runtime_binding": {
+        "path": "/v1/exec"
+      }
     }
   ]
 }

@@ -3,12 +3,15 @@
 This module deliberately consumes plain protocol JSON.  Package contract and
 digest validation belong to Slave Core; the plugin checks only the execution
 contract it implements and the runtime identities needed before Docker or HTTP
-operations.  Consequently the bundle neither imports Slave internals nor
+actions.  Consequently the bundle neither imports Slave internals nor
 maintains a second package-digest implementation.
 """
 
 from __future__ import annotations
 
+from urllib.parse import quote, urlsplit
+
+import hashlib
 import asyncio
 import json
 import os
@@ -37,11 +40,11 @@ RUNTIME_DESCRIPTOR: dict[str, Any] = {
             "execution": {"kind": "container:http", "version": "1"},
         }
     ],
-    "runtime_descriptor_ref": "runtime://service/container:http/1",
-    "runtime_descriptor_digest": (
-        "58a09aa11f2e5beea73c821b780eb38b3f65c33f96e8df54359e2751dde3cf33"
-    ),
+    "runtime_descriptor_ref": "grip://loom.local/workspaces/workspace-default/runtimes/service/container:http/1",
 }
+RUNTIME_DESCRIPTOR["runtime_descriptor_digest"] = hashlib.sha256(
+    json.dumps(RUNTIME_DESCRIPTOR, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -258,7 +261,9 @@ class DockerContainerHTTPRuntimeV1:
             or not DIGEST_RE.fullmatch(digest)
         ):
             raise RuntimeError("runtime_plugin_identity_mismatch")
-        return f"capability-package://{package_id}/{package_version}", digest
+        authority = package.get("resource_authority", "loom.local")
+        workspace = package.get("workspace_id") or "workspace-default"
+        return f"grip://{authority}/workspaces/{quote(workspace, safe='')}/packages/{quote(package_id, safe='')}/{quote(package_version, safe='')}", digest
 
     @classmethod
     def _service_values(
@@ -266,7 +271,7 @@ class DockerContainerHTTPRuntimeV1:
     ) -> tuple[str, int, str, list[dict[str, Any]]]:
         cls._execution_identity(package)
         body = package.get("body")
-        exports = package.get("capability_exports")
+        exports = package.get("action_exports")
         if not isinstance(body, dict) or not isinstance(exports, list) or not exports:
             raise RuntimeError("runtime_plugin_capability_mismatch")
         image_ref = body.get("image_ref")
@@ -283,10 +288,10 @@ class DockerContainerHTTPRuntimeV1:
             raise RuntimeError("runtime_plugin_capability_mismatch")
         normalized_exports: list[dict[str, Any]] = []
         paths: list[str] = []
-        for capability_export in exports:
-            if not isinstance(capability_export, dict):
+        for action_export in exports:
+            if not isinstance(action_export, dict):
                 raise RuntimeError("runtime_plugin_capability_mismatch")
-            runtime_binding = capability_export.get("runtime_binding")
+            runtime_binding = action_export.get("runtime_binding")
             path = (
                 runtime_binding.get("path")
                 if isinstance(runtime_binding, dict)
@@ -294,7 +299,7 @@ class DockerContainerHTTPRuntimeV1:
             )
             if not isinstance(path, str):
                 raise RuntimeError("runtime_plugin_capability_mismatch")
-            normalized_exports.append(capability_export)
+            normalized_exports.append(action_export)
             paths.append(path)
         if len(paths) != len(set(paths)):
             raise RuntimeError("service_endpoint_duplicate")
@@ -893,7 +898,7 @@ class DockerContainerHTTPRuntimeV1:
     async def invoke(
         self,
         package: dict[str, Any],
-        capability_export: dict[str, Any],
+        action_export: dict[str, Any],
         payload: dict[str, Any],
         *,
         activation: dict[str, Any],
@@ -915,9 +920,9 @@ class DockerContainerHTTPRuntimeV1:
             != package_digest
         ):
             raise RuntimeError("runtime_plugin_identity_mismatch")
-        if capability_export not in exports:
+        if action_export not in exports:
             raise RuntimeError("service_endpoint_binding_mismatch")
-        runtime_binding = capability_export.get("runtime_binding") or {}
+        runtime_binding = action_export.get("runtime_binding") or {}
         path = str(runtime_binding.get("path") or "")
         instance_name = self._instance_name(activation)
         expected_name = self._container_name(workspace_id, package_digest, instance_name)
@@ -988,7 +993,7 @@ class DockerContainerHTTPRuntimeV1:
                 raise RuntimeError("capability_service_invalid_json") from exc
             return {
                 "value": value,
-                "replay_safety": str(capability_export.get("replay_safety") or ""),
+                "replay_safety": str(action_export.get("replay_safety") or ""),
                 "runtime_plugin_id": "container-http-v1",
             }
         finally:
@@ -1059,7 +1064,8 @@ class DockerContainerHTTPRuntimeV1:
             not isinstance(workspace_id, str)
             or not workspace_id
             or not isinstance(package_ref, str)
-            or not package_ref.startswith("capability-package://")
+            or urlsplit(package_ref).scheme != "grip"
+            or not urlsplit(package_ref).path.startswith(f"/workspaces/{quote(workspace_id, safe='')}/packages/")
             or not DIGEST_RE.fullmatch(package_digest)
             or command.get("target_slave") != self.slave_id
         ):

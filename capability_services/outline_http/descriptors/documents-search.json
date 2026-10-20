@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-search",
+  "name": "documents_search",
+  "description": "Documents search through the outline-http activation."
+}

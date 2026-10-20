@@ -31,7 +31,7 @@ class WorkerSession:
         base_url: str = "",
         *,
         timeout: float | None = None,
-        operation_timeout: float | None = None,
+        action_timeout: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         internal_api_secret: str | None = None,
         settings: Settings | None = None,
@@ -41,11 +41,11 @@ class WorkerSession:
         self.slave_id = slave_id
         self.base_url = base_url.rstrip("/")
         self.observer_url = (observer_url or "").rstrip("/") or None
-        self.operation_timeout = operation_timeout if operation_timeout is not None else timeout if timeout is not None else config.worker_operation_timeout_seconds
-        self.timeout = self.operation_timeout
+        self.action_timeout = action_timeout if action_timeout is not None else timeout if timeout is not None else config.worker_action_timeout_seconds
+        self.timeout = self.action_timeout
         self.transport = transport
         self.internal_api_secret = internal_api_secret if internal_api_secret is not None else config.internal_api_secret
-        self._http = InternalHttpClient(timeout=self.operation_timeout, transport=transport)
+        self._http = InternalHttpClient(timeout=self.action_timeout, transport=transport)
 
     async def close(self) -> None:
         await self._http.close()
@@ -63,7 +63,7 @@ class WorkerSession:
         execution_epoch: int,
         workspace_id: str,
         instance_name: str = "default",
-        operation: str,
+        action: str,
         payload: dict[str, Any],
         closure: TaskClosure,
         binding: ComputeBinding | None,
@@ -76,7 +76,7 @@ class WorkerSession:
             "execution_epoch": execution_epoch,
             "workspace_id": workspace_id,
             "instance_name": instance_name,
-            "operation": operation,
+            "action": action,
             "closure": closure.model_dump(mode="json"),
             "binding": binding.model_dump(mode="json") if binding is not None else None,
         }
@@ -161,7 +161,7 @@ class WorkerSession:
                     f"{self.observer_url}/internal/v1/slaves/{self.slave_id}/forward",
                     json={"path": path, "payload": payload},
                     headers=self._headers(),
-                    timeout=self.operation_timeout,
+                    timeout=self.action_timeout,
                 )
             if not self.base_url:
                 raise WorkerUnavailableError("worker_transport_not_configured")
@@ -170,9 +170,9 @@ class WorkerSession:
                 f"{self.base_url}{path}",
                 json=payload,
                 headers=self._headers(),
-                timeout=self.operation_timeout,
+                timeout=self.action_timeout,
             )
         except (TimeoutError, httpx.TimeoutException) as exc:
-            raise WorkerUnavailableError("worker_operation_timeout") from exc
+            raise WorkerUnavailableError("worker_action_timeout") from exc
         except httpx.TransportError as exc:
             raise WorkerUnavailableError("worker_unavailable") from exc

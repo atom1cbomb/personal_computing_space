@@ -7,19 +7,27 @@ Observer data plane.
 
 from .contracts import ClosureContract, ResourceRef, TaskClosure
 from .client import LoomClient
+from .service_package import ServicePackage
+from .grip import GripError, Names
 from .package import OrchestratorPackage
 from .polling import poll_submission
 from .program import OrchestrationContext, ProgramSource
 from .submission import SubmissionBuilder
+from .metadata import ResourceEffect, validate_action_descriptor
 
 __all__ = [
     "ClosureContract",
     "LoomClient",
+    "ServicePackage",
+    "GripError",
+    "Names",
     "OrchestrationContext",
     "OrchestratorPackage",
     "ProgramSource",
     "ResourceRef",
+    "ResourceEffect",
     "SubmissionBuilder",
     "TaskClosure",
     "poll_submission",
+    "validate_action_descriptor",
 ]

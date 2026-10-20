@@ -1,15 +1,51 @@
 import pytest
+import json
+import subprocess
+import sys
 
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.driver.orchestrator import (
     DockerOrchestrationExecutor,
     OrchestrationExecutorError,
     OrchestrationProgramError,
+    _BOOTSTRAP,
 )
 
 
+@pytest.mark.parametrize("seconds,expected", [(0, "final"), (-1, "failure"), (3601, "failure"), (True, "failure")])
+def test_sandbox_sleep_is_bounded_without_opening_asyncio_import(seconds, expected):
+    program = f'async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":\n    await ctx.sleep({seconds!r})\n    return input_ref\n'
+    DockerOrchestrationExecutor()._validate_program(program.encode())
+    completed = subprocess.run([sys.executable, "-c", _BOOTSTRAP], input=json.dumps({"program": program, "input_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result"}}) + "\n", text=True, capture_output=True, timeout=5, check=True)
+    assert json.loads(completed.stdout)["type"] == expected
+
+
 def _ref(resource_id: str, digest: str) -> ResourceRef:
-    return ResourceRef(resource_id=resource_id, version_or_digest=None if resource_id.startswith("content://sha256/") else digest)
+    return ResourceRef(resource_id=resource_id, version_or_digest=None if resource_id.startswith("grip://loom.local/workspaces/workspace-default/content/document/sha256/") else digest)
+
+
+@pytest.mark.parametrize("arguments", [
+    '"query", input_ref, input_ref, [input_ref]',
+    'step_id="query", package_ref=input_ref, action_descriptor_ref=input_ref, input_refs=[input_ref]',
+    '"query", package_ref=input_ref, action_descriptor_ref=input_ref, input_refs=[input_ref]',
+])
+def test_sandbox_emit_node_accepts_public_signature(arguments):
+    program = f'''async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":
+    handle = ctx.emit_node({arguments}, target_resource_ref=input_ref, activation_ref=input_ref)
+    return await ctx.result(handle)
+'''
+    DockerOrchestrationExecutor()._validate_program(program.encode())
+    resource = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/result"}
+    messages = [
+        {"program": program, "input_ref": resource},
+        {"type": "handle", "handle": "node-query"},
+        {"type": "ref", "ref": resource},
+    ]
+    completed = subprocess.run([sys.executable, "-c", _BOOTSTRAP], input="".join(json.dumps(message) + "\n" for message in messages), text=True, capture_output=True, timeout=5, check=True)
+    emitted, requested, final = [json.loads(line) for line in completed.stdout.splitlines()]
+    assert emitted == {"type": "emit_node", "step_id": "query", "package_ref": resource, "action_descriptor_ref": resource, "input_refs": [resource], "target_resource_ref": resource, "activation_ref": resource}
+    assert requested == {"type": "result", "handle": "node-query"}
+    assert final == {"type": "final", "ref": resource}
 
 
 def test_docker_executor_uses_os_level_sandbox_flags():
@@ -28,6 +64,32 @@ def test_docker_executor_uses_os_level_sandbox_flags():
     assert "--cpus" in args
     assert "--pids-limit" in args
     assert "python:3.12-slim" in args
+
+
+async def test_activation_reference_crosses_real_sandbox_protocol(monkeypatch):
+    executor = DockerOrchestrationExecutor()
+    monkeypatch.setattr(executor, "docker_args", lambda: [sys.executable, "-u", "-c", _BOOTSTRAP])
+    input_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "a" * 64)
+    activation = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/activations/vm-test", access_binding={"instance_name": "vm-test", "activation_revision": 1})
+    program = b'''async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":
+    activation = await ctx.ensure_activation(step_id="access", package_ref=input_ref, target_resource_ref=input_ref, instance_name="vm-test", instance_config={}, requires_authentication=True)
+    await ctx.wait_activation(step_id="auth", activation_ref=activation, ready_state="authenticated")
+    return input_ref
+'''
+
+    async def ensure_activation(**arguments):
+        assert arguments["package_ref"] == input_ref
+        assert arguments["target_resource_ref"] == input_ref
+        return activation
+
+    async def wait_activation(**arguments):
+        assert arguments["activation_ref"] == activation
+        assert arguments["activation_ref"].access_binding["instance_name"] == "vm-test"
+        assert arguments["ready_state"] == "authenticated"
+        return {"activation_state": "ready"}
+
+    returned = await executor.run(program, input_ref, read_json=lambda ref: {}, emit_node=lambda *args: "unused", result=lambda handle: input_ref, ensure_activation=ensure_activation, wait_activation=wait_activation)
+    assert returned == input_ref
 
 
 def test_orchestration_sandbox_environment_does_not_inherit_secrets(monkeypatch):
@@ -49,24 +111,24 @@ def test_orchestration_program_rejects_imports_and_side_effect_calls():
 
 @pytest.mark.integration
 async def test_docker_executor_runs_orchestration_protocol():
-    input_ref = _ref("content://sha256/" + "a" * 64, "a" * 64)
-    package_ref = _ref("capability-package://summarize/v1", "b" * 64)
+    input_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "a" * 64)
+    package_ref = _ref("grip://loom.local/workspaces/workspace-default/packages/summarize/v1", "b" * 64)
     descriptor_ref = ResourceRef(
-        resource_id="loom://summarize",
+        resource_id="grip://loom.local/workspaces/workspace-default/actions/summarize",
         version_or_digest="d" * 64,
         identity_criterion="descriptor_digest",
     )
-    final_ref = _ref("content://sha256/" + "c" * 64, "c" * 64)
+    final_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "c" * 64, "c" * 64)
     program = (
         b'''
 PACKAGE_REF = {
-    "resource_id": "capability-package://summarize/v1",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/packages/summarize/v1",
     "version_or_digest": "'''
         + b"b" * 64
         + b'''",
 }
 DESCRIPTOR_REF = {
-    "resource_id": "loom://summarize",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/actions/summarize",
     "version_or_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "identity_criterion": "descriptor_digest",
 }
@@ -110,7 +172,7 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
 
 @pytest.mark.integration
 async def test_docker_executor_reports_structured_program_failure():
-    input_ref = _ref("content://sha256/" + "a" * 64, "a" * 64)
+    input_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "a" * 64)
     program = b'''
 async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":
     raise OrchestrationFailure({"code": "custom_failure", "details": {"value": 7}})

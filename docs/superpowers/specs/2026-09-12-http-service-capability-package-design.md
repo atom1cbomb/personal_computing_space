@@ -1,5 +1,7 @@
 # Slave 托管的 HTTP 容器服务能力包：总览
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 **日期：** 2026-09-13  
 **状态：** 设计草案，已拆分为分阶段 spec  
 **执行契约：** `package_type=service` + `execution={kind: "container:http", version: "1"}`
@@ -24,7 +26,7 @@
 - Operator 通过所有运行角色共同挂载的只读 contract 目录分发纯 JSON Schema，重启后加载；新增普通 contract 不要求重新构建主体二进制。
 - package contract 不是可执行代码。新增 contract 时注册 schema 并安装声明支持同一选择键的 runtime plugin，不修改 Observer、Driver 或 Slave Core 的类型分支。
 - Agent 不手写 content/package digest。Agent 通过 `loom_put_content` 上传内容并使用返回的 `ResourceRef`；package digest 由服务根据已验证 manifest 自动计算。显式 digest 只用于一致性校验。
-- ContentStore 内容使用 `content://sha256/<digest>`；package 使用独立的 `loom/package/v1` 域分离 digest。
+- ContentStore 内容使用 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>`；package 使用独立的 `loom/package/v1` 域分离 digest。
 - package 坐标、生命周期、provenance、部署位置和运行时状态不是执行内容身份，不进入 `package_digest`。
 - 结果的内容身份来自 `resource_ref.digest`；不再增加旁路 result digest。
 - 服务容器由 Slave 管理，Driver/Observer 不直接访问容器端口。

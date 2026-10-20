@@ -41,19 +41,19 @@ async def test_observer_and_slave_share_immutable_content_store():
         run.draft_digest,
         "materialize-minio-e2e",
             [
-                {"kind": "set_program_ref", "value": "loom://double"},
+                {"kind": "set_program_ref", "value": "grip://loom.local/workspaces/workspace-default/actions/double"},
                 {"kind": "set_io_contract_ref", "value": io_contract_ref.model_dump(mode="json")},
                 {"kind": "add_typed_hole", "value": {"hole_id": "h_double"}},
-            {"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-minio-e2e", operation_ref="loom://double", program_content_ref=program_ref, io_contract_ref=io_contract_ref)},
+            {"kind": "materialize_capability_package_candidate", "value": process_package_value(repo, package_id="pkg-minio-e2e", action_ref="grip://loom.local/workspaces/workspace-default/actions/double", program_content_ref=program_ref, io_contract_ref=io_contract_ref)},
         ],
     )
     package = (await repo.get_run(run.run_id)).capability_packages[0]
     binding = ComputeBinding(
         binding_id="binding-minio-e2e",
         hole_id="h_double",
-        capability_descriptor_ref=package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
         capability_package_ref=ResourceRef(resource_id=package.version_ref),
-        target_resource_ref=ResourceRef(resource_id="slave-a"),
+        target_resource_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/slaves/slave-a"),
 
     )
     bound = await repo.apply_patch(
@@ -85,7 +85,7 @@ async def test_observer_and_slave_share_immutable_content_store():
         execution_id=started["execution_id"],
         execution_epoch=started["execution_epoch"],
         workspace_id="workspace-default",
-        operation="double",
+        action="double",
         payload={"x": 7},
         closure=committed.snapshot,
         binding=binding,

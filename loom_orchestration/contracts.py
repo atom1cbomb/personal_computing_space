@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from loom_orchestration.grip import URI
+from loom_orchestration.naming import content_digest
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -13,7 +16,7 @@ class ContractModel(BaseModel):
 
 
 class ResourceRef(ContractModel):
-    resource_id: str
+    resource_id: URI
     version_or_digest: str | None = None
     access_binding: dict[str, Any] = Field(default_factory=dict)
     identity_criterion: str | None = None
@@ -21,7 +24,11 @@ class ResourceRef(ContractModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> "ResourceRef":
-        if self.resource_id.startswith("content://sha256/") and self.version_or_digest is not None:
+        if (
+            content_digest(self.resource_id) is not None
+            and self.version_or_digest is not None
+            and self.identity_criterion != "descriptor_digest"
+        ):
             raise ValueError("redundant_content_digest")
         return self
 
@@ -29,8 +36,8 @@ class ResourceRef(ContractModel):
     def digest(self) -> str | None:
         if self.identity_criterion == "descriptor_digest" and self.version_or_digest:
             return self.version_or_digest.lower()
-        if self.resource_id.startswith("content://sha256/"):
-            return self.resource_id.removeprefix("content://sha256/").lower()
+        if content_digest(self.resource_id) is not None:
+            return content_digest(self.resource_id)
         return self.version_or_digest.lower() if self.version_or_digest else None
 
 

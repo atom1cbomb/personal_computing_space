@@ -16,7 +16,7 @@ async def _register_slave(repo: ObserverRepository, slave_id: str, instance_id: 
             workspace_id="workspace-default",
             endpoint_url=f"http://{slave_id}",
             protocol_version="loom.v1",
-            capabilities={"operations": ["run_code"]},
+            capabilities={"actions": ["run_code"]},
         )
     )
 
@@ -54,7 +54,7 @@ async def test_result_command_rejects_another_workspace_before_result_handler(mo
 
     monkeypatch.setattr(repo, "record_result", forbidden_handler)
     monkeypatch.setattr(repo, "complete_orchestration", forbidden_handler)
-    result = {"orchestration_final_ref": {"resource_id": "unused"}} if orchestrated else {}
+    result = {"orchestration_final_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/unused"}} if orchestrated else {}
     with pytest.raises(ValueError, match="^workspace_binding_mismatch$"):
         await repo.execute_driver_command(DriverCommand(
             request_id="foreign-result", driver_id=lease.agent_id, instance_id=lease.instance_id,
@@ -167,7 +167,7 @@ async def test_slave_runtime_view_prefers_active_instance_over_expired_history()
             workspace_id="workspace-default",
             endpoint_url="http://slave-a:8081",
             protocol_version="loom.v1",
-            capabilities={"operations": ["run_code"]},
+            capabilities={"actions": ["run_code"]},
         )
     )
     await repo.register_agent(
@@ -178,7 +178,7 @@ async def test_slave_runtime_view_prefers_active_instance_over_expired_history()
             workspace_id="workspace-default",
             endpoint_url="http://slave-a:8081",
             protocol_version="loom.v1",
-            capabilities={"operations": ["run_code"]},
+            capabilities={"actions": ["run_code"]},
         )
     )
     old_key = ("workspace-default", "slave", "slave-a", "old")
@@ -190,7 +190,7 @@ async def test_slave_runtime_view_prefers_active_instance_over_expired_history()
 
     assert repo.slave_agents["slave-a"]["instance_id"] == "active"
     assert repo.slave_agents["slave-a"]["lease_state"] == "active"
-    assert repo.slave_capabilities["slave-a"]["operations"] == {"run_code"}
+    assert repo.slave_capabilities["slave-a"]["actions"] == {"run_code"}
 
 
 @pytest.mark.asyncio

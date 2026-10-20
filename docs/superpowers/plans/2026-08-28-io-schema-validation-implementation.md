@@ -134,7 +134,7 @@
 - Test: `tests/driver/test_mcp.py`
 - Test: `tests/api/test_content.py`
 
-- [x] **Step 1: Write failing upload and canonicalization tests.** Verify that JSON media types are parsed with `json.loads`, canonicalized before hashing, stored with `application/schema+json`, `application/vnd.loom.io-contract+json`, or the declared program/artifact media type, and return a `content://sha256/<digest>` `ResourceRef`. Verify repeated puts return the same ref and no endpoint/bucket/key appears in the ref.
+- [x] **Step 1: Write failing upload and canonicalization tests.** Verify that JSON media types are parsed with `json.loads`, canonicalized before hashing, stored with `application/schema+json`, `application/vnd.loom.io-contract+json`, or the declared program/artifact media type, and return a `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` `ResourceRef`. Verify repeated puts return the same ref and no endpoint/bucket/key appears in the ref.
 
 - [x] **Step 2: Run the focused tests and verify red.**
 

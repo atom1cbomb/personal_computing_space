@@ -12,10 +12,10 @@ async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> 
     handles = []
     for start in range(0, len(partitions), MAX_LIVE_NODES):
         wave = partitions[start : start + MAX_LIVE_NODES]
-        wave_handles = [ctx.emit_node(SUMMARIZE, SUMMARIZE_DESCRIPTOR, [partition]) for partition in wave]
+        wave_handles = [ctx.emit_node("part-" + str(start + i), SUMMARIZE, SUMMARIZE_DESCRIPTOR, [partition]) for i, partition in enumerate(wave)]
         for handle in wave_handles:
             await ctx.result(handle)
         handles.extend(wave_handles)
     summaries = [await ctx.result(handle) for handle in handles]
-    merged = ctx.emit_node(MERGE, MERGE_DESCRIPTOR, summaries)
+    merged = ctx.emit_node("merge", MERGE, MERGE_DESCRIPTOR, summaries)
     return await ctx.result(merged)

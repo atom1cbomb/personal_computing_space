@@ -3,8 +3,9 @@
 
 The JSON files under each capability service are the reviewable contract
 source.  This command only derives schema/contract files and replaces the
-``io_contract_ref`` placeholders in the example manifest; it never derives
-descriptor digests or image digests.
+``io_contract_ref`` placeholders in the example manifest. Descriptor templates get their source digest; publication
+resolves dependency references and obtains final descriptor refs from Observer.
+Image digests are always supplied by the publisher.
 """
 
 from __future__ import annotations
@@ -14,9 +15,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from loom_orchestration.naming import content_uri
 from loom_v2.contracts.io_schema import validate_schema
 from loom_v2.contracts.types import IoContract
-from loom_v2.digest import canonical_json_bytes, digest_bytes
+from loom_v2.digest import canonical_json_bytes, digest_bytes, digest_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,11 +45,7 @@ def array(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def k8s_definitions() -> dict[str, dict[str, Any]]:
-    empty = obj()
-    status = string(enum=["auth_required", "authenticated", "auth_failed"])
     return {
-        "auth-start": {"input": empty, "output": obj(["status"], status=status)},
-        "auth-status": {"input": empty, "output": obj(["status"], status=status)},
         "resources-list": {
             "input": obj(resource=string(enum=["pods", "pvc", "jobs", "vcjobs"])),
             "output": obj(["status", "resource"], status=string(const="ok"), resource=obj()),
@@ -77,7 +75,7 @@ def k8s_definitions() -> dict[str, dict[str, Any]]:
 
 def outline_definitions() -> dict[str, dict[str, Any]]:
     empty = obj()
-    by_operation = {
+    by_action = {
         "collections-list": empty,
         "collections-info": obj(["id"], id=string()),
         "collections-documents": obj(["id"], id=string()),
@@ -92,14 +90,12 @@ def outline_definitions() -> dict[str, dict[str, Any]]:
         "documents-restore": obj(["id"], id=string()),
     }
     result: dict[str, dict[str, Any]] = {}
-    for operation, input_schema in by_operation.items():
-        internal_name = operation.replace("-", "_")
-        result[operation] = {
+    for action, input_schema in by_action.items():
+        internal_name = action.replace("-", "_")
+        result[action] = {
             "input": input_schema,
-            "output": obj(["operation", "result"], operation=string(const=internal_name), result=obj()),
+            "output": obj(["action", "result"], action=string(const=internal_name), result=obj()),
         }
-    result["auth-start"] = {"input": empty, "output": obj(["status"], status=string(const="authenticated"))}
-    result["auth-status"] = {"input": empty, "output": obj(["status"], status=string(const="authenticated"))}
     return result
 
 
@@ -107,19 +103,32 @@ def suanli_definitions() -> dict[str, dict[str, Any]]:
     empty = obj()
     filters = array(obj())
     instance_ids = array(string())
+    instance_identity = obj(
+        ["InstanceId"],
+        InstanceId=string(),
+        State=string(),
+        Ip={"type": ["string", "null"]},
+        Ips=array(string()),
+    )
+    instance_status = obj(
+        ["InstanceId", "State"],
+        InstanceId=string(),
+        State=string(),
+        Reason=string(),
+    )
     provider_results = {
         "regions-list": (empty, ["Regions"], {"Regions": array(obj())}),
         "zones-list": (obj(["RegionId"], RegionId=string()), ["Zones"], {"Zones": array(obj())}),
         "nodes-list": (obj(["RegionId", "Filters"], RegionId=string(), Filters=filters), ["Nodes"], {"Nodes": array(obj())}),
         "instances-list": (
-            obj(["ProjectId", "InstanceIds", "Filters", "PageSpec"], ProjectId=string(), InstanceIds=instance_ids, Filters=filters, PageSpec=obj()),
-            ["Instances", "PageMeta"],
-            {"Instances": array(obj()), "PageMeta": obj()},
+            obj(ProjectId=string(), InstanceIds=instance_ids, Filters=filters, PageNumber={"type": "integer"}, PageSize={"type": "integer"}),
+            ["Instances"],
+            {"Instances": array(instance_identity), "PageNumber": {"type": "integer"}, "PageSize": {"type": "integer"}, "TotalCount": {"type": "integer"}},
         ),
         "instances-status": (
             obj(["InstanceIds", "Filters", "IncludeAllInstances"], InstanceIds=instance_ids, Filters=filters, IncludeAllInstances={"type": "boolean"}),
             ["InstanceStatuses"],
-            {"InstanceStatuses": array(obj())},
+            {"InstanceStatuses": array(instance_status)},
         ),
         "images-list": (obj(ZoneId=string()), ["Images"], {"Images": array(obj())}),
         "instances-run": (
@@ -130,25 +139,23 @@ def suanli_definitions() -> dict[str, dict[str, Any]]:
                 TagSpecifications=array(obj()), ClientToken=string(),
             ),
             ["Instances"],
-            {"Instances": array(obj())},
+            {"Instances": array(instance_identity)},
         ),
     }
-    for operation in ("instances-start", "instances-stop", "instances-reboot", "instances-shutdown", "instances-terminate"):
-        provider_results[operation] = (obj(["InstanceIds"], InstanceIds=instance_ids), ["StateTransitions"], {"StateTransitions": array(obj())})
+    for action in ("instances-start", "instances-stop", "instances-reboot", "instances-shutdown", "instances-terminate"):
+        provider_results[action] = (obj(["InstanceIds"], InstanceIds=instance_ids), ["StateTransitions"], {"StateTransitions": array(obj())})
 
     result: dict[str, dict[str, Any]] = {}
-    for operation, (input_schema, required, properties) in provider_results.items():
-        internal_name = operation.replace("-", "_")
-        result[operation] = {
+    for action, (input_schema, required, properties) in provider_results.items():
+        internal_name = action.replace("-", "_")
+        result[action] = {
             "input": input_schema,
             "output": obj(
-                ["operation", "result"],
-                operation=string(const=internal_name),
+                ["action", "result"],
+                action=string(const=internal_name),
                 result=obj(required, **properties),
             ),
         }
-    result["auth-start"] = {"input": empty, "output": obj(["status"], status=string(const="authenticated"))}
-    result["auth-status"] = {"input": empty, "output": obj(["status"], status=string(const="authenticated"))}
     return result
 
 
@@ -156,12 +163,14 @@ DEFINITIONS = {
     "kubernetes_http": k8s_definitions,
     "outline_http": outline_definitions,
     "suanlicloud_http": suanli_definitions,
+    "vm_ssh_http": None,
+    "suanli_vm_ssh_http": None,
 }
 
 
-def content_ref(value: Any) -> dict[str, str]:
+def content_ref(value: Any, name: str) -> dict[str, str]:
     digest = digest_bytes(canonical_json_bytes(value))
-    return {"resource_id": f"content://sha256/{digest}", "identity_criterion": "content_digest"}
+    return {"resource_id": content_uri(digest, name), "identity_criterion": "content_digest"}
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -170,24 +179,24 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def generate(package_dir: Path, definition_factory: Any, *, check: bool = False) -> None:
-    definitions = definition_factory()
+    definitions = definition_factory() if definition_factory else {
+        "exec": {direction: json.loads((package_dir / "schemas" / f"exec-{direction}.json").read_text()) for direction in ("input", "output")}
+    }
     manifest_path = package_dir / "package.example.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    exports = {item["capability_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]: item for item in manifest["capability_exports"]}
+    exports = {item["action_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]: item for item in manifest["action_exports"]}
+    if set(exports) != set(definitions):
+        raise SystemExit(f"export definitions do not match manifest: {package_dir.name}")
     expected_paths: set[Path] = set()
-    for operation, definition in definitions.items():
-        export = exports.get(operation)
-        # Authentication paths are part of the generic container-http
-        # handshake.  Only Kubernetes currently exports them as ordinary
-        # capabilities; other gateways keep them private to the runtime.
-        if export is None:
-            continue
+    for action, definition in definitions.items():
+        export = exports[action]
         input_schema = definition["input"]
         output_schema = definition["output"]
         validate_schema(input_schema)
         validate_schema(output_schema)
-        input_ref = content_ref(input_schema)
-        output_ref = content_ref(output_schema)
+        prefix = manifest["package_id"]
+        input_ref = content_ref(input_schema, f"{prefix}/schemas/{action}-input")
+        output_ref = content_ref(output_schema, f"{prefix}/schemas/{action}-output")
         contract = {
             "schema_version": "io.v1",
             "input_schema_ref": input_ref,
@@ -195,12 +204,16 @@ def generate(package_dir: Path, definition_factory: Any, *, check: bool = False)
             "success_semantics": None,
             "success_validator_ref": None,
         }
-        contract_ref = content_ref(contract)
+        validator = package_dir / "validators" / f"{action}-success.py"
+        if validator.exists():
+            contract["success_semantics"] = "Command exits with code zero and does not time out."
+            contract["success_validator_ref"] = {"resource_id": content_uri(digest_bytes(validator.read_bytes()), f"{prefix}/validators/{action}-success"), "identity_criterion": "content_digest"}
+        contract_ref = content_ref(contract, f"{prefix}/contracts/{action}")
         schema_paths = [
-            package_dir / "schemas" / f"{operation}-input.json",
-            package_dir / "schemas" / f"{operation}-output.json",
+            package_dir / "schemas" / f"{action}-input.json",
+            package_dir / "schemas" / f"{action}-output.json",
         ]
-        contract_path = package_dir / "contracts" / f"{operation}.io.json"
+        contract_path = package_dir / "contracts" / f"{action}.io.json"
         expected_paths.update(schema_paths)
         expected_paths.add(contract_path)
         if not check:
@@ -212,11 +225,27 @@ def generate(package_dir: Path, definition_factory: Any, *, check: bool = False)
             actual_output = json.loads(schema_paths[1].read_text(encoding="utf-8"))
             actual_contract = json.loads(contract_path.read_text(encoding="utf-8"))
             if actual_input != input_schema or actual_output != output_schema:
-                raise SystemExit(f"generated schema is stale: {package_dir.name}:{operation}")
+                raise SystemExit(f"generated schema is stale: {package_dir.name}:{action}")
             IoContract.model_validate(actual_contract)
             if actual_contract != contract:
-                raise SystemExit(f"generated IoContract is stale: {package_dir.name}:{operation}")
+                raise SystemExit(f"generated IoContract is stale: {package_dir.name}:{action}")
         export["io_contract_ref"] = contract_ref
+        descriptor_path = package_dir / "descriptors" / f"{action}.json"
+        descriptor = json.loads(descriptor_path.read_text())
+        config_path = package_dir / "schemas" / "instance-config.json"
+        if config_path.exists():
+            descriptor["instance_config_schema_ref"] = content_ref(json.loads(config_path.read_text()), f"{prefix}/schemas/instance-config")
+            expected_paths.add(config_path)
+        if check:
+            if json.loads(descriptor_path.read_text()) != descriptor:
+                raise SystemExit(f"stale descriptor: {descriptor_path}")
+        else:
+            write_json(descriptor_path, descriptor)
+        export["action_descriptor_ref"] = {
+            "resource_id": descriptor["resource_id"],
+            "version_or_digest": digest_json(descriptor, domain="loom/action-descriptor/v1"),
+            "identity_criterion": "descriptor_digest",
+        }
 
     if not check:
         write_json(manifest_path, manifest)
@@ -232,11 +261,13 @@ def generate(package_dir: Path, definition_factory: Any, *, check: bool = False)
         if extras:
             raise SystemExit(f"stale generated contract artifact: {', '.join(str(path) for path in sorted(extras))}")
         actual_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        for item in actual_manifest["capability_exports"]:
-            operation = item["capability_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]
-            expected = exports[operation]["io_contract_ref"]
+        for item in actual_manifest["action_exports"]:
+            action = item["action_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]
+            expected = exports[action]["io_contract_ref"]
+            if item["action_descriptor_ref"] != exports[action]["action_descriptor_ref"]:
+                raise SystemExit(f"manifest descriptor ref is stale: {package_dir.name}:{action}")
             if item["io_contract_ref"] != expected:
-                raise SystemExit(f"manifest IoContract ref is stale: {package_dir.name}:{operation}")
+                raise SystemExit(f"manifest IoContract ref is stale: {package_dir.name}:{action}")
 
 
 def main() -> None:

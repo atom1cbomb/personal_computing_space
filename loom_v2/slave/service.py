@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from loom_orchestration.grip import Names
+from loom_orchestration.naming import content_uri
+
 import asyncio
 import json
 from dataclasses import dataclass, field, replace
@@ -11,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from loom_v2.contracts.terms import TermSupport
 from loom_v2.contracts.types import (
-    CapabilityExport,
+    ActionExport,
     CapabilityHealthReport,
     CapabilityDeprovisionCommand,
     CapabilityPackageActivation,
@@ -37,7 +40,7 @@ from loom_v2.content_store import ContentStore
 from loom_v2.digest import canonical_json_bytes, digest_bytes
 from loom_v2.contracts.io_schema import ValidationError as SchemaValidationError, validate, validate_schema
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
-from loom_v2.contracts.refs import operation_name
+from loom_v2.contracts.refs import action_name
 
 
 @dataclass
@@ -53,12 +56,12 @@ class SlaveService:
     replica: WorkspaceReplica = field(default_factory=lambda: WorkspaceReplica("workspace-default"))
     available: bool = True
     attempts: dict[str, ExecutionResult] = field(default_factory=dict)
-    supported_operations: set[str] = field(default_factory=lambda: {"run_code"})
+    supported_actions: set[str] = field(default_factory=lambda: {"run_code"})
     engine: AsyncEngine | None = None
     content_store: ContentStore | None = None
     settings: Settings | None = None
     executor_registry: ExecutorRegistry = field(default_factory=lambda: default_registry)
-    capability_operation_timeout_seconds: float | None = None
+    capability_action_timeout_seconds: float | None = None
     package_cache: dict[str, CapabilityPackageVersion] = field(default_factory=dict)
     activations: dict[str, CapabilityPackageActivation] = field(default_factory=dict)
     resource_events: list[ResourceEventFrame] = field(default_factory=list)
@@ -69,6 +72,7 @@ class SlaveService:
 
     def __post_init__(self) -> None:
         self.settings = self.settings or Settings()
+        self.names = Names(self.settings.grip_authority, self.workspace_id)
         self.sessions = make_session_factory(self.engine) if self.engine is not None else None
         if self.content_store is None:
             self.content_store = ContentStore.from_settings(self.settings)
@@ -79,8 +83,8 @@ class SlaveService:
                 startup_timeout=self.settings.runtime_plugin_startup_timeout_seconds,
                 call_timeout=self.settings.runtime_plugin_call_timeout_seconds,
             )
-        if self.capability_operation_timeout_seconds is not None and self.executor_registry is default_registry:
-            self.executor_registry = ExecutorRegistry(capability_timeout_seconds=self.capability_operation_timeout_seconds)
+        if self.capability_action_timeout_seconds is not None and self.executor_registry is default_registry:
+            self.executor_registry = ExecutorRegistry(capability_timeout_seconds=self.capability_action_timeout_seconds)
 
     async def init_db(self) -> None:
         if self.engine is None:
@@ -313,7 +317,7 @@ class SlaveService:
         return self.package_cache.get(package_ref)
 
     def capability_snapshot(self) -> set[str]:
-        operations = set(self.supported_operations)
+        actions = set(self.supported_actions)
         for activation in self.activations.values():
             if activation.desired_state != "running" or activation.activation_state != "ready":
                 continue
@@ -322,11 +326,11 @@ class SlaveService:
             )
             if package is None:
                 continue
-            operations.update(
-                operation_name(item.capability_descriptor_ref.resource_id)
-                for item in package.capability_exports
+            actions.update(
+                action_name(item.action_descriptor_ref.resource_id)
+                for item in package.action_exports
             )
-        return operations
+        return actions
 
     @staticmethod
     def _lifecycle_retry(
@@ -388,13 +392,13 @@ class SlaveService:
     def _selected_export(
         package: CapabilityPackageVersion,
         binding: ComputeBinding | None,
-    ) -> CapabilityExport:
+    ) -> ActionExport:
         if binding is None:
-            raise RuntimeError("capability_descriptor_binding_required")
+            raise RuntimeError("action_descriptor_binding_required")
         try:
-            return package.export_for(binding.capability_descriptor_ref)
+            return package.export_for(binding.action_descriptor_ref)
         except ValueError as exc:
-            raise RuntimeError("capability_descriptor_binding_mismatch") from exc
+            raise RuntimeError("action_descriptor_binding_mismatch") from exc
 
     @staticmethod
     def _body_ref(package: CapabilityPackageVersion, field_name: str) -> ResourceRef:
@@ -413,8 +417,8 @@ class SlaveService:
         return not self.executor_registry.supports(package.package_type, package.execution)
 
     async def _validate_package_exports(self, package: CapabilityPackageVersion) -> None:
-        for capability_export in package.capability_exports:
-            contract = await self._load_io_contract(capability_export.io_contract_ref)
+        for action_export in package.action_exports:
+            contract = await self._load_io_contract(action_export.io_contract_ref)
             for schema_ref in (contract.input_schema_ref, contract.output_schema_ref):
                 if schema_ref is None:
                     continue
@@ -431,10 +435,10 @@ class SlaveService:
 
     async def _validate_input_payload(
         self,
-        capability_export: CapabilityExport,
+        action_export: ActionExport,
         payload: dict[str, Any],
     ) -> None:
-        contract = await self._load_io_contract(capability_export.io_contract_ref)
+        contract = await self._load_io_contract(action_export.io_contract_ref)
         if contract.input_schema_ref is None:
             return
         try:
@@ -578,7 +582,7 @@ class SlaveService:
     async def provision(self, command: CapabilityProvisionCommand, package: CapabilityPackageVersion | None = None) -> CapabilityHealthReport:
         if command.target_slave != self.slave_id:
             raise RuntimeError("provision_target_mismatch")
-        if command.compute_binding is not None and command.compute_binding.target_resource_ref.resource_id != self.slave_id:
+        if command.compute_binding is not None and command.compute_binding.target_resource_ref.resource_id != self.names.name("slaves", self.slave_id):
             raise RuntimeError("binding_target_mismatch")
         package = package or self._find_cached_package(command.package_version_ref, command.package_digest)
         if package is None:
@@ -774,7 +778,7 @@ class SlaveService:
         )
         self.activations[activation_key] = activation
         await self._persist_activation(package, activation)
-        operation_name = package.capability_exports[0].capability_descriptor_ref.resource_id
+        action_name = package.action_exports[0].action_descriptor_ref.resource_id
         report = CapabilityHealthReport(
             report_id=f"health-{uuid4().hex}",
             package_version_ref=ref,
@@ -785,7 +789,7 @@ class SlaveService:
             activation_revision=command.activation_revision,
             evidence_refs=activation.evidence_refs,
             details={
-                "operation": operation_name,
+                "action": action_name,
                 "execution": package.execution.model_dump(mode="json"),
                 "executor_descriptor_ref": self.executor_registry.get_for(
                     package.package_type, package.execution
@@ -813,8 +817,6 @@ class SlaveService:
             raise RuntimeError("capability_package_invalid") from exc
         if command.package_version_ref != package.version_ref:
             raise RuntimeError("capability_package_ref_mismatch")
-        if not self._uses_runtime_plugin(package):
-            raise RuntimeError("unsupported_deprovision_contract")
         lock = self._activation_locks.setdefault(self._activation_key(package.version_ref, command.instance_name), asyncio.Lock())
         async with lock:
             return await self._deprovision_locked(command, package)
@@ -826,7 +828,7 @@ class SlaveService:
     ) -> CapabilityHealthReport:
         if package.package_digest.lower() != command.package_digest.lower():
             raise RuntimeError("capability_package_digest_mismatch")
-        if self.runtime_plugin_host is None:
+        if self._uses_runtime_plugin(package) and self.runtime_plugin_host is None:
             raise RuntimeError("runtime_plugin_not_found")
         ref = package.version_ref
         activation_key = self._activation_key(ref, command.instance_name)
@@ -864,9 +866,6 @@ class SlaveService:
                 activation_state="not_installed",
                 evidence_refs=evidence_refs,
                 runtime_profile={},
-                instance_name=command.instance_name,
-                target_resource_ref=command.target_resource_ref,
-                instance_config=dict(command.instance_config),
                 **desired_values,
             )
         )
@@ -893,6 +892,7 @@ class SlaveService:
         shared_ready = any(
             item is not existing
             and item.package_digest.lower() == package.package_digest.lower()
+            and item.instance_name == command.instance_name
             and item.desired_state == "running"
             and item.activation_state in {"ready", "degraded", "provisioning"}
             for item in self.activations.values()
@@ -914,7 +914,8 @@ class SlaveService:
             )
             return self._remember_health_report(activation_key, report)
         try:
-            response = await self.runtime_plugin_host.deprovision(package, command)
+            response = (await self.runtime_plugin_host.deprovision(package, command)
+                        if self._uses_runtime_plugin(package) else {})
         except (RuntimePluginError, RuntimeError) as exc:
             code = getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable"
             await self._persist_activation(package, desired, last_error_code=code)
@@ -1058,9 +1059,9 @@ class SlaveService:
         self,
         payload: dict[str, Any],
         *,
-        operation: str,
+        action: str,
         closure: TaskClosure | None,
-        capability_export: CapabilityExport | None,
+        action_export: ActionExport | None,
     ) -> dict[str, Any]:
         """Resolve and validate the immutable input binding at the Slave.
 
@@ -1072,14 +1073,14 @@ class SlaveService:
 
         if closure is None or not closure.node_input_bindings:
             return payload
-        operation_ref = closure.program.operation_ref or closure.compute.operation_ref
-        operation_name = operation_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1] if operation_ref else operation
-        candidates = {operation_ref, operation_name, operation, "default"}
+        action_ref = closure.program.action_ref or closure.compute.action_ref
+        action_name = action_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1] if action_ref else action
+        candidates = {action_ref, action_name, action, "default"}
         input_binding = next((item for item in closure.node_input_bindings if item.node_id in candidates), None)
         if input_binding is None:
             raise RuntimeError("input_binding_missing")
 
-        contract_ref = capability_export.io_contract_ref if capability_export is not None else closure.program.io_contract_ref
+        contract_ref = action_export.io_contract_ref if action_export is not None else closure.program.io_contract_ref
         contract = await self._load_io_contract(contract_ref) if contract_ref is not None else None
         try:
             raw = await self.content_store.get(input_binding.input_ref)
@@ -1131,18 +1132,18 @@ class SlaveService:
         *,
         attempt_id: str,
         execution_epoch: int,
-        operation: str = "",
+        action: str = "",
         closure: TaskClosure | None,
-        capability_export: CapabilityExport | None,
+        action_export: ActionExport | None,
     ) -> ExecutionResult:
-        contract_ref = capability_export.io_contract_ref if capability_export is not None else closure.program.io_contract_ref if closure is not None else None
+        contract_ref = action_export.io_contract_ref if action_export is not None else closure.program.io_contract_ref if closure is not None else None
         if contract_ref is None:
             return result
         contract = await self._load_io_contract(contract_ref)
         input_digest = None
         if closure is not None and closure.node_input_bindings:
-            operation_ref = closure.program.operation_ref or closure.compute.operation_ref
-            candidates = {operation_ref, operation_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1], "default"}
+            action_ref = closure.program.action_ref or closure.compute.action_ref
+            candidates = {action_ref, action_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1], "default"}
             input_binding = next((item for item in closure.node_input_bindings if item.node_id in candidates), None)
             input_digest = input_binding.input_ref.digest if input_binding is not None else None
         evidence: list[dict[str, Any]] = []
@@ -1230,9 +1231,33 @@ class SlaveService:
         return replace(result, validation_evidence=evidence)
 
     async def run(
+        self, attempt_id: str, action: str, payload: dict[str, Any], *,
+        closure: TaskClosure | None = None, binding: ComputeBinding | None = None,
+        execution_epoch: int = 1, instance_name: str = "default",
+    ) -> ExecutionResult:
+        if binding is not None and binding.expected_activation_revision is not None:
+            if binding.capability_package_ref is None:
+                raise RuntimeError("capability_package_required")
+            key = self._activation_key(binding.capability_package_ref.resource_id, binding.instance_name)
+            lock = self._activation_locks.setdefault(key, asyncio.Lock())
+            async with lock:
+                activation = self.activations.get(key)
+                if (activation is None or activation.desired_state != "running"
+                        or activation.activation_state != "ready"):
+                    raise RuntimeError("capability_activation_not_ready")
+                if activation.activation_revision != binding.expected_activation_revision:
+                    raise RuntimeError("capability_activation_revision_stale")
+                return await self._run(attempt_id, action, payload, closure=closure,
+                                       binding=binding, execution_epoch=execution_epoch,
+                                       instance_name=binding.instance_name)
+        return await self._run(attempt_id, action, payload, closure=closure, binding=binding,
+                               execution_epoch=execution_epoch,
+                               instance_name=binding.instance_name if binding and binding.instance_name != "default" else instance_name)
+
+    async def _run(
         self,
         attempt_id: str,
-        operation: str,
+        action: str,
         payload: dict[str, Any],
         *,
         closure: TaskClosure | None = None,
@@ -1250,17 +1275,17 @@ class SlaveService:
             package = self._find_cached_package(package_ref, digest)
             if package is None:
                 raise RuntimeError("capability_package_not_installed")
-        elif operation not in self.supported_operations:
-            raise RuntimeError(f"capability_unavailable:{operation}")
+        elif action not in self.supported_actions:
+            raise RuntimeError(f"capability_unavailable:{action}")
         else:
-            # Application operations are materialized as content-addressed
+            # Application actions are materialized as content-addressed
             # capability packages.  There is no in-process builtin fallback.
             package_required = True
         if closure is not None:
-            operation_ref = closure.program.operation_ref or closure.compute.operation_ref
-            expected_operation = operation_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1] if operation_ref else ""
-            if expected_operation and expected_operation != operation:
-                raise RuntimeError("operation_binding_mismatch")
+            action_ref = closure.program.action_ref or closure.compute.action_ref
+            expected_action = action_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1] if action_ref else ""
+            if expected_action and expected_action != action:
+                raise RuntimeError("action_binding_mismatch")
             bindings = {item.hole_id: item for item in closure.compute_bindings}
             for hole in closure.compute.typed_holes:
                 if hole.status != "bound" or not hole.binding_ref:
@@ -1268,7 +1293,7 @@ class SlaveService:
                 bound = bindings.get(hole.hole_id)
                 if bound is None or bound.binding_id != hole.binding_ref:
                     raise RuntimeError(f"compute_binding_missing:{hole.hole_id}")
-            if binding is not None and binding.target_resource_ref.resource_id != self.slave_id:
+            if binding is not None and binding.target_resource_ref.resource_id != self.names.name("slaves", self.slave_id):
                 raise RuntimeError("binding_target_mismatch")
         if package_required:
             raise RuntimeError("capability_package_required")
@@ -1282,7 +1307,7 @@ class SlaveService:
                 )
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("capability_package_invalid") from exc
-        capability_export = self._selected_export(package, binding) if package is not None else None
+        action_export = self._selected_export(package, binding) if package is not None else None
         if attempt_id in self.attempts:
             return self.attempts[attempt_id]
         if self.sessions is not None:
@@ -1301,15 +1326,15 @@ class SlaveService:
                     )
                     self.attempts[attempt_id] = result
                     return result
-        payload = await self._admission_payload(payload, operation=operation, closure=closure, capability_export=capability_export)
-        if capability_export is not None:
-            await self._validate_input_payload(capability_export, payload)
+        payload = await self._admission_payload(payload, action=action, closure=closure, action_export=action_export)
+        if action_export is not None:
+            await self._validate_input_payload(action_export, payload)
         if package is not None and self._uses_runtime_plugin(package):
             activation_key = self._activation_key(package.version_ref, instance_name)
             activation = self.activations.get(activation_key)
             if activation is None or activation.activation_state != "ready":
                 raise RuntimeError("capability_activation_not_ready")
-            assert capability_export is not None
+            assert action_export is not None
             if self.runtime_plugin_host is None:
                 raise RuntimeError("runtime_plugin_not_found")
             try:
@@ -1321,11 +1346,11 @@ class SlaveService:
                 activation_payload.update({"workspace_id": self.workspace_id, "slave_id": self.slave_id})
                 response = await self.runtime_plugin_host.invoke(
                     package,
-                    capability_export,
+                    action_export,
                     payload,
                     activation=activation_payload,
                     attempt_id=attempt_id,
-                    deadline_seconds=self.capability_operation_timeout_seconds,
+                    deadline_seconds=self.capability_action_timeout_seconds,
                 )
             except (RuntimePluginError, RuntimeError) as exc:
                 raise RuntimeError(getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable") from exc
@@ -1334,17 +1359,17 @@ class SlaveService:
             value = response["value"]
             result = ExecutionResult(
                 resource_ref=ResourceRef(
-                    resource_id=f"content://sha256/{digest_bytes(canonical_json_bytes(value))}",
+                    resource_id=content_uri(digest_bytes(canonical_json_bytes(value)), "execution-result", names=self.names),
                     identity_criterion="content_digest",
                 ),
                 value=value,
-                replay_safety=str(response.get("replay_safety") or capability_export.replay_safety),
+                replay_safety=str(response.get("replay_safety") or action_export.replay_safety),
                 terminal_state=str(response.get("terminal_state") or "completed"),
                 terminal_error=response.get("terminal_error"),
                 provenance={
                     "package_version_ref": package.version_ref,
                     "package_digest": package.package_digest,
-                    "capability_descriptor_ref": capability_export.capability_descriptor_ref.model_dump(mode="json"),
+                    "action_descriptor_ref": action_export.action_descriptor_ref.model_dump(mode="json"),
                     "execution": package.execution.model_dump(mode="json"),
                     "runtime_plugin_id": str(response.get("runtime_plugin_id") or ""),
                     **dict(response.get("provenance") or {}),
@@ -1374,9 +1399,9 @@ class SlaveService:
             result,
             attempt_id=attempt_id,
             execution_epoch=execution_epoch,
-            operation=operation,
+            action=action,
             closure=closure,
-            capability_export=capability_export,
+            action_export=action_export,
         )
         # Every execution result is a content-addressed JSON artifact.  The
         # executor/runtime may calculate a digest for its local protocol, but
@@ -1397,7 +1422,7 @@ class SlaveService:
                     attempt_id=attempt_id,
                     slave_id=self.slave_id,
                     workspace_id=self.workspace_id,
-                    operation=operation,
+                    action=action,
                     payload=payload,
                     state=result.terminal_state,
                     result={

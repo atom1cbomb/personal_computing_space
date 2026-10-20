@@ -22,7 +22,7 @@ def attach_constraint(spec: ConstraintSpec) -> Callable[[Callable[..., Any]], Ca
 def task_closure(
     *,
     goal: str,
-    operation_ref: str = "",
+    action_ref: str = "",
     data: DataApplication | None = None,
     compute: ComputeSpec | None = None,
     terms: list[Any] | None = None,
@@ -31,8 +31,8 @@ def task_closure(
         constraints = list(getattr(function, "_loom_constraints", []))
         closure = TaskClosure(
             data=data or DataApplication(),
-            program=ProgramApplication(operation_ref=operation_ref),
-            compute=compute or ComputeSpec(operation_ref=operation_ref),
+            program=ProgramApplication(action_ref=action_ref),
+            compute=compute or ComputeSpec(action_ref=action_ref),
             terms=terms or [],
             constraints=constraints,
         )

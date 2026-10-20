@@ -69,7 +69,7 @@ def create_app(
         instance_id=instance_id,
         workspace_id=settings.workspace_id,
         internal_api_secret=settings.internal_api_secret,
-        timeout=settings.worker_operation_timeout_seconds,
+        timeout=settings.worker_action_timeout_seconds,
         transport=observer_transport,
         settings=settings,
     )

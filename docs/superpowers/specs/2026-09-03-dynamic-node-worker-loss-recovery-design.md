@@ -1,5 +1,7 @@
 # 动态节点 Worker 失联自动恢复设计
 
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 **日期：** 2026-09-03  
 **状态：** 已批准，待实现计划  
 **取代范围：** `docs/superpowers/specs/2026-09-02-compute-service-desk-acceptance-design.md` 中 G4 的 availability API 故障注入与 Run 级 epoch 改派语义

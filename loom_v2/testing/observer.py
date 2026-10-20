@@ -36,12 +36,12 @@ def seed_embedded_slaves(
             "slave-a": SlaveService(
                 "slave-a",
                 content_store=repository.content_store,
-                capability_operation_timeout_seconds=settings.capability_operation_timeout_seconds,
+                capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
             ),
             "slave-b": SlaveService(
                 "slave-b",
                 content_store=repository.content_store,
-                capability_operation_timeout_seconds=settings.capability_operation_timeout_seconds,
+                capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
             ),
         }
     now = datetime.now(timezone.utc)
@@ -55,14 +55,14 @@ def seed_embedded_slaves(
             "endpoint_url": f"http://{slave_id}",
             "protocol_version": "loom.v1",
             "capabilities": {
-                "operations": sorted(slave.supported_operations),
-                "base_operations": sorted(slave.supported_operations),
+                "actions": sorted(slave.supported_actions),
+                "base_actions": sorted(slave.supported_actions),
                 "executor_descriptors": [
                     {
                         "package_type": descriptor.package_type,
                         "kind": descriptor.kind,
                         "version": descriptor.version,
-                        "operations": sorted(descriptor.operations),
+                        "actions": sorted(descriptor.actions),
                         "descriptor_ref": descriptor.descriptor_ref,
                         "digest": descriptor.digest,
                     }
@@ -99,12 +99,12 @@ def create_embedded_app(
         "slave-a": SlaveService(
             "slave-a",
             content_store=repository.content_store,
-            capability_operation_timeout_seconds=settings.capability_operation_timeout_seconds,
+            capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
         ),
         "slave-b": SlaveService(
             "slave-b",
             content_store=repository.content_store,
-            capability_operation_timeout_seconds=settings.capability_operation_timeout_seconds,
+            capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
         ),
     }
     workers: dict[str, WorkerSession] = {}

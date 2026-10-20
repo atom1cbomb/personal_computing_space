@@ -5,6 +5,11 @@
 name = "loom-prod"
 remote_dir = "/opt/loom-v2"
 workspace_id = "workspace-default"
+# Public resource namespace and Observer origin (TLS may terminate at a proxy).
+grip_authority = "loom.example.com"
+public_base_url = "https://loom.example.com"
+# Configure this file to enable GRIP; it is mounted only on the Observer.
+# grip_token_file = "../secrets/grip_token"
 # Optional Dockerfile build network: default, host, or none. Use host only
 # when the target Docker bridge cannot resolve package mirrors.
 build_network = "default"

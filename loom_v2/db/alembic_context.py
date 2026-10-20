@@ -8,7 +8,7 @@ from alembic import op
 def migration_role() -> str:
     """Return the role injected by the application migration adapter.
 
-    Alembic's operation context is optional in its type declarations because
+    Alembic's action context is optional in its type declarations because
     the same module can be imported while generating offline SQL. Revisions
     treat a missing context as no role, which safely makes role-local DDL a
     no-op outside the application adapter.

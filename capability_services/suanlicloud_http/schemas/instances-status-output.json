@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "operation": {
+    "action": {
       "type": "string",
       "const": "instances_status"
     },
@@ -12,7 +12,21 @@
           "type": "array",
           "items": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "InstanceId": {
+                "type": "string"
+              },
+              "State": {
+                "type": "string"
+              },
+              "Reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "InstanceId",
+              "State"
+            ]
           }
         }
       },
@@ -22,7 +36,7 @@
     }
   },
   "required": [
-    "operation",
+    "action",
     "result"
   ]
 }

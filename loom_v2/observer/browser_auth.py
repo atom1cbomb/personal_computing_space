@@ -89,7 +89,7 @@ class BrowserAuth:
                 "driver_epoch": int(driver["epoch"]),
             })
 
-    async def start(self, request, package, targets, instance_name):
+    async def start(self, request, package, targets, instance_name, *, expected_revision):
         if len(targets) != 1:
             raise HTTPException(400, "browser_auth_single_target_required")
         activations = await self.app.state.repo.list_package_activations(package)
@@ -97,6 +97,8 @@ class BrowserAuth:
                            and a.instance_name == instance_name), None)
         if activation is None:
             raise HTTPException(409, "capability_activation_not_running")
+        if activation.activation_revision != expected_revision:
+            raise ValueError("capability_activation_revision_stale")
         authentication = package.body.get("authentication") if isinstance(package.body, dict) else None
         if not isinstance(authentication, dict) or not isinstance(authentication.get("client"), dict):
             raise HTTPException(409, "browser_auth_client_not_declared")

@@ -177,7 +177,7 @@ class DriverMCP:
             add_unique(
                 executors,
                 seen_executors,
-                {"package_type": "function", "kind": "container:python_orchestrator", "version": "1", "operations": ["orchestrate"], "driver_special": True},
+                {"package_type": "function", "kind": "container:python_orchestrator", "version": "1", "actions": ["orchestrate"], "driver_special": True},
             )
             return executors, plugins
 
@@ -194,9 +194,9 @@ class DriverMCP:
         await self.repository.refresh_slaves(self.workspace_id)
         capabilities = [
             {
-                "resource_id": resource_id,
+                "resource_id": self.repository.names.name("slaves", resource_id),
                 "available": self.repository._slave_is_active(resource_id),
-                "operations": sorted(details.get("operations", set())),
+                "actions": sorted(details.get("actions", set())),
                 "executor_descriptors": details.get("executor_descriptors", []),
                 "runtime_plugin_descriptors": details.get("runtime_plugin_descriptors", details.get("runtime_plugins", [])),
             }
@@ -327,7 +327,7 @@ class DriverMCP:
         contract_schema = ClosureContract.model_json_schema()
         patch_op_schema = {
             "type": "object",
-            "description": "One deterministic closure refinement operation. Use canonical field `kind`; `op` is accepted as an alias.",
+            "description": "One deterministic closure refinement action. Use canonical field `kind`; `op` is accepted as an alias.",
             "properties": {
                 "kind": {
                     "type": "string",
@@ -345,7 +345,7 @@ class DriverMCP:
                     ],
                 },
                 "op": {"type": "string"},
-                "operation": {"type": "string"},
+                "action": {"type": "string"},
                 "value": {},
             },
             "required": ["kind", "value"],
@@ -373,8 +373,8 @@ class DriverMCP:
                 "description": (
                     "Upload one immutable content object and use the returned ResourceRef; do not "
                     "calculate or write a digest. JSON Schema and IoContract bodies are canonicalized "
-                    "and validated. Upload operation descriptors with media type "
-                    "`application/vnd.loom.operation-descriptor+json`; the returned ref carries the "
+                    "and validated. Upload action descriptors with media type "
+                    "`application/vnd.loom.action-descriptor+json`; the returned ref carries the "
                     "authoritative domain-separated descriptor digest."
                 ),
                 "inputSchema": {
@@ -390,15 +390,15 @@ class DriverMCP:
                 "type": "function",
                 "name": "loom_apply_plan_patch",
                 "description": (
-                    "Apply deterministic closure refinement operations after open_run. "
-                    "Batch independent operations in one ordered `ops` array whenever possible: "
+                    "Apply deterministic closure refinement actions after open_run. "
+                    "Batch independent actions in one ordered `ops` array whenever possible: "
                     "the complete array is applied atomically and creates one draft version, "
                     "receipt, and draft_patched event. Split into multiple calls only when an "
-                    "intermediate readiness result or a prior operation's result is required. "
+                    "intermediate readiness result or a prior action's result is required. "
                     "For `set_execution_payload`, provide `value.input_ref` (a ResourceRef "
                     "returned by `loom_put_content`); raw payload values are rejected. "
                     "For `materialize_capability_package_candidate`, provide the generic package "
-                    "envelope `package_type`, `execution`, `capability_exports`, and schema-validated "
+                    "envelope `package_type`, `execution`, `action_exports`, and schema-validated "
                     "`body`; descriptor, IoContract, program, and schema refs must come from "
                     "`loom_put_content`. Omit `package_digest`; Loom computes it."
                 ),

@@ -1,0 +1,73 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-run",
+  "name": "instances_run",
+  "description": "Create VM instances from the requested image and compute configuration. Poll instances-list for running state and a guest IP address, then activate and authenticate the SSH access package before running commands.",
+  "resource_effects": [
+    {
+      "effect": "create",
+      "resource_type": "compute.vm",
+      "identity_path": "result.Instances[].InstanceId",
+      "readiness": {
+        "result_path": "result.Instances[]",
+        "identity_path": "InstanceId",
+        "action_ref": {
+          "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-list"
+        },
+        "input_mapping": {
+          "InstanceIds": [
+            "$resource.identity"
+          ],
+          "Filters": {
+            "constant": []
+          }
+        },
+        "conditions": [
+          {
+            "path": "State",
+            "operator": "equals",
+            "value": "running"
+          },
+          {
+            "path": "Ip",
+            "operator": "present"
+          }
+        ],
+        "polling": {
+          "max_attempts": 60,
+          "interval_seconds": 5
+        }
+      },
+      "access_requirements": [
+        {
+          "capability_kind": "compute.vm.remote_shell",
+          "package_ref": {
+            "resource_id": "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2"
+          },
+          "target_binding": "target_resource_ref",
+          "instance_config_mapping": {
+            "host": "Ip",
+            "port": {
+              "constant": 22
+            },
+            "user": {
+              "constant": "root"
+            }
+          },
+          "requires_authentication": true,
+          "ready_state": "authenticated"
+        }
+      ],
+      "cleanup": {
+        "action_ref": {
+          "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-terminate"
+        },
+        "input_mapping": {
+          "InstanceIds": [
+            "$resource.identity"
+          ]
+        }
+      }
+    }
+  ]
+}

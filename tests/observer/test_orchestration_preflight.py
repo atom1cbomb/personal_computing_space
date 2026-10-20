@@ -11,8 +11,8 @@ from loom_v2.observer import orchestration_preflight
 VALID = (
     'async def orchestrate(ctx: "OrchestrationContext", '
     'input_ref: "ResourceRef") -> "ResourceRef":\n'
-    '    handle = ctx.emit_node({"resource_id": "pkg"}, '
-    '{"resource_id": "descriptor"}, [input_ref])\n'
+    '    handle = ctx.emit_node({"resource_id": "grip://loom.local/workspaces/workspace-default/resources/pkg"}, '
+    '{"resource_id": "grip://loom.local/workspaces/workspace-default/resources/descriptor"}, [input_ref])\n'
     '    return await ctx.result(handle)\n'
 )
 
@@ -45,7 +45,7 @@ def test_validate_entry_signature_reports_invalid_annotation():
 
 @pytest.mark.asyncio
 async def test_check_program_reports_undefined_name_with_normalized_position():
-    source = VALID.replace('"pkg"', "null")
+    source = VALID.replace('"grip://loom.local/workspaces/workspace-default/resources/pkg"', "null")
     diagnostics = await orchestration_preflight.check_program(source)
     assert diagnostics
     diagnostic = next(item for item in diagnostics if item["rule"] == "reportUndefinedVariable")
@@ -64,8 +64,8 @@ async def test_check_program_reports_undefined_name_with_normalized_position():
 @pytest.mark.asyncio
 async def test_check_program_reports_emit_node_argument_type():
     source = VALID.replace(
-        'ctx.emit_node({"resource_id": "pkg"}, {"resource_id": "descriptor"}, [input_ref])',
-        'ctx.emit_node(1, {"resource_id": "descriptor"}, [input_ref])',
+        'ctx.emit_node({"resource_id": "grip://loom.local/workspaces/workspace-default/resources/pkg"}, {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/descriptor"}, [input_ref])',
+        'ctx.emit_node(1, {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/descriptor"}, [input_ref])',
     )
     diagnostics = await orchestration_preflight.check_program(source)
     diagnostic = next(item for item in diagnostics if item["rule"] == "reportArgumentType")

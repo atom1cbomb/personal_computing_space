@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise the real runtime-plugin process and a sibling HTTP container."""
+"""Internal runtime acceptance: real plugin process and sibling HTTP container.
+
+For public resource usage and deployed GRIP acceptance see examples/grip/.
+"""
 
 from __future__ import annotations
+
+from loom_orchestration.naming import content_uri
 
 import asyncio
 import json
@@ -19,7 +24,7 @@ from loom_v2.slave.runtime_plugins import RuntimePluginHost
 
 def _content_ref(digest: str) -> ResourceRef:
     return ResourceRef(
-        resource_id=f"content://sha256/{digest}",
+        resource_id=content_uri(digest, "http-acceptance/io-contract"),
         identity_criterion="content_digest",
     )
 
@@ -30,7 +35,7 @@ async def main() -> None:
     socket_dir = Path(os.getenv("LOOM_RUNTIME_PLUGIN_SOCKET_DIR", "/tmp/loom-runtime-plugins"))
     target_slave = os.getenv("LOOM_SLAVE_ID", "slave-runtime-e2e")
     descriptor_ref = ResourceRef(
-        resource_id="loom://e2e/http-echo",
+        resource_id="grip://loom.local/workspaces/workspace-default/actions/e2e/http-echo",
         version_or_digest="a" * 64,
         identity_criterion="descriptor_digest",
     )
@@ -42,9 +47,9 @@ async def main() -> None:
         source_run_ref="run-e2e",
         source_closure_version_ref="version-e2e",
         execution={"kind": "container:http", "version": "1"},
-        capability_exports=[
+        action_exports=[
             {
-                "capability_descriptor_ref": descriptor_ref,
+                "action_descriptor_ref": descriptor_ref,
                 "io_contract_ref": _content_ref("b" * 64),
                 "effect_class": "NetworkService",
                 "permissions": [],
@@ -99,7 +104,7 @@ async def main() -> None:
         }
         result = await host.invoke(
             package,
-            package.capability_exports[0],
+            package.action_exports[0],
             {"value": 7},
             activation=activation,
             attempt_id="e2e-attempt",

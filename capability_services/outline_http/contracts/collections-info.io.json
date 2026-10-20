@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "content://sha256/3797626bd17e346de1adbbe242cd2c4e41a5956ccf7424c65cf45e2bbef10c81",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/schemas/collections-info-input/sha256/3797626bd17e346de1adbbe242cd2c4e41a5956ccf7424c65cf45e2bbef10c81",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "content://sha256/f3dae8759ea644127783c3511066b023ac17a5cbb4c28761983efc3fdb7d44b6",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/schemas/collections-info-output/sha256/e9abac7baacdc03ac3619f30eaaf32ec3a703fa4731f02d43da5dcf7949ab957",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

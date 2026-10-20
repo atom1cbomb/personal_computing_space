@@ -3,12 +3,21 @@ from .errors import DomainError, DomainErrorEnvelope
 from .terms import TermSupport, TypedTerm, VocabularyRegistry, builtin_registry
 from .agents import AgentLease, AgentRegistration, DriverCommand, DriverRequestReceipt, DriverThreadBinding
 from .messages import MessageReceipt, MessageReceiptState
+from .resource_effects import (
+    ResourceAccessRequirement,
+    ResourceCleanup,
+    ResourceCondition,
+    ResourceEffect,
+    ResourcePolling,
+    ResourceReadiness,
+    validate_action_descriptor,
+)
 from .types import (
     CapabilityHealthReport,
     CapabilityPackage,
     CapabilityPackageActivation,
     CapabilityPackageVersion,
-    CapabilityExport,
+    ActionExport,
     ExecutionContract,
     CapabilityProvisionCommand,
     CapabilityDeprovisionCommand,
@@ -43,6 +52,13 @@ __all__ = [
     "DriverThreadBinding",
     "MessageReceipt",
     "MessageReceiptState",
+    "ResourceAccessRequirement",
+    "ResourceCleanup",
+    "ResourceCondition",
+    "ResourceEffect",
+    "ResourcePolling",
+    "ResourceReadiness",
+    "validate_action_descriptor",
     "TermSupport",
     "TypedTerm",
     "VocabularyRegistry",
@@ -52,7 +68,7 @@ __all__ = [
     "CapabilityPackage",
     "CapabilityPackageActivation",
     "CapabilityPackageVersion",
-    "CapabilityExport",
+    "ActionExport",
     "ExecutionContract",
     "CapabilityProvisionCommand",
     "CapabilityDeprovisionCommand",

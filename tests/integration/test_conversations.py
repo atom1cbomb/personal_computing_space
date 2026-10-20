@@ -43,7 +43,7 @@ async def test_persisted_conversation_history_is_ordered_by_run_creation():
     assert [message["content"] for message in history["messages"]] == ["第一问", "第二问"]
 
 
-def test_conversation_list_history_and_stream_use_persisted_messages():
+def test_run_history_exposes_persisted_messages():
     repository = ObserverRepository()
     client = TestClient(create_app(repository))
     run = client.post(
@@ -57,23 +57,8 @@ def test_conversation_list_history_and_stream_use_persisted_messages():
     asyncio.run(repository.append_message(run["run_id"], "user", "能力问题"))
     asyncio.run(repository.append_message(run["run_id"], "assistant", "两者能力相同"))
 
-    conversations = client.get("/api/v1/conversations")
-    assert conversations.status_code == 200
-    assert conversations.json() == [
-        {
-            "conversation_ref": "conversation-history",
-            "title": "能力问题",
-            "run_count": 1,
-            "latest_run_id": run["run_id"],
-            "status": "executing",
-        }
-    ]
-
-    history = client.get("/api/v1/conversations/conversation-history")
+    history = client.get(f"/api/v1/runs/{run['run_id']}")
     assert history.status_code == 200
-    assert [message["role"] for message in history.json()["messages"]] == ["user", "assistant"]
-
-    stream = client.get("/api/v1/conversations/conversation-history/stream")
-    assert stream.status_code == 200
-    assert '"phase": "message"' in stream.text
-    assert "两者能力相同" in stream.text
+    messages = [event for event in history.json()["events"] if event.get("phase") == "message"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert [message["content"] for message in messages] == ["能力问题", "两者能力相同"]

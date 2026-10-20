@@ -1,5 +1,7 @@
 # 真实负载验收设计：材料带隙统计报告（算力服务台场景）
 
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 **日期：** 2026-09-02
 **状态：** 设计已部分验证（G1/G3/G5 两轮真实后端通过；G2 promote/abandon 闭环、G4 掉线改派、G6 确定性变体待实现）
 **对应文档：** `docs/superpowers/specs/2026-08-26-distributed-analysis-e2e-design.md`；`docs/superpowers/specs/2026-09-01-run-lifecycle-redesign.md`
@@ -66,7 +68,7 @@
 
 - 编排包使用 `executor_kind="orchestrator_python_v1"`，`allowed_node_package_refs` 仅含 `summarize_bandgap` 与 `merge_bandgap_report`，`max_nodes`/`max_live_nodes` 设上限。
 - 编排程序必须通过 orchestration-early-validation 的 Pyright 静态预检：`orchestrate(ctx, input_ref)` 的参数与返回值必须使用 `"OrchestrationContext"`/`"ResourceRef"` 类型标注；未通过预检时 readiness 返回 `orchestration_program_type_error`，Run 不得提交。
-- 编排程序读取父输入，对每个 partition emit summarize 节点，等待结果后 emit merge 节点，返回报告 ref；中间与最终结果均写入 ContentStore（`content://sha256/<digest>`）。
+- 编排程序读取父输入，对每个 partition emit summarize 节点，等待结果后 emit merge 节点，返回报告 ref；中间与最终结果均写入 ContentStore（`grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>`）。
 - 非法输入（缺字段/类型错）被 readiness/admission 拒绝，父 Run 不伪造 `completed`（复用现有 admission 语义）。
 
 ### 5.6 机器掉线注入与改派（G4）

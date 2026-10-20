@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-reboot",
+  "name": "instances_reboot",
+  "description": "Instances reboot through the suanlicloud-http activation."
+}

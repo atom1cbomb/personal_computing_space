@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from loom_orchestration.grip import Names
+from loom_orchestration.naming import content_uri
+
 import asyncio
 import json
 import os
@@ -33,18 +36,18 @@ class ExecutorDescriptor:
     package_type: str
     kind: str
     version: str = "1"
-    operations: frozenset[str] = frozenset()
+    actions: frozenset[str] = frozenset()
     replay_safety: str = "Idempotent"
     effect_class: str = "Pure"
 
     @property
     def descriptor_ref(self) -> str:
-        return f"executor://{self.package_type}/{self.kind}/{self.version}"
+        return Names().name("executors", self.package_type, self.kind, self.version)
 
     @property
     def digest(self) -> str:
         return digest_json(
-            {"package_type": self.package_type, "kind": self.kind, "version": self.version, "operations": sorted(self.operations), "replay_safety": self.replay_safety, "effect_class": self.effect_class},
+            {"package_type": self.package_type, "kind": self.kind, "version": self.version, "actions": sorted(self.actions), "replay_safety": self.replay_safety, "effect_class": self.effect_class},
             domain="loom/executor-descriptor/v1",
         )
 
@@ -58,14 +61,14 @@ class ExecutorAdapter(Protocol):
 def _result(value: Any, replay_safety: str = "Idempotent") -> ExecutionResult:
     digest = digest_bytes(canonical_json_bytes(value))
     return ExecutionResult(
-        resource_ref=ResourceRef(resource_id=f"content://sha256/{digest}", identity_criterion="content_digest"),
+        resource_ref=ResourceRef(resource_id=content_uri(digest, "execution-result"), identity_criterion="content_digest"),
         value=value,
         replay_safety=replay_safety,
     )
 
 
 class ProcessJSONStdioV1Adapter:
-    descriptor = ExecutorDescriptor(package_type="function", kind="process:json_stdio", operations=frozenset({"run_code"}), replay_safety="DeclaredByPackage", effect_class="Sandboxed")
+    descriptor = ExecutorDescriptor(package_type="function", kind="process:json_stdio", actions=frozenset({"run_code"}), replay_safety="DeclaredByPackage", effect_class="Sandboxed")
 
     def __init__(self, timeout_seconds: float | None = None) -> None:
         # Keep this timeout independent from the coding-agent conversation
@@ -74,7 +77,7 @@ class ProcessJSONStdioV1Adapter:
         self.timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
-            else Settings().capability_operation_timeout_seconds
+            else Settings().capability_action_timeout_seconds
         )
 
     def _timeout(self) -> float:

@@ -1,5 +1,7 @@
 # 外部服务能力包通用认证设计
 
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 **日期：** 2026-09-19  
 **状态：** 实现设计
 
@@ -52,7 +54,7 @@ export 路径冲突。未声明 `authentication` 的服务保持现有行为：�
 重新认证请求示例：
 
 ```http
-POST /api/v1/capability-packages/capability-package://k8s-gateway/v1/auth/start
+POST /api/v1/capability-packages/grip://loom.local/workspaces/workspace-default/packages/k8s-gateway/v1/auth/start
 Content-Type: application/json
 
 {"target_slaves":["slave-a"],"approved_digest":"<package_digest>"}

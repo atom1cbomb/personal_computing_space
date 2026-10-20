@@ -13,7 +13,7 @@ class DomainErrorEnvelope(BaseModel):
     code: str
     category: str = "domain"
     retryable: bool = False
-    operation_ref: str | None = None
+    action_ref: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -23,5 +23,5 @@ class DomainError(RuntimeError):
         super().__init__(envelope.code)
 
 
-def error(code: str, *, category: str = "domain", retryable: bool = False, operation_ref: str | None = None, **details: Any) -> DomainError:
-    return DomainError(DomainErrorEnvelope(code=code, category=category, retryable=retryable, operation_ref=operation_ref, details=details))
+def error(code: str, *, category: str = "domain", retryable: bool = False, action_ref: str | None = None, **details: Any) -> DomainError:
+    return DomainError(DomainErrorEnvelope(code=code, category=category, retryable=retryable, action_ref=action_ref, details=details))

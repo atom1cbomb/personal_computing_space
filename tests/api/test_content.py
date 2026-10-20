@@ -29,7 +29,7 @@ def test_content_endpoint_canonicalizes_json_and_returns_semantic_ref() -> None:
     first_ref = first.json()
     second_ref = second.json()
     assert first_ref == second_ref
-    assert first_ref["resource_id"].startswith("content://sha256/")
+    assert first_ref["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/json-schema/sha256/")
     assert first_ref["identity_criterion"] == "content_digest"
     assert "endpoint_url" not in first_ref.get("access_binding", {})
     assert "bucket" not in first_ref.get("access_binding", {})
@@ -85,4 +85,4 @@ async def _put_schema_through_mcp() -> dict:
 async def test_mcp_content_upload_returns_a_resource_ref() -> None:
     result = await _put_schema_through_mcp()
 
-    assert result["resource_ref"]["resource_id"].startswith("content://sha256/")
+    assert result["resource_ref"]["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/json-schema/sha256/")

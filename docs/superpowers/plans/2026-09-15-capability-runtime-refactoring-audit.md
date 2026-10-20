@@ -1,5 +1,9 @@
 # Loom v2 重构审计结论与收敛计划
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](../specs/2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 > 审计输入：`/tmp/loom_v2-audit-2026-09-15-122257.md`
 > 审计日期：2026-09-15
 > 能力包基线：`06a46f1 feat: complete capability package phase 3 and compose tests`
@@ -185,7 +189,7 @@ target 选择、worker 调用、health report 和错误映射可抽成窄的 act
 
 #### N. ResourceRef/digest helper
 
-content ref 的解析、构造和 SHA-256 格式检查重复，但 digest 不是可以删除的概念：它仍用于 content identity、package realization 和 fencing。最新实现中，普通 content ref 使用 `content://sha256/<digest>` + `content_digest`；内容承载的 descriptor ref 还可能同时保留 content object digest 与 `descriptor_digest` 的 domain-separated `version_or_digest`，两者不能被 helper 错误合并。可在 `ResourceRef`/refs utility 提供同步 helper（`is_content_ref`、`require_sha256`、canonical content ref 构造），而实际 bytes 读取和 digest 对比继续由 ContentStore/执行层完成。不得让 `ResourceRef` 隐式访问存储。
+content ref 的解析、构造和 SHA-256 格式检查重复，但 digest 不是可以删除的概念：它仍用于 content identity、package realization 和 fencing。最新实现中，普通 content ref 使用 `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` + `content_digest`；内容承载的 descriptor ref 还可能同时保留 content object digest 与 `descriptor_digest` 的 domain-separated `version_or_digest`，两者不能被 helper 错误合并。可在 `ResourceRef`/refs utility 提供同步 helper（`is_content_ref`、`require_sha256`、canonical content ref 构造），而实际 bytes 读取和 digest 对比继续由 ContentStore/执行层完成。不得让 `ResourceRef` 隐式访问存储。
 
 #### O. Agent registration/heartbeat
 

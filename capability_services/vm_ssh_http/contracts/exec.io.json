@@ -1,13 +1,16 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "content://sha256/466f6009bde6eb36cd420b38a9e8da9df832867013d2a9d06c9eca862e5eef8a",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/exec-input/sha256/a6fafecadc8d3de5747bae56f403c946378650bab1d3e6157e78ac6ab5102735",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "content://sha256/06701ebfdd171745f2ccceb2660fa23a8982451d79877f4a13326364d34ee8f5",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/exec-output/sha256/06701ebfdd171745f2ccceb2660fa23a8982451d79877f4a13326364d34ee8f5",
     "identity_criterion": "content_digest"
   },
-  "success_semantics": null,
-  "success_validator_ref": null
+  "success_semantics": "Command exits with code zero and does not time out.",
+  "success_validator_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/validators/exec-success/sha256/72d6091846f5022a1bfc734370b01a69f020c79425edee85ebcce483353159f0",
+    "identity_criterion": "content_digest"
+  }
 }

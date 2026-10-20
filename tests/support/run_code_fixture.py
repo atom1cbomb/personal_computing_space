@@ -24,12 +24,12 @@ DEFAULT_PROGRAM = b"""import json\nimport sys\n\npayload = json.load(sys.stdin)\
 class RunCodeFixture:
     package: CapabilityPackageVersion
     binding: ComputeBinding
-    operation: str
+    action: str
     program_ref: ResourceRef
 
     @property
-    def operation_ref(self) -> str:
-        return f"loom://{self.operation}"
+    def action_ref(self) -> str:
+        return f"grip://loom.local/workspaces/workspace-default/actions/{self.action}"
 
     def closure(
         self,
@@ -38,7 +38,7 @@ class RunCodeFixture:
         input_refs: list[ResourceRef] | None = None,
         closure_id: str = "closure-run-code",
     ) -> TaskClosure:
-        contract_ref = io_contract_ref or self.package.capability_exports[0].io_contract_ref
+        contract_ref = io_contract_ref or self.package.action_exports[0].io_contract_ref
         assert contract_ref is not None
         hole = TypedHole(
             hole_id=self.binding.hole_id,
@@ -48,13 +48,13 @@ class RunCodeFixture:
         return TaskClosure(
             closure_id=closure_id,
             program={
-                "operation_ref": self.operation_ref,
+                "action_ref": self.action_ref,
                 "io_contract_ref": contract_ref.model_dump(mode="json"),
             },
-            compute=ComputeSpec(operation_ref=self.operation_ref, typed_holes=[hole]),
+            compute=ComputeSpec(action_ref=self.action_ref, typed_holes=[hole]),
             compute_bindings=[self.binding],
             node_input_bindings=[
-                NodeInputBinding(node_id=self.operation, input_ref=ref)
+                NodeInputBinding(node_id=self.action, input_ref=ref)
                 for ref in (input_refs or [])
             ],
         )
@@ -63,7 +63,7 @@ class RunCodeFixture:
 async def make_run_code_fixture(
     service: SlaveService,
     *,
-    operation: str = "test_double",
+    action: str = "test_double",
     package_id: str | None = None,
     program: bytes = DEFAULT_PROGRAM,
     io_contract_ref: ResourceRef | None = None,
@@ -81,24 +81,24 @@ async def make_run_code_fixture(
     from loom_v2.digest import digest_json
 
     descriptor_payload = {
-        "schema_version": "operation.v1",
-        "resource_id": f"loom://{operation}",
-        "name": operation,
+        "schema_version": "action.v1",
+        "resource_id": f"grip://loom.local/workspaces/workspace-default/actions/{action}",
+        "name": action,
     }
-    operation_ref = ResourceRef(
-        resource_id=f"loom://{operation}",
-        version_or_digest=digest_json(descriptor_payload, domain="loom/operation-descriptor/v1"),
+    action_ref = ResourceRef(
+        resource_id=f"grip://loom.local/workspaces/workspace-default/actions/{action}",
+        version_or_digest=digest_json(descriptor_payload, domain="loom/action-descriptor/v1"),
         identity_criterion="descriptor_digest",
     )
     package = CapabilityPackageVersion(
-        package_id=package_id or f"package-{operation}",
+        package_id=package_id or f"package-{action}",
         package_version="v1",
-        package_closure_version_ref=f"package-closure-{operation}",
+        package_closure_version_ref=f"package-closure-{action}",
         source_run_ref="test-run",
         source_closure_version_ref="test-closure-v1",
         execution={"kind": "process:json_stdio", "version": "1"},
-        capability_exports=[{
-            "capability_descriptor_ref": operation_ref,
+        action_exports=[{
+            "action_descriptor_ref": action_ref,
             "io_contract_ref": contract_ref,
             "effect_class": "Sandboxed",
             "permissions": [],
@@ -110,19 +110,19 @@ async def make_run_code_fixture(
         },
     )
     binding = ComputeBinding(
-        binding_id=f"binding-{operation}",
-        hole_id=f"hole-{operation}",
-        capability_descriptor_ref=operation_ref,
+        binding_id=f"binding-{action}",
+        hole_id=f"hole-{action}",
+        action_descriptor_ref=action_ref,
         capability_package_ref=ResourceRef(
             resource_id=package.version_ref,
             version_or_digest=package.package_digest,
         ),
-        target_resource_ref=ResourceRef(resource_id=service.slave_id),
+        target_resource_ref=ResourceRef(resource_id=service.names.name("slaves", service.slave_id)),
     )
     return RunCodeFixture(
         package=package,
         binding=binding,
-        operation=operation,
+        action=action,
         program_ref=program_ref,
     )
 

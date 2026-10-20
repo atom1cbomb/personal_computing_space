@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from loom_orchestration.naming import content_digest
+from loom_orchestration.grip import Names
+
 import ast
 import asyncio
 import inspect
@@ -42,7 +45,7 @@ class OrchestrationProgramError(RuntimeError):
 class OrchestrationExecutorDescriptor:
     kind: str = "container:python_orchestrator"
     version: str = "1"
-    operation: str = "orchestrate"
+    action: str = "orchestrate"
 
 
 # This bootstrap runs inside the pinned Python image.  It keeps the original
@@ -89,6 +92,11 @@ def _receive():
 
 
 class OrchestrationContext:
+    async def sleep(self, seconds):
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 <= seconds <= 3600:
+            raise OrchestrationFailure({"code": "orchestration_sleep_invalid"})
+        await asyncio.sleep(seconds)
+
     async def read_json(self, ref):
         _send({"type": "read_json", "ref": ref})
         message = _receive()
@@ -124,28 +132,23 @@ class OrchestrationContext:
             raise OrchestrationFailure(message.get("error") or {"code": "orchestration_protocol_invalid"})
         return message["value"]
 
-    async def defer_cleanup(self, *, step_id, resource_ref, cleanup_operation_ref, input_mapping):
-        _send({"type": "defer_cleanup", "step_id": step_id, "resource_ref": resource_ref, "cleanup_operation_ref": cleanup_operation_ref, "input_mapping": input_mapping})
+    async def defer_cleanup(self, *, step_id, resource_ref, cleanup_action_ref, input_mapping):
+        _send({"type": "defer_cleanup", "step_id": step_id, "resource_ref": resource_ref, "cleanup_action_ref": cleanup_action_ref, "input_mapping": input_mapping})
         message = _receive()
         if message.get("type") != "ack":
             raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})
 
-    def emit_node(self, *args, **kwargs):
-        if len(args) == 3:
-            step_id = ""
-            package_ref, capability_descriptor_ref, input_refs = args
-        elif len(args) == 4:
-            step_id, package_ref, capability_descriptor_ref, input_refs = args
-        else:
-            raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})
+    def emit_node(self, step_id, package_ref, action_descriptor_ref, input_refs=None, *, target_resource_ref=None, activation_ref=None):
+        if input_refs is None:
+            step_id, package_ref, action_descriptor_ref, input_refs = "", step_id, package_ref, action_descriptor_ref
         _send({
             "type": "emit_node",
             "step_id": step_id,
             "package_ref": package_ref,
-            "capability_descriptor_ref": capability_descriptor_ref,
+            "action_descriptor_ref": action_descriptor_ref,
             "input_refs": input_refs,
-            "target_resource_ref": kwargs.get("target_resource_ref"),
-            "activation_ref": kwargs.get("activation_ref"),
+            "target_resource_ref": target_resource_ref,
+            "activation_ref": activation_ref,
         })
         message = _receive()
         if message.get("type") != "handle" or not isinstance(message.get("handle"), str):
@@ -426,9 +429,9 @@ class DockerOrchestrationExecutor:
     def _content_ref(value: Any, *, error_code: str) -> ResourceRef:
         ref = DockerOrchestrationExecutor._resource_ref(value, error_code=error_code)
         digest = ref.digest or ""
-        resource_digest = ref.resource_id.removeprefix("content://sha256/")
+        resource_digest = content_digest(ref.resource_id)
         if (
-            not ref.resource_id.startswith("content://sha256/")
+            content_digest(ref.resource_id) is None
             or len(digest) != 64
             or any(char not in "0123456789abcdefABCDEF" for char in digest)
             or resource_digest.lower() != digest.lower()
@@ -549,8 +552,8 @@ class DockerOrchestrationExecutor:
                         raise self._callback_error(RuntimeError("orchestration_context_unsupported"), "orchestration_context_error")
                     arguments = dict(message)
                     arguments.pop("type", None)
-                    if message_type in {"register_resource", "ensure_activation", "defer_cleanup"}:
-                        for key in ("package_ref", "target_resource_ref", "resource_ref", "cleanup_operation_ref", "managed_by_ref"):
+                    if message_type in {"register_resource", "ensure_activation", "wait_activation", "defer_cleanup"}:
+                        for key in ("package_ref", "target_resource_ref", "resource_ref", "cleanup_action_ref", "managed_by_ref", "activation_ref"):
                             if arguments.get(key) is not None:
                                 arguments[key] = self._resource_ref(arguments[key], error_code=f"{message_type}_ref_invalid")
                     try:
@@ -572,9 +575,9 @@ class DockerOrchestrationExecutor:
                         await self._write_message(process.stdin, {"type": "ref", "ref": ref.model_dump(mode="json")})
                 elif message_type == "emit_node":
                     package_ref = self._resource_ref(message.get("package_ref"), error_code="node_package_ref_invalid")
-                    capability_descriptor_ref = self._resource_ref(
-                        message.get("capability_descriptor_ref"),
-                        error_code="node_capability_descriptor_ref_invalid",
+                    action_descriptor_ref = self._resource_ref(
+                        message.get("action_descriptor_ref"),
+                        error_code="node_action_descriptor_ref_invalid",
                     )
                     input_refs = [
                         self._content_ref(item, error_code="node_input_ref_invalid")
@@ -591,13 +594,13 @@ class DockerOrchestrationExecutor:
                             returned_handle = emit_node(
                                 str(message.get("step_id") or ""),
                                 package_ref,
-                                capability_descriptor_ref,
+                                action_descriptor_ref,
                                 input_refs,
                                 target_resource_ref=target_resource_ref,
                                 activation_ref=activation_ref,
                             )
                         except TypeError:
-                            returned_handle = emit_node(package_ref, capability_descriptor_ref, input_refs)
+                            returned_handle = emit_node(package_ref, action_descriptor_ref, input_refs)
                         handle = await self._maybe_await(returned_handle)
                     except Exception as exc:
                         raise self._callback_error(exc, "orchestration_context_error") from exc

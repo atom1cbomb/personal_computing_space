@@ -17,9 +17,9 @@ def _gateway(tmp_path: Path) -> SuanliGateway:
     return SuanliGateway(credential_root=tmp_path)
 
 
-def test_profile_is_required_and_operation_is_allowlisted(tmp_path: Path) -> None:
+def test_profile_is_required_and_action_is_allowlisted(tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
-    with pytest.raises(SuanliGatewayError, match="operation_not_allowed"):
+    with pytest.raises(SuanliGatewayError, match="action_not_allowed"):
         gateway.call("arbitrary")
     (tmp_path / "SecretKey").unlink()
     with pytest.raises(SuanliGatewayError, match="credential_profile_unavailable"):
@@ -56,7 +56,15 @@ def test_missing_credentials_still_fails_closed(tmp_path: Path) -> None:
         gateway.call("regions_list")
 
 
-def test_operation_routes_to_documented_provider_action(monkeypatch, tmp_path: Path) -> None:
+def test_signer_distinguishes_same_second_requests():
+    arguments = ("AK-test", "test-secret", "https://cloud.example.com", "POST", "/v1/meta", b'{"Action":"DescribeRegions"}', "global", "meta")
+    first = _build_auth_headers(*arguments, now=lambda: datetime(2026, 10, 15, 9, 0, 0, 123456, tzinfo=timezone.utc))
+    second = _build_auth_headers(*arguments, now=lambda: datetime(2026, 10, 15, 9, 0, 0, 123457, tzinfo=timezone.utc))
+    assert first["X-Suanli-Date"] == "2026-10-15T09:00:00.123456Z"
+    assert first["Authorization"] != second["Authorization"]
+
+
+def test_action_routes_to_documented_provider_action(monkeypatch, tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
     captured: dict[str, object] = {}
 
@@ -90,7 +98,7 @@ def test_operation_routes_to_documented_provider_action(monkeypatch, tmp_path: P
 def test_auth_status_normalizes_provider_auth_failure(monkeypatch, tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
 
-    def fail(_operation):
+    def fail(_action):
         raise SuanliGatewayError("provider_auth_failed")
 
     monkeypatch.setattr(gateway, "call", fail)

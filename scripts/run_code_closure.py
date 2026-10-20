@@ -20,14 +20,14 @@ def build_run_code_closure() -> TaskClosure:
         closure_id="closure-run-code-demo",
         data=DataApplication(
             logical_inputs=[
-                ResourceRef(resource_id="input://value/3", version_or_digest="v1", identity_criterion="content_digest")
+                ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/inputs/value/3", version_or_digest="v1", identity_criterion="content_digest")
             ],
             identity_criterion="content_digest",
             expected_cardinality="1",
             terms=[TypedTerm(kind="loom.data.locality.v1", schema_ref="loom.data.locality/1", value={"locality": "workspace"})],
         ),
-        program=ProgramApplication(operation_ref="loom://test_double"),
-        compute=ComputeSpec(operation_ref="loom://test_double", typed_holes=[TypedHole(hole_id="h_run_code")]),
+        program=ProgramApplication(action_ref="grip://loom.local/workspaces/workspace-default/actions/test_double"),
+        compute=ComputeSpec(action_ref="grip://loom.local/workspaces/workspace-default/actions/test_double", typed_holes=[TypedHole(hole_id="h_run_code")]),
         compute_application=ComputeApplication(result_expectation={"value": 6}),
         metadata={"goal": "run the supplied value through a capability package", "input_value": 3},
     )
@@ -36,7 +36,7 @@ def build_run_code_closure() -> TaskClosure:
 async def main() -> None:
     closure = build_run_code_closure()
     print("closure_id:", closure.closure_id)
-    print("operation_ref:", closure.program.operation_ref)
+    print("action_ref:", closure.program.action_ref)
     print("canonical_digest:", closure.canonical_digest())
     print("result_expectation:", closure.compute_application.result_expectation)
 

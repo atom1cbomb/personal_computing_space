@@ -236,3 +236,23 @@ def test_rejects_relative_runtime_credentials_dir(tmp_path: Path):
 
     with pytest.raises(DeploymentConfigError, match="runtime_credentials_dir"):
         DeploymentConfig.from_file(path)
+
+
+def test_grip_namespace_and_token_file_are_loaded(tmp_path):
+    for filename in ("internal.secret", "postgres.secret", "minio.secret", "grip.secret"):
+        write_secret(tmp_path / filename, "fixture-" + filename)
+    path = tmp_path / "deployment.toml"
+    path.write_text(config_text().replace('workspace_id = "workspace-default"', 'workspace_id = "workspace-default"\ngrip_authority = "resources.example"\npublic_base_url = "https://observer.example/"\ngrip_token_file = "grip.secret"'))
+    config = DeploymentConfig.from_file(path)
+    assert config.grip_authority == "resources.example"
+    assert config.public_base_url == "https://observer.example"
+    assert config.grip_token == "fixture-grip.secret"
+    assert (tmp_path / "grip.secret") in config.secret_paths
+
+
+@pytest.mark.parametrize("values", [{"grip_authority": "127.0.0.1"}, {"grip_authority": "UPPER.example"}, {"public_base_url": "https://user:secret@example.com"}])
+def test_invalid_grip_deployment_configuration_is_rejected(values):
+    from loom_v2.deployment.config import ClusterConfig
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        ClusterConfig(name="test", remote_dir="/test", workspace_id="default", internal_secret_file="internal", postgres_password_file="pg", minio_secret_key_file="s3", **values)

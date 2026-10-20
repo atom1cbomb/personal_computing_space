@@ -23,7 +23,7 @@ async def _register_slave(repo: ObserverRepository, slave_id: str, instance_id: 
             endpoint_url=f"http://{slave_id}",
             protocol_version="loom.v1",
             capabilities={
-                "operations": ["run_code"],
+                "actions": ["run_code"],
                 "executor_descriptors": [
                     {"package_type": "function", "kind": "process:json_stdio", "version": "1"}
                 ],
@@ -79,7 +79,7 @@ async def _dynamic_run(
         resource_budget={"max_attempts": max_attempts} if max_attempts is not None else {},
         body=TaskClosure(
             closure_id="closure-dynamic",
-            program={"operation_ref": "loom://orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
+            program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "io_contract_ref": parent_contract.model_dump(mode="json")},
         ),
     )
     run = await repo.open_run(
@@ -95,11 +95,11 @@ async def _dynamic_run(
         run.draft_digest,
         "dynamic-node-package",
         [
-            {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
-            {"kind": "set_execution_payload", "value": {"node_id": "loom://summarize", "input_ref": node_input_ref.model_dump(mode="json")}},
+            {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": input_ref.model_dump(mode="json")}},
+            {"kind": "set_execution_payload", "value": {"node_id": "grip://loom.local/workspaces/workspace-default/actions/summarize", "input_ref": node_input_ref.model_dump(mode="json")}},
             {
                 "kind": "materialize_capability_package_candidate",
-                "value": process_package_value(repo, package_id="summarize", operation_ref="loom://summarize", program_content_ref=node_program, io_contract_ref=node_contract, replay_safety=node_replay_safety),
+                "value": process_package_value(repo, package_id="summarize", action_ref="grip://loom.local/workspaces/workspace-default/actions/summarize", program_content_ref=node_program, io_contract_ref=node_contract, replay_safety=node_replay_safety),
             },
         ],
     )
@@ -119,7 +119,7 @@ async def _dynamic_run(
                 "value": orchestration_package_value(
                     repo,
                     package_id="orchestrate",
-                    operation_ref="loom://orchestrate",
+                    action_ref="grip://loom.local/workspaces/workspace-default/actions/orchestrate",
                     program_content_ref=orchestration_program,
                     io_contract_ref=parent_contract,
                     allowed_node_package_refs=[ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest)],
@@ -162,7 +162,7 @@ async def _dispatched_node(
     input_ref = next(
         item.input_ref
         for item in record.committed.snapshot.node_input_bindings
-        if item.node_id == "loom://summarize"
+        if item.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize"
     )
     node = await repo.accept_node_intent(
         run.run_id,
@@ -170,7 +170,7 @@ async def _dispatched_node(
             intent_id="intent-reassign",
             execution_id=started["execution_id"],
             package_ref=ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest),
-            capability_descriptor_ref=package.capability_exports[0].capability_descriptor_ref,
+            action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
             input_refs=[input_ref],
         ),
         selected_target="slave-a",
@@ -233,12 +233,12 @@ async def test_accept_node_intent_materializes_dynamic_node():
     record = await repo.get_run(run.run_id)
     assert record.attempts == []
     node_package = next(package for package in record.capability_packages if package.package_id == "summarize")
-    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "loom://summarize")
+    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize")
     intent = NodeIntent(
         intent_id="intent-1",
         execution_id=started["execution_id"],
         package_ref=ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest),
-        capability_descriptor_ref=node_package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=node_package.action_exports[0].action_descriptor_ref,
         input_refs=[input_ref],
     )
 
@@ -264,18 +264,18 @@ async def test_accept_node_intent_rejects_unauthorized_package_and_live_limit():
     record = await repo.get_run(run.run_id)
     node_package = next(package for package in record.capability_packages if package.package_id == "summarize")
     orchestration_package = next(package for package in record.capability_packages if package.execution.kind == "container:python_orchestrator")
-    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "loom://summarize")
+    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize")
     package_ref = ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest)
     intent = NodeIntent(
         intent_id="intent-1",
         execution_id=started["execution_id"],
         package_ref=package_ref,
-        capability_descriptor_ref=node_package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=node_package.action_exports[0].action_descriptor_ref,
         input_refs=[input_ref],
     )
 
     unauthorized_intent = intent.model_copy(update={
-        "package_ref": ResourceRef(resource_id="capability-package://unauthorized/v1", version_or_digest="f" * 64)
+        "package_ref": ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/packages/unauthorized/v1", version_or_digest="f" * 64)
     })
     with pytest.raises(ValueError, match="node_package_not_allowed"):
         await repo.accept_node_intent(run.run_id, unauthorized_intent, selected_target="slave-a")
@@ -303,7 +303,7 @@ async def test_accept_node_intent_validates_input_schema():
         intent_id="intent-invalid",
         execution_id=started["execution_id"],
         package_ref=package_ref,
-        capability_descriptor_ref=node_package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=node_package.action_exports[0].action_descriptor_ref,
         input_refs=[invalid_input],
     )
 
@@ -322,12 +322,12 @@ async def test_dynamic_nodes_persist_across_repository_restart():
     started = await repo.start(run.run_id, committed.version_id)
     record = await repo.get_run(run.run_id)
     node_package = next(package for package in record.capability_packages if package.package_id == "summarize")
-    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "loom://summarize")
+    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize")
     intent = NodeIntent(
         intent_id="intent-persist",
         execution_id=started["execution_id"],
         package_ref=ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest),
-        capability_descriptor_ref=node_package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=node_package.action_exports[0].action_descriptor_ref,
         input_refs=[input_ref],
     )
     node = await repo.accept_node_intent(run.run_id, intent, selected_target="slave-a")
@@ -348,12 +348,12 @@ async def test_dynamic_node_dispatch_result_and_orchestration_completion():
     started = await repo.start(run.run_id, committed.version_id)
     record = await repo.get_run(run.run_id)
     node_package = next(package for package in record.capability_packages if package.package_id == "summarize")
-    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "loom://summarize")
+    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize")
     intent = NodeIntent(
         intent_id="intent-exec",
         execution_id=started["execution_id"],
         package_ref=ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest),
-        capability_descriptor_ref=node_package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=node_package.action_exports[0].action_descriptor_ref,
         input_refs=[input_ref],
     )
     node = await repo.accept_node_intent(run.run_id, intent, selected_target="slave-a")
@@ -381,7 +381,7 @@ async def test_dynamic_node_dispatch_result_and_orchestration_completion():
     assert record.attempts[0]["state"] == "completed"
     assert record.events[-1]["phase"] == "node_completed"
     result_ref = record.events[-1]["result_ref"]
-    assert result_ref["resource_id"].startswith("content://sha256/")
+    assert result_ref["resource_id"].startswith("grip://loom.local/workspaces/workspace-default/content/json-document/sha256/")
     assert await repo.content_store.get(ResourceRef.model_validate(result_ref)) == canonical_json_bytes(value)
 
     completed_run = await repo.complete_orchestration(run.run_id, ResourceRef.model_validate(result_ref))
@@ -402,7 +402,7 @@ async def test_dynamic_node_dispatch_binds_active_slave_instance():
     input_ref = next(
         item.input_ref
         for item in record.committed.snapshot.node_input_bindings
-        if item.node_id == "loom://summarize"
+        if item.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize"
     )
     node = await repo.accept_node_intent(
         run.run_id,
@@ -410,7 +410,7 @@ async def test_dynamic_node_dispatch_binds_active_slave_instance():
             intent_id="intent-instance-binding",
             execution_id=started["execution_id"],
             package_ref=ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest),
-            capability_descriptor_ref=package.capability_exports[0].capability_descriptor_ref,
+            action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
             input_refs=[input_ref],
         ),
         selected_target="slave-a",
@@ -439,14 +439,14 @@ async def test_dynamic_node_dispatch_rejects_target_change_after_acceptance():
     started = await repo.start(run.run_id, committed.version_id)
     record = await repo.get_run(run.run_id)
     node_package = next(package for package in record.capability_packages if package.package_id == "summarize")
-    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "loom://summarize")
+    input_ref = next(binding.input_ref for binding in record.draft.snapshot.node_input_bindings if binding.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize")
     node = await repo.accept_node_intent(
         run.run_id,
         NodeIntent(
             intent_id="intent-target-fence",
             execution_id=started["execution_id"],
             package_ref=ResourceRef(resource_id=node_package.version_ref, version_or_digest=node_package.package_digest),
-            capability_descriptor_ref=node_package.capability_exports[0].capability_descriptor_ref,
+            action_descriptor_ref=node_package.action_exports[0].action_descriptor_ref,
             input_refs=[input_ref],
         ),
         selected_target="slave-a",
@@ -592,7 +592,7 @@ async def test_reassign_rejects_unsatisfied_mechanical_constraints_without_parti
         missing_digest = "0" * 64
         node.input_refs = [
             ResourceRef(
-                resource_id=f"content://sha256/{missing_digest}",
+                resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{missing_digest}",
                 identity_criterion="content_digest",
             )
         ]
@@ -644,9 +644,9 @@ async def test_reassign_persistence_failure_leaves_original_projection_unchanged
 
 
 def test_dynamic_node_event_replay_keeps_reassigned_node_dispatched():
-    package_ref = ResourceRef(resource_id="capability-package://summarize/v1", version_or_digest="a" * 64)
+    package_ref = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/packages/summarize/v1", version_or_digest="a" * 64)
     input_ref = ResourceRef(
-        resource_id=f"content://sha256/{'b' * 64}",
+        resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{'b' * 64}",
         identity_criterion="content_digest",
     )
 
@@ -659,8 +659,8 @@ def test_dynamic_node_event_replay_keeps_reassigned_node_dispatched():
                 "intent_id": "intent-1",
                     "package_ref": package_ref.model_dump(mode="json"),
                     "package_digest": "a" * 64,
-                    "capability_descriptor_ref": ResourceRef(
-                        resource_id="loom://summarize",
+                    "action_descriptor_ref": ResourceRef(
+                        resource_id="grip://loom.local/workspaces/workspace-default/actions/summarize",
                         version_or_digest="c" * 64,
                         identity_criterion="descriptor_digest",
                     ).model_dump(mode="json"),

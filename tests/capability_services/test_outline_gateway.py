@@ -23,7 +23,7 @@ def test_default_endpoint_and_profile_are_used(tmp_path: Path) -> None:
 
 def test_profile_is_required_and_method_is_allowlisted(tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
-    with pytest.raises(OutlineGatewayError, match="operation_not_allowed"):
+    with pytest.raises(OutlineGatewayError, match="action_not_allowed"):
         gateway.call("arbitrary")
     (tmp_path / "outline_key").unlink()
     with pytest.raises(OutlineGatewayError, match="credential_profile_unavailable"):
@@ -87,14 +87,14 @@ def test_provider_auth_failure_is_normalized(monkeypatch, tmp_path: Path) -> Non
 
 def test_auth_paths_do_not_expose_auth_info(monkeypatch, tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
-    monkeypatch.setattr(gateway, "call", lambda operation, parameters=None: {"data": {"name": "private"}})
+    monkeypatch.setattr(gateway, "call", lambda action, parameters=None: {"data": {"name": "private"}})
     assert gateway.handle("/v1/auth/start", {}) == {"status": "authenticated"}
     assert gateway.handle("/v1/auth/status", {}) == {"status": "authenticated"}
 
 
 def test_arbitrary_path_and_non_object_parameters_are_rejected(tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
-    with pytest.raises(OutlineGatewayError, match="operation_not_allowed"):
+    with pytest.raises(OutlineGatewayError, match="action_not_allowed"):
         gateway.handle("/v1/../../documents/list", {})
     with pytest.raises(OutlineGatewayError, match="request_json_invalid"):
         gateway.handle("/v1/documents/list", {"parameters": []})

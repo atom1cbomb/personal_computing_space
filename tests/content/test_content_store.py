@@ -36,7 +36,7 @@ async def test_put_is_content_addressed_and_idempotent(aws_store: ContentStore) 
     second = await aws_store.put(body, media_type="text/plain")
 
     digest = hashlib.sha256(body).hexdigest()
-    assert first.resource_id == f"content://sha256/{digest}"
+    assert first.resource_id == f"grip://loom.local/workspaces/workspace-default/content/text-document/sha256/{digest}"
     assert first.digest == digest
     assert second == first
     assert first.identity_criterion == "content_digest"

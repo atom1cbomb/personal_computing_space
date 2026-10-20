@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-info",
+  "name": "documents_info",
+  "description": "Documents info through the outline-http activation."
+}

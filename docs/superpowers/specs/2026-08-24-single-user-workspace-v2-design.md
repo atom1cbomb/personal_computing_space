@@ -1,5 +1,7 @@
 # Loom v2 单用户单 Workspace 垂直切片设计
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 > 状态：已确认 TypedTerm/VocabularyRegistry/TermSupport 方向，待实施计划与代码验收。  
 > 日期：2026-08-24  
 > 权威输入：`../computility/单用户单Workspace核心架构设计v2.md`
@@ -128,7 +130,7 @@ Close(session)
 @task_closure(
     goal="aggregate the supplied dataset",
     data=DataApplication(...),
-    program=ProgramApplication(operation_ref="loom://test_aggregate"),
+    program=ProgramApplication(operation_ref="grip://loom.local/workspaces/workspace-default/operations/test_aggregate"),
     compute=ComputeSpec(capability_intent="cpu", typed_holes=[compute_hole("h_compute")]),
 )
 @attach_constraint(

@@ -1,5 +1,7 @@
 # 命名能力包实例与 Suanli VM 访问
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 状态：部分实现，尚未完成端到端验收；远程登录接入按 [浏览器回调代理设计](2026-09-22-browser-auth-redirect-proxy-design.md) 实施。遵循 [设计规范](../spec-design-guidance.md)。
 
 ## 1. 目标与选择

@@ -6,11 +6,13 @@ They only normalize identities and select already-loaded contract objects.
 
 from __future__ import annotations
 
+from loom_orchestration.naming import content_digest
+
 import re
 from typing import Any
 
 from .types import (
-    CapabilityExport,
+    ActionExport,
     CapabilityPackageVersion,
     NodeInputBinding,
     ResourceRef,
@@ -19,17 +21,16 @@ from .types import (
 
 
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
-_CONTENT_PREFIX = "content://sha256/"
 
 
-def operation_name(operation_ref: str) -> str:
-    if not operation_ref:
+def action_name(action_ref: str) -> str:
+    if not action_ref:
         return ""
-    return operation_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    return action_ref.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
 
 
-def input_binding_for(snapshot: TaskClosure, operation_ref: str) -> NodeInputBinding | None:
-    candidates = {operation_ref, operation_name(operation_ref), "default"}
+def input_binding_for(snapshot: TaskClosure, action_ref: str) -> NodeInputBinding | None:
+    candidates = {action_ref, action_name(action_ref), "default"}
     return next(
         (binding for binding in snapshot.node_input_bindings if binding.node_id in candidates),
         None,
@@ -43,10 +44,10 @@ def package_body_ref(package: CapabilityPackageVersion, field_name: str) -> Reso
         raise ValueError(f"{field_name}_required") from exc
 
 
-def single_export(package: CapabilityPackageVersion) -> CapabilityExport:
-    if len(package.capability_exports) != 1:
-        raise ValueError("capability_export_selection_required")
-    return package.capability_exports[0]
+def single_export(package: CapabilityPackageVersion) -> ActionExport:
+    if len(package.action_exports) != 1:
+        raise ValueError("action_export_selection_required")
+    return package.action_exports[0]
 
 
 def select_slave_agents(agents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -111,9 +112,9 @@ def slave_supports_package(
 
 
 def require_content_ref(ref: ResourceRef) -> None:
-    if not ref.resource_id.startswith(_CONTENT_PREFIX):
+    if content_digest(ref.resource_id) is None:
         raise ValueError("content_ref_required")
-    resource_digest = ref.resource_id.removeprefix(_CONTENT_PREFIX)
+    resource_digest = content_digest(ref.resource_id)
     digest = ref.digest or ""
     if not _SHA256.fullmatch(digest):
         raise ValueError("content_ref_required")
@@ -134,7 +135,7 @@ def is_content_ref(ref: ResourceRef) -> bool:
 __all__ = [
     "input_binding_for",
     "is_content_ref",
-    "operation_name",
+    "action_name",
     "package_body_ref",
     "require_content_ref",
     "select_slave_agents",

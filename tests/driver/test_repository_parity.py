@@ -1,4 +1,4 @@
-"""Compare local lifecycle operations with the authenticated Observer HTTP API."""
+"""Compare local lifecycle actions with the authenticated Observer HTTP API."""
 
 from copy import deepcopy
 
@@ -111,11 +111,11 @@ async def test_orchestration_completion_matches_over_http(repositories, valid_li
     started = await local.start(run.run_id, committed.version_id)
     record = await local.get_run(run.run_id)
     package = next(item for item in record.capability_packages if item.package_id == "summarize")
-    input_ref = next(item.input_ref for item in record.draft.snapshot.node_input_bindings if item.node_id == "loom://summarize")
+    input_ref = next(item.input_ref for item in record.draft.snapshot.node_input_bindings if item.node_id == "grip://loom.local/workspaces/workspace-default/actions/summarize")
     node = await local.accept_node_intent(run.run_id, NodeIntent(
         intent_id="parity-node", execution_id=started["execution_id"],
         package_ref=ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest),
-        capability_descriptor_ref=package.capability_exports[0].capability_descriptor_ref,
+        action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
         input_refs=[input_ref],
     ), selected_target="slave-a")
     attempt = await local.dispatch_dynamic_node(run.run_id, node.node_id, target="slave-a")

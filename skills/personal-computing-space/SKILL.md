@@ -8,6 +8,14 @@ description: Use when a coding agent needs to submit, monitor, continue, resolve
 Use the Observer as the only external entry point. The external agent owns
 discovery and orchestration; Driver only executes a frozen submission.
 
+## Public SDK
+
+Use Python 3.12+ and the independent `loom-orchestration` package. A release
+skill archive includes its wheel under `assets/wheels/`; install that wheel
+in the external agent's environment, not in the orchestration sandbox.
+See [references/sdk.md](references/sdk.md) for installation, discovery, and
+source-checkout fallback. Do not assume the package is published on PyPI.
+
 ## Boundary
 
 - Submit a complete plan with `POST /api/v1/run-submissions` using the
@@ -38,30 +46,33 @@ not mean that a Kubernetes credential profile is configured.
 
 ## Resource-producing capability packages
 
-When a package export contains `capability_descriptors`, treat its
+When a package export contains `action_descriptors`, treat its
 `resource_effects` as the authoritative composition metadata. Do not infer a
-follow-up package from a provider name or from an operation's prose.
+follow-up package from a provider name or from an action's prose.
 
-For a `create` effect, follow the declared `identity_path`, invoke the bounded
-`readiness` operation with its `input_mapping`, and register the resulting
-resource using the declared package and manager references. Before emitting a
+For a `create` effect, generate source that extracts the declared `identity_path`,
+registers each resource and explicitly defers cleanup before readiness polling.
+Use readiness `result_path` and its item-relative `identity_path` to match the
+correct resource before testing conditions. Follow the declared `input_mapping`.
+Before emitting a
 node for an `access_requirements` entry, create the declared activation bound
 to `target_resource_ref`, complete authentication when
 `requires_authentication=true`, and wait for the declared `ready_state`.
-Always retain the resource identity and use the declared `cleanup` operation on
+Always retain the resource identity and use the declared `cleanup` action on
 failure, cancellation, or successful completion. A provider HTTP success or a
 create response does not mean that the resource is ready for access.
 
 The public package endpoint includes verified descriptor payloads inline. If a
 descriptor is not inline, resolve it only through the public
-`GET /api/v1/capability-descriptors?resource_id=...&version_or_digest=...`
+`GET /api/v1/action-descriptors?resource_id=...&version_or_digest=...`
 endpoint. If the descriptor, output schema, or referenced package cannot be
 resolved, stop with a metadata/readiness blocker instead of guessing a field,
-package, or polling operation.
+package, or polling action.
 
 For Suanli VM creation, the declared workflow is therefore
-`instances-run` → `instances-status` until the VM is running and has an IP →
-resource registration → `suanli-vm-ssh-http` activation and browser
+`instances-run` → resource and cleanup registration →
+`instances-list` until the matching VM is running and has an IP →
+`suanli-vm-ssh-http` activation and browser
 authentication → `exec`; retain the InstanceId for
 `instances-terminate` cleanup.
 
@@ -69,19 +80,18 @@ authentication → `exec`; retain the InstanceId for
 
 1. Check `GET /healthz` and `GET /api/v1/runtime`. Stop and report
    `driver_unavailable` rather than bypassing the Observer.
-2. Discover workspace compute resources with `GET /api/v1/slaves` before
-   planning a distributed task. Use `?available_only=true` when only currently
-   leased Slaves matter. Treat `available` as a recent-lease signal, not a
-   promise of CPU/memory capacity or successful admission; inspect
-   `base_operations`, `executor_descriptors`, and
-   `runtime_plugin_descriptors` when choosing a feasible task. The endpoint is
-   workspace-scoped and does not expose internal endpoints or lease tokens.
-3. Upload source/input content and register packages through the public data
-   plane; use `GET /api/v1/resources/{resource_id}/activations` to reuse an
-   activation explicitly bound to a resource.
+2. Discover compute with `await client.resources(kind="slave")`; select available
+   leases using each resource's `metadata.available`. Inspect executor and runtime
+   descriptors, then `describe` the selected URI to obtain its callable offers.
+3. Publish source/packages through the authoring data plane. Discover registered
+   resources and activations through GRIP. A resource description lists the exact
+   ready activation URIs bound to it; choose explicitly if more than one exists.
 4. Build one complete `ClosureContract` with `SubmissionBuilder` and submit it
    with a stable `request_id`. Do not include secrets in source or closure.
 5. Poll `GET /api/v1/run-submissions/{request_id}` with a bounded interval.
+   On `awaiting_auth`, use the exact package, instance, Slave and revision in
+   `waiting` to start authentication once, then poll the same Run. Health updates
+   resume it automatically; do not submit another Run or resubmit for login.
 6. On `completed`, verify the requested acceptance criteria from the outcome.
    On `awaiting_decision`, follow the decision rules in the protocol reference.
    On `failed` or `interrupted`, report the structured reason without hiding it.
@@ -99,13 +109,12 @@ handling, result retrieval, and a distributed-task prompt template.
 
 ## Kubernetes capability package
 
-Use the gateway's fixed operation exports rather than constructing shell
-commands. Call `/v1/auth/start` or `/v1/auth/status` first. If the result is
-`auth_required`, show the user `verification_uri`, `user_code`, and `qr_payload`,
-wait for OIDC device-code login, then poll status. Never ask for a token or
+Use the package's fixed business actions from GRIP DESCRIBE. Activate the
+package on a chosen Slave. On `pending_auth`, invoke that activation's
+`auth-start` action with its `expected_revision`; show the returned public login
+instructions and poll the same activation until ready. Never ask for a token or
 kubeconfig in a task message.
 
-Call `/v1/jobs/submit` only with a VolcanoJob manifest
-(`apiVersion: batch.volcano.sh/v1alpha1`, `kind: Job`). Use the gateway's status,
-logs, and delete operations; do not submit a bare GPU Pod or invoke arbitrary
-kubectl commands.
+Invoke the discovered jobs-submit action only with a VolcanoJob manifest
+(`apiVersion: batch.volcano.sh/v1alpha1`, `kind: Job`). Use its status, logs, and
+delete exports. Runtime HTTP paths are private implementation bindings.

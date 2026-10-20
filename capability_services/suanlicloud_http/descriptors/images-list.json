@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/images-list",
+  "name": "images_list",
+  "description": "Images list through the suanlicloud-http activation."
+}

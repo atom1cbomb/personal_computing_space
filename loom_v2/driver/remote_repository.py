@@ -7,7 +7,7 @@ from typing import Any
 from loom_v2.content_store import ContentStore, put_typed_content
 from loom_v2.settings import Settings
 from loom_v2.contracts.types import (
-    CapabilityExport,
+    ActionExport,
     CapabilityHealthReport,
     CapabilityPackageActivation,
     CapabilityPackageVersion,
@@ -21,7 +21,7 @@ from loom_v2.contracts.types import (
 )
 from loom_v2.contracts.refs import (
     input_binding_for,
-    operation_name,
+    action_name,
     package_body_ref,
     select_slave_agents,
     single_export,
@@ -94,6 +94,7 @@ class RemoteObserverRepository:
     def __init__(self, control: ObserverControlClient, content_store: ContentStore | None = None) -> None:
         self.control = control
         self.content_store = content_store or ContentStore.from_settings(Settings())
+        self.names = self.content_store.names
         self.workspace_id = control.workspace_id
         self.slave_capabilities: dict[str, dict[str, Any]] = {}
         self.slave_agents: dict[str, dict[str, Any]] = {}
@@ -101,6 +102,28 @@ class RemoteObserverRepository:
 
     async def get_run(self, run_id: str) -> RemoteRunRecord:
         return _decode_run(await self.control.command("run.get", {"run_id": run_id}))
+
+    async def _program_command(self, command: str, run_id: str, arguments: dict[str, Any]) -> Any:
+        payload = {
+            key: value.model_dump(mode="json") if isinstance(value, ResourceRef) else value
+            for key, value in arguments.items()
+        }
+        return await self.control.command(command, {"run_id": run_id, **payload})
+
+    async def materialize_program_json(self, run_id: str, **arguments: Any) -> ResourceRef:
+        return ResourceRef.model_validate(await self._program_command("content.materialize", run_id, arguments))
+
+    async def register_program_resource(self, run_id: str, **arguments: Any) -> ResourceRef:
+        return ResourceRef.model_validate(await self._program_command("resource.register_program", run_id, arguments))
+
+    async def register_cleanup(self, run_id: str, **arguments: Any) -> dict[str, Any]:
+        return await self._program_command("cleanup.register", run_id, arguments)
+
+    async def finish_cleanup(self, run_id: str, **arguments: Any) -> RemoteRunRecord:
+        return _decode_run(await self._program_command("cleanup.finish", run_id, arguments))
+
+    async def ensure_program_activation(self, run_id: str, **arguments: Any) -> ResourceRef:
+        return ResourceRef.model_validate(await self._program_command("activation.ensure_program", run_id, arguments))
 
     async def begin_refinement(self, run_id: str) -> RemoteRunRecord:
         payload = await self.control.command("run.begin", {"run_id": run_id}, request_id=f"run-begin:{run_id}")
@@ -147,15 +170,21 @@ class RemoteObserverRepository:
             if agent.get("lease_state") != "active":
                 continue
             capabilities = dict(agent.get("capabilities") or {})
-            operations = capabilities.get("operations", [])
+            actions = capabilities.get("actions", [])
             self.slave_capabilities[slave_id] = {
                 **capabilities,
-                "operations": set(operations),
-                "base_operations": set(
-                    capabilities.get("base_operations", operations)
+                "actions": set(actions),
+                "base_actions": set(
+                    capabilities.get("base_actions", actions)
                 ),
             }
         return agents
+
+    async def list_package_activations(self, package: CapabilityPackageVersion) -> list[CapabilityPackageActivation]:
+        payload = await self.control.command("capability.activations", {"package_ref": {
+            "resource_id": package.version_ref, "version_or_digest": package.package_digest,
+        }})
+        return [CapabilityPackageActivation.model_validate(item) for item in payload["activations"]]
 
     def _slave_supports_package(self, slave_id: str, package: CapabilityPackageVersion) -> bool:
         return slave_supports_package(
@@ -283,7 +312,7 @@ class RemoteObserverRepository:
                 "rebuild": rebuild,
                 "instance_name": instance_name,
                 "target_resource_ref": target_resource_ref.model_dump(mode="json") if target_resource_ref else None,
-                "instance_config": instance_config or {},
+                "instance_config": instance_config,
             },
             request_id=(
                 f"capability-desire:{target_slave}:{desired_state}:"

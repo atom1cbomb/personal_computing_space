@@ -8,11 +8,11 @@ from loom_v2.observer.repository import ObserverRepository
 
 def register_test_descriptor(repo: ObserverRepository, resource_id: str) -> ResourceRef:
     payload = {
-        "schema_version": "operation.v1",
+        "schema_version": "action.v1",
         "resource_id": resource_id,
         "name": resource_id.rstrip("/").rsplit("/", 1)[-1],
     }
-    digest = repo.register_operation_descriptor(resource_id, payload)
+    digest = repo.register_action_descriptor(resource_id, payload)
     return ResourceRef(
         resource_id=resource_id,
         version_or_digest=digest,
@@ -20,7 +20,7 @@ def register_test_descriptor(repo: ObserverRepository, resource_id: str) -> Reso
     )
 
 
-def capability_export(
+def action_export(
     descriptor_ref: ResourceRef | dict[str, Any],
     io_contract_ref: ResourceRef | dict[str, Any],
     *,
@@ -33,7 +33,7 @@ def capability_export(
         return value.model_dump(mode="json") if isinstance(value, ResourceRef) else value
 
     return {
-        "capability_descriptor_ref": dump(descriptor_ref),
+        "action_descriptor_ref": dump(descriptor_ref),
         "io_contract_ref": dump(io_contract_ref),
         "effect_class": effect_class,
         "permissions": list(permissions or []),
@@ -45,7 +45,7 @@ def capability_export(
 def process_package_value(
     repo: ObserverRepository,
     *,
-    operation_ref: str,
+    action_ref: str,
     program_content_ref: ResourceRef | dict[str, Any],
     io_contract_ref: ResourceRef | dict[str, Any],
     package_id: str,
@@ -64,9 +64,9 @@ def process_package_value(
         "package_version": package_version,
         "package_type": "function",
         "execution": {"kind": "process:json_stdio", "version": "1"},
-        "capability_exports": [
-            capability_export(
-                register_test_descriptor(repo, operation_ref),
+        "action_exports": [
+            action_export(
+                register_test_descriptor(repo, action_ref),
                 io_contract_ref,
                 permissions=permissions,
                 replay_safety=replay_safety,
@@ -79,7 +79,7 @@ def process_package_value(
 def orchestration_package_value(
     repo: ObserverRepository,
     *,
-    operation_ref: str,
+    action_ref: str,
     program_content_ref: ResourceRef | dict[str, Any],
     io_contract_ref: ResourceRef | dict[str, Any],
     allowed_node_package_refs: list[ResourceRef | dict[str, Any]],
@@ -97,9 +97,9 @@ def orchestration_package_value(
         "package_version": package_version,
         "package_type": "function",
         "execution": {"kind": "container:python_orchestrator", "version": "1"},
-        "capability_exports": [
-            capability_export(
-                register_test_descriptor(repo, operation_ref),
+        "action_exports": [
+            action_export(
+                register_test_descriptor(repo, action_ref),
                 io_contract_ref,
                 replay_safety="DeterministicByEventLog",
             )

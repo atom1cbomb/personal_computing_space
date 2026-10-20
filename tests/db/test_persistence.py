@@ -55,7 +55,7 @@ async def test_observer_repository_persists_closure_contract():
         goal="transform numbers",
         required_success_criteria=[{"criterion_id": "transformed"}],
         resource_budget={"max_attempts": 2},
-        body=TaskClosure(program={"operation_ref": "loom://test_transform"}),
+        body=TaskClosure(program={"action_ref": "grip://loom.local/workspaces/workspace-default/actions/test_transform"}),
     )
     created = await repo.open_run("contract-run", "conversation-contract", contract.goal, closure_contract=contract)
     restored_repo = ObserverRepository(engine)
@@ -65,21 +65,21 @@ async def test_observer_repository_persists_closure_contract():
     assert restored.closure_contract.resource_budget == {"max_attempts": 2}
 
 
-async def test_observer_repository_normalizes_legacy_structured_operation_ref():
+async def test_observer_repository_normalizes_legacy_structured_action_ref():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     repo = ObserverRepository(engine)
     await repo.init_db()
-    created = await repo.open_run("structured-op-run", "structured-op-conversation", "normalize operation ref")
+    created = await repo.open_run("structured-op-run", "structured-op-conversation", "normalize action ref")
     sessions = make_session_factory(engine)
     async with sessions() as session:
         row = await session.get(RunRow, created.run_id)
         draft = deepcopy(row.draft)
-        draft["snapshot"]["program"]["operation_ref"] = {"program_ref": "loom://test_transform"}
+        draft["snapshot"]["program"]["action_ref"] = {"program_ref": "grip://loom.local/workspaces/workspace-default/actions/test_transform"}
         row.draft = draft
         await session.commit()
 
     restored = await ObserverRepository(engine).get_run(created.run_id)
-    assert restored.draft.snapshot.program.operation_ref == "loom://test_transform"
+    assert restored.draft.snapshot.program.action_ref == "grip://loom.local/workspaces/workspace-default/actions/test_transform"
 
 
 async def test_repository_recovers_orphaned_refinement_after_restart():

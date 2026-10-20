@@ -1,6 +1,6 @@
 """Policy-bound HTTP gateway for the Suanli Cloud control-plane API.
 
-The gateway deliberately exposes named operations instead of forwarding an
+The gateway deliberately exposes named actions instead of forwarding an
 arbitrary URL or Action.  AK/SK material is read only from the mounted
 operator credential profile and is never returned in an error or response.
 """
@@ -26,7 +26,7 @@ DEFAULT_ENDPOINT = "https://api.cloud.cs.ac.cn"
 
 # action, path, signing service.  The provider's Action discriminator belongs
 # in the JSON body; it is not a query parameter on the wire.
-OPERATIONS: dict[str, tuple[str, str, str]] = {
+ACTIONS: dict[str, tuple[str, str, str]] = {
     "regions_list": ("DescribeRegions", "/v1/meta", "meta"),
     "zones_list": ("DescribeZones", "/v1/meta", "meta"),
     "nodes_list": ("DescribeNodes", "/v1/vm", "vm"),
@@ -100,8 +100,8 @@ def _build_auth_headers(
     host = parsed_endpoint.netloc
     if not host or parsed_endpoint.username or parsed_endpoint.password:
         raise SuanliGatewayError("endpoint_invalid", 500)
-    timestamp = (now or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).replace(microsecond=0)
-    date_value = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = (now or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc)
+    date_value = timestamp.isoformat().replace("+00:00", "Z")
     short_date = timestamp.strftime("%Y%m%d")
     headers = {"Host": host, "X-Suanli-Date": date_value}
     canonical = _canonical_request(method, target, headers, body)
@@ -164,10 +164,10 @@ class SuanliGateway:
         method: str,
         target: str,
         body: bytes,
-        operation: str,
+        action: str,
         parameters: dict[str, Any],
     ) -> dict[str, str]:
-        action, _path, service = OPERATIONS[operation]
+        provider_action, _path, service = ACTIONS[action]
         return _build_auth_headers(
             self._secret("AccessKeyId"),
             self._secret("SecretKey"),
@@ -175,21 +175,21 @@ class SuanliGateway:
             method,
             target,
             body,
-            _signing_region(action, parameters),
+            _signing_region(provider_action, parameters),
             service,
         )
 
-    def call(self, operation: str, parameters: dict[str, Any] | None = None) -> Any:
-        if operation not in OPERATIONS:
-            raise SuanliGatewayError("operation_not_allowed", 400)
-        action, path, _service = OPERATIONS[operation]
+    def call(self, action: str, parameters: dict[str, Any] | None = None) -> Any:
+        if action not in ACTIONS:
+            raise SuanliGatewayError("action_not_allowed", 400)
+        provider_action, path, _service = ACTIONS[action]
         body_value = dict(parameters or {})
-        body_value["Action"] = action
+        body_value["Action"] = provider_action
         body = json.dumps(body_value, separators=(",", ":"), ensure_ascii=False).encode()
         if len(body) > MAX_BODY:
             raise SuanliGatewayError("request_too_large", 413)
         target = path
-        headers = self._auth_headers("POST", target, body, operation, body_value)
+        headers = self._auth_headers("POST", target, body, action, body_value)
         headers.update({"Content-Type": "application/json", "Accept": "application/json"})
         try:
             with httpx.stream(
@@ -228,13 +228,13 @@ class SuanliGateway:
     def handle(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path in {"/v1/auth/start", "/v1/auth/status"}:
             return self.auth_status()
-        if path not in {"/v1/" + name.replace("_", "/") for name in OPERATIONS}:
-            raise SuanliGatewayError("operation_not_allowed", 404)
-        operation = path.removeprefix("/v1/").replace("/", "_")
+        if path not in {"/v1/" + name.replace("_", "/") for name in ACTIONS}:
+            raise SuanliGatewayError("action_not_allowed", 404)
+        action = path.removeprefix("/v1/").replace("/", "_")
         parameters = payload.get("parameters", payload)
         if not isinstance(parameters, dict):
             raise SuanliGatewayError("request_json_invalid", 400)
-        return {"operation": operation, "result": self.call(operation, parameters)}
+        return {"action": action, "result": self.call(action, parameters)}
 
 
 class Handler(BaseHTTPRequestHandler):

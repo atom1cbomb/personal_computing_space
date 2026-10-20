@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-status",
+  "name": "instances_status",
+  "description": "Returns result.InstanceStatuses with InstanceId and State. Use instances-list for guest IP addresses."
+}

@@ -29,11 +29,11 @@ class Control:
                 "dynamic_nodes": [],
             }
         if name == "capability.list":
-            return {"slaves": [{"agent_id": "slave-a", "lease_state": "active", "capabilities": {"operations": ["run_code"]}}]}
+            return {"slaves": [{"agent_id": "slave-a", "lease_state": "active", "capabilities": {"actions": ["run_code"]}}]}
         return {}
 
     async def list_slaves(self):
-        return [{"agent_id": "slave-a", "lease_state": "active", "capabilities": {"operations": ["run_code"]}}]
+        return [{"agent_id": "slave-a", "lease_state": "active", "capabilities": {"actions": ["run_code"]}}]
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_remote_repository_reads_runs_and_refreshes_registered_slaves():
     assert record.run_id == "run-1"
     await repository.refresh_slaves()
     assert "slave-a" in repository.slave_capabilities
-    assert repository.slave_capabilities["slave-a"]["operations"] == {"run_code"}
+    assert repository.slave_capabilities["slave-a"]["actions"] == {"run_code"}
 
 
 @pytest.mark.asyncio
@@ -65,15 +65,15 @@ class MixedControl:
 
     async def list_slaves(self):
         return [
-            {"agent_id": "slave-a", "instance_id": "slave-a-old", "lease_state": "active", "capabilities": {"operations": ["run_code"]}},
-            {"agent_id": "slave-a", "instance_id": "slave-a-expired", "lease_state": "expired", "capabilities": {"operations": ["run_code"]}},
-            {"agent_id": "slave-b", "instance_id": "slave-b-expired", "lease_state": "expired", "capabilities": {"operations": ["run_code"]}},
+            {"agent_id": "slave-a", "instance_id": "slave-a-old", "lease_state": "active", "capabilities": {"actions": ["run_code"]}},
+            {"agent_id": "slave-a", "instance_id": "slave-a-expired", "lease_state": "expired", "capabilities": {"actions": ["run_code"]}},
+            {"agent_id": "slave-b", "instance_id": "slave-b-expired", "lease_state": "expired", "capabilities": {"actions": ["run_code"]}},
             {
                 "agent_id": "slave-b",
                 "instance_id": "slave-b-new",
                 "lease_state": "active",
                 "capabilities": {
-                    "operations": ["run_code"],
+                    "actions": ["run_code"],
                     "executor_descriptors": [
                         {
                             "package_type": "function",
@@ -93,7 +93,7 @@ async def test_refresh_slaves_prefers_active_lease_over_stale_registration():
     assert repository.slave_agents["slave-a"]["instance_id"] == "slave-a-old"
     assert repository.slave_agents["slave-b"]["instance_id"] == "slave-b-new"
     assert repository.slave_instances[("slave-b", "slave-b-expired")]["lease_state"] == "expired"
-    assert repository.slave_capabilities["slave-b"]["operations"] == {"run_code"}
+    assert repository.slave_capabilities["slave-b"]["actions"] == {"run_code"}
     supported = SimpleNamespace(
         package_type="function",
         execution=SimpleNamespace(kind="process:json_stdio", version="1"),

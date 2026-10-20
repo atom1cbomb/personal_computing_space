@@ -2,13 +2,13 @@
 
 **把分散的计算资源和外部服务，组织成 AI 可以发现、调用和协作使用的个人计算工作空间。**
 
-你可以提交自然语言目标，也可以由自己的 coding agent 生成完整执行计划提交给 Loom。Observer 负责校验、冻结计划并排队；Driver 负责领取和执行，再保存结果和执行证据。
+你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，或生成完整执行计划提交给 Loom。Observer 负责校验、冻结计划并排队；Driver 负责领取和执行，再保存结果和执行证据。
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
 ## 能做什么
 
-- **用自然语言发起计算任务**：在 Web 界面或通过 Observer API 提交目标、输入、约束和验收标准，查看规划进度、执行状态和结果。
+- **通过 agent 发起计算任务**：向外部 agent 描述目标、输入、约束和验收标准；它使用 GRIP 或提交完整计划，Web 界面用于查看执行状态和结果。
 - **跨机器执行和组合任务**：将工作拆成多个节点，分发到不同 Slave，再汇总输出。仓库提供了多节点统计分析示例。
 - **接入外部服务**：把 Kubernetes、云平台、文档服务等封装成能力包，让 agent 通过明确的接口使用它们，而不是把每个服务的逻辑写进系统核心。
 - **使用任务创建的新资源**：例如通过云能力包创建 VM，再为 VM 部署 SSH 访问能力包，完成认证后在 VM 上执行命令。
@@ -21,8 +21,8 @@
 | --- | --- |
 | [Kubernetes](capability_services/kubernetes_http/README.md) | 接入集群，查询和操作包内声明的 Kubernetes 资源 |
 | [Suanli Cloud](capability_services/suanlicloud_http/README.md) | 查询区域、节点、镜像和实例，创建及管理 VM |
-| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | 为单台 VM 提供浏览器认证和 SSH 命令执行的 HTTP 接口 |
-| [普通 VM SSH](capability_services/vm_ssh_http/README.md) | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行受限命令 |
+| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
+| [普通 VM SSH](capability_services/vm_ssh_http/README.md) | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
 | [Outline](capability_services/outline_http/README.md) | 查询、检索、创建和更新文档等受限操作 |
 
 ## 带来什么好处
@@ -76,6 +76,14 @@
 
 编排程序通过受限的 `read_json`、`materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、`emit_node`、`result` 接口读取内容、管理资源并等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 是 Driver 保留的特殊执行类型；普通能力包的业务调用仍在 Slave 一侧完成。
 
+## 统一使用资源：GRIP
+
+Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` URI 发现。使用流程是 `DESCRIBE(target)` 获取动作与 binding，再 `INVOKE(target, action, input)`。例如对 Slave 调用 `run-package`，input 引用能力包与业务输入，结果返回可查询的任务资源。激活实例直接提供自身的业务动作。
+
+所有资源引用都使用可读 GRIP 名称，包括包内 Schema、IoContract、descriptor 和程序内容。例如 `content/suanlicloud-http/schemas/instances-list-output/sha256/<摘要>`；摘要用于校验，不再单独充当整个资源名字。SDK 和资源目录使用相同 URI。
+
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。五个内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+
 ## 能力包、资源和实例
 
 这三个概念分别回答不同的问题：
@@ -98,7 +106,7 @@
 
 ### 资源引用能力包，避免重复描述
 
-资源通过 `package_ref` 指向“如何使用自己”的包，通过可选的 `managed_by_ref` 指向管理自己的资源。用户查询资源后，再查询其包即可获得能力描述和 IO contract。
+资源内部通过 `package_ref` 指向使用包，通过可选的 `managed_by_ref` 指向管理者。使用方通过 GRIP DESCRIBE 一次取得可调用的 offers 与 Schema 引用；Observer 负责解析包、实例及内部执行绑定。
 
 例如，一台 VM 的使用包是 VM SSH 包，而管理它的云资源使用 Suanli Cloud 包：**在 VM 上执行命令**和**创建、停止或销毁 VM**是两套不同职责，不需要混在同一个包里。
 
@@ -156,6 +164,26 @@ fi
 
 打开 **http://localhost:18080**。该栈包含 Observer、Driver、两个 Slave、三个独立 PostgreSQL 和 MinIO；Driver 与 Slave 不发布公共端口。外部 agent 的使用流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。
 
+### 外部 agent 的 SDK 与 skill 分发
+
+`loom-orchestration` 是独立 Python 包，源码保留在 `loom_orchestration/`，
+不复制到 skill。发布时可将同版本 SDK wheel 附在 skill 中：
+
+```bash
+python -m pip install 'setuptools>=68' 'wheel>=0.45'
+python scripts/build_agent_skill.py --output dist
+```
+
+将生成的 `dist/personal-computing-space.zip` 交给外部 agent，解压后 skill 的
+`assets/wheels/` 包含可安装的 SDK；安装方式见其 `references/sdk.md`。
+agent 只需 Python 3.12+、该 wheel 及 Pydantic/httpx，无需 Loom 服务端源码。
+此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
+
+metadata 发布校验与发现已支持资源身份、readiness 映射和访问/清理引用检查。
+终态 cleanup continuation 复用执行队列，使用预留节点及独立清理 deadline；
+`cleaning_up` 结束后须检查 `outcome.cleanup`，未知副作用或失败不会声称资源已释放。
+本地 fake capability 验证取消、超时和持久恢复；真实业务生命周期仍须单独验收。
+
 ### 常用查询入口
 
 以下路径均位于 Observer。字段和请求格式可在运行实例的 `/docs` 或 `/openapi.json` 查询。
@@ -167,10 +195,8 @@ fi
 | `POST /api/v1/runs/{run_id}/resubmit` | 根据 repair outcome 提交完整替换计划 |
 | `POST /api/v1/runs/{run_id}/cancel` | 取消已提交执行 |
 | `GET /api/v1/runtime` | 查询 Driver 执行运行信息 |
-| `GET /api/v1/slaves` | 查询当前 Workspace 已注册的执行节点 |
-| `GET /api/v1/capability-packages` | 查询能力包及其激活情况 |
-| `GET /api/v1/resources` | 查询已登记资源及其使用包、管理关系 |
-| `GET /api/v1/resources/{resource_id}/activations` | 反查明确绑定资源的 capability activation |
+| `POST /.well-known/grip` | 统一描述与调用 Slave、能力包、激活实例、领域资源和 Run |
+| `GET /api/v1/capability-packages` | 包制作与完整编排所需的不可变契约、descriptor 和发布记录 |
 | `GET /api/v1/runs/{run_id}` | 查询任务状态、结果和执行记录 |
 | `GET /api/v1/content/{digest}` | 取回实际内容，核验 `X-Content-Digest` |
 
@@ -184,6 +210,8 @@ Slave 在线只说明租约有效，不保证空闲容量或指定能力可用�
 python scripts/deploy_cluster.py --config deploy/deployment.example.toml --dry-run
 python scripts/deploy_cluster.py --config deploy/deployment.example.toml
 ```
+
+远程部署在 `[cluster]` 配置 `grip_authority`、`public_base_url`、`grip_token_file`；token 文件仅作为 Observer secret 挂载，dry-run 会隐藏内容。
 
 目标机需要 Docker/Compose，部署账号需要相应 SSH 和 Docker 权限。这是 **operator 的部署权限**，不是用户使用工作空间或认证外部服务所需的权限。Observer、Driver、Slave 和 MinIO 也可以用 `scripts/deploy_*.py` 分别更新。
 

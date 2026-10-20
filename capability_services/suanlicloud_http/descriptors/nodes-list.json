@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/nodes-list",
+  "name": "nodes_list",
+  "description": "Nodes list through the suanlicloud-http activation."
+}

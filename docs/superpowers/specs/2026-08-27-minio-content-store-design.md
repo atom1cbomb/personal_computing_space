@@ -23,7 +23,7 @@
 - 使用点：`ObserverRepository.materialize_capability_package_candidate`（`put`）、readiness（`exists`）、`GET /api/v1/content/{digest}`（`get`）；`SlaveService.provision`（`exists`）、执行（`get`）；`WorkerSession.provision` 的 `program_bytes_b64` 数据面。
 - 依赖现状：`pyproject.toml` 未含 boto3/moto；venv 未安装。
 - 部署现状：`deploy/docker-compose.yml` 中 observer/slave-a/slave-b 共享 `loom-content` volume 挂到 `/tmp/loom-v2-content`；`ContentStore` 构造默认本地目录、无环境配置。
-- 契约约束（不受本次重设计影响）：`ResourceRef(resource_id="content://sha256/<digest>", version_or_digest=<digest>, identity_criterion="content_digest")`；`CapabilityPackageVersion.package_digest` 计算剥离 `access_binding`。
+- 契约约束（不受本次重设计影响）：`ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>", version_or_digest=<digest>, identity_criterion="content_digest")`；`CapabilityPackageVersion.package_digest` 计算剥离 `access_binding`。
 
 ## 3. 设计
 
@@ -50,7 +50,7 @@ class ContentStore:
 - **`get` 读回后本地重算 sha256 校验**：正文必须与 `ref.version_or_digest` 一致；若同时提供 `expected_digest`，它也必须与正文和引用 digest 一致，否则抛 `content_digest_mismatch`。`expected_digest` 用于跨检查（如核对 `package.program_digest`），不能替代正文校验。
 - **`exists` 用 HEAD**：`head_object`，404/NoSuchKey 返回 False，不下载内容。
 - **新增 `stat`**：返回 `ContentStat{size, declared_digest, media_type, integrity_verified}` 或 None。`HEAD` 只能读取对象长度、Content-Type 和 `x-amz-meta-sha256` 声明，不能把 key 名称本身当作已验证的正文 digest；`integrity_verified` 只有在 metadata/长度与请求 digest 一致时为 true，完整正文校验仍由 `get` 完成。readiness 用它做“存在 + 声明完整性 + 大小”检查，比 `get` 便宜。
-- **`ResourceRef` 语义身份与后端位置分离**：`resource_id="content://sha256/<digest>"`、`version_or_digest=<digest>`、`identity_criterion="content_digest"` 保持不变。`access_binding` 不再持久化 bucket、key、endpoint_url 等部署相关位置；ContentStore 根据自身配置从 digest 解析 key，最多保留用于展示的 media type。`access_binding` 整体都不参与 ClosureVersion/TaskClosure canonical digest、package digest 或 provenance 身份计算；若实现需要返回临时解析位置，必须标记为 ephemeral，且不携带 secret。
+- **`ResourceRef` 语义身份与后端位置分离**：`resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>"`、`version_or_digest=<digest>`、`identity_criterion="content_digest"` 保持不变。`access_binding` 不再持久化 bucket、key、endpoint_url 等部署相关位置；ContentStore 根据自身配置从 digest 解析 key，最多保留用于展示的 media type。`access_binding` 整体都不参与 ClosureVersion/TaskClosure canonical digest、package digest 或 provenance 身份计算；若实现需要返回临时解析位置，必须标记为 ephemeral，且不携带 secret。
 - 只有一个实现、一个类，不设抽象基类/Protocol（moto 直接 mock 同一类，无需第二实现）。
 
 ### 3.2 实现
@@ -108,7 +108,7 @@ class ContentStore:
   - `put` 幂等（同内容重复 put 返回同一 digest/引用）、条件创建和既有对象不可覆盖、内容决定身份（无 resource_id 参数）；
   - `get` 命中、篡改内容抛 `content_digest_mismatch`、`expected_digest` 跨检查；
   - `exists`、`stat`（大小 + declared digest + media type + integrity 状态，缺失返回 None）；
-  - `content://sha256/<digest>` 身份、bucket/key 布局与 prefix；
+  - `grip://loom.local/workspaces/workspace-default/content/document/sha256/<digest>` 身份、bucket/key 布局与 prefix；
   - `ResourceRef.access_binding` 中不含部署 endpoint/bucket/key，且后端位置变化不影响 ClosureVersion/TaskClosure canonical digest；
   - 异步调用形态（pytest-asyncio）。
 - **复用现有能力包测试**：把 `ContentStore(tmp_path)` 替换为 moto 包装的 `ContentStore`（同一类、异步接口），覆盖 materialize → readiness → provision → 执行闭环。

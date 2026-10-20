@@ -20,10 +20,10 @@ def _store() -> ContentStore:
     )
 
 
-def _package(package_id: str, source_run_ref: str, operation: str, program_ref: ResourceRef, contract_ref: ResourceRef) -> CapabilityPackageVersion:
+def _package(package_id: str, source_run_ref: str, action: str, program_ref: ResourceRef, contract_ref: ResourceRef) -> CapabilityPackageVersion:
     descriptor_ref = ResourceRef(
-        resource_id=f"loom://{operation}",
-        version_or_digest=digest_json({"operation": operation}, domain="loom/operation-descriptor/v1"),
+        resource_id=f"grip://loom.local/workspaces/workspace-default/actions/{action}",
+        version_or_digest=digest_json({"action": action}, domain="loom/action-descriptor/v1"),
         identity_criterion="descriptor_digest",
     )
     return CapabilityPackageVersion(
@@ -32,8 +32,8 @@ def _package(package_id: str, source_run_ref: str, operation: str, program_ref: 
         package_closure_version_ref="closure",
         source_run_ref=source_run_ref,
         source_closure_version_ref="version",
-        capability_exports=[{
-            "capability_descriptor_ref": descriptor_ref,
+        action_exports=[{
+            "action_descriptor_ref": descriptor_ref,
             "io_contract_ref": contract_ref,
             "effect_class": "Sandboxed",
             "permissions": [],
@@ -58,9 +58,9 @@ async def test_subprocess_package_is_provisioned_and_executed():
     binding = ComputeBinding(
         binding_id="binding",
         hole_id="h",
-        capability_descriptor_ref=package.capability_exports[0].capability_descriptor_ref,
-        capability_package_ref=ResourceRef(resource_id="capability-package://pkg/v1"),
-        target_resource_ref=ResourceRef(resource_id="slave-a"),
+        action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
+        capability_package_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/packages/pkg/v1"),
+        target_resource_ref=ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/slaves/slave-a"),
 
     )
     report = await service.provision(CapabilityProvisionCommand(command_id="cmd", package_version_ref=package.version_ref, package_digest=package.package_digest, target_slave="slave-a", idempotency_key="provision-1", activation_revision=1), package)

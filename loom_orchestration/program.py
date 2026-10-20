@@ -10,6 +10,8 @@ from .contracts import ResourceRef
 
 
 class OrchestrationContext(Protocol):
+    async def sleep(self, seconds: float) -> None: ...
+
     async def read_json(self, ref: ResourceRef) -> Any: ...
 
     async def materialize_json(self, *, step_id: str, value: Any) -> ResourceRef: ...
@@ -44,7 +46,7 @@ class OrchestrationContext(Protocol):
         *,
         step_id: str,
         resource_ref: ResourceRef,
-        cleanup_operation_ref: ResourceRef,
+        cleanup_action_ref: ResourceRef,
         input_mapping: dict[str, Any],
     ) -> None: ...
 
@@ -52,7 +54,7 @@ class OrchestrationContext(Protocol):
         self,
         step_id: str,
         package_ref: ResourceRef,
-        capability_descriptor_ref: ResourceRef,
+        action_descriptor_ref: ResourceRef,
         input_refs: list[ResourceRef],
         *,
         target_resource_ref: ResourceRef | None = None,

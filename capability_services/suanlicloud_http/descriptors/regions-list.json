@@ -1,0 +1,6 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/regions-list",
+  "name": "regions_list",
+  "description": "Regions list through the suanlicloud-http activation."
+}

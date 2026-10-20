@@ -1,5 +1,7 @@
 # HTTP 服务能力包：可插拔 Slave runtime 与生命周期
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
 **日期：** 2026-09-13  
 **状态：** 设计草案，Phase 2  
 **前置：** [契约与 digest](2026-09-12-http-service-capability-package-contract-and-digest-design.md)  
@@ -118,7 +120,7 @@ POST /v1/reconcile
     "package_type": "service",
     "execution": {"kind": "container:http", "version": "1"}
   }],
-  "runtime_descriptor_ref": "runtime://service/container:http/1",
+  "runtime_descriptor_ref": "grip://loom.local/workspaces/workspace-default/runtimes/service/container:http/1",
   "runtime_descriptor_digest": "<digest>"
 }
 ```

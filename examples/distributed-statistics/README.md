@@ -9,14 +9,14 @@ compute nodes running on **both** WorkspaceReplica Slaves (`slave-a` and
 
 | Node | Role in this app | Hosted by |
 | --- | --- | --- |
-| `loom://orchestrate` | Parent node: reads the input, emits one summarize child per partition, awaits them, then emits a single merge child | Driver (container `container:python_orchestrator`) |
+| `grip://loom.local/workspaces/workspace-default/actions/orchestrate` | Parent node: reads the input, emits one summarize child per partition, awaits them, then emits a single merge child | Driver (container `container:python_orchestrator`) |
 | `summarize` | Map node: computes `count/sum/min/max/sumsq` for one partition | `slave-a` / `slave-b` (`process:json_stdio`) |
 | `merge-summaries` | Reduce node: combines all summaries into `mean/stddev` | `slave-a` / `slave-b` (`process:json_stdio`) |
 
 The Observer is the state authority, the Driver owns the orchestration, and
 each Slave keeps its own PostgreSQL ledger. Content (schemas, programs, input,
 results) lives only in MinIO/S3 and is referenced by immutable
-`content://sha256/<digest>` references.
+`grip://loom.local/workspaces/workspace-default/content/<readable-purpose>/sha256/<digest>` references.
 
 ## Layout
 
@@ -32,13 +32,13 @@ results) lives only in MinIO/S3 and is referenced by immutable
 
 ## Execution flow (end-to-end)
 
-1. Upload io-contract documents and schemas via `loom_put_content`.
-2. Materialize `summarize` and `merge-summaries` capability packages
+1. Discover available Slaves through `client.resources(kind="slave")`; upload schemas and IoContracts with `client.upload_content`.
+2. Register `summarize` and `merge-summaries` workspace capability packages
    (`process:json_stdio`).
-3. Materialize the `orchestrate` capability package
+3. Register the `orchestrate` capability package
    (`container:python_orchestrator`, `allowed_node_package_refs=[summarize, merge]`,
    `max_nodes=6`, `max_live_nodes=2`).
-4. Open the Run, bind the execution payload, commit, start.
+4. Submit one complete `ClosureContract` through `client.submit` and poll its queued execution. Full plans use the authoring/submission interface; individual resource actions use [GRIP](../grip/README.md).
 5. The Driver runs the orchestration program in Docker; it emits summarize nodes
    round-robin across `slave-a` and `slave-b` (2 live nodes max), then a merge
    node over the collected summaries.
@@ -52,3 +52,17 @@ Run the live end-to-end test with:
 
 Requires the Compose stack to be up and the Observer reachable at
 `http://localhost:18080` (see `scripts/test-e2e.sh`).
+
+The band-gap acceptance harness uses the same public workflow:
+
+```sh
+python scripts/accept-bandgap.py --observer "$LOOM_OBSERVER_URL"
+```
+
+It discovers Slaves through GRIP, uploads immutable artifacts with the SDK, submits
+a complete plan, reads the Run through GRIP and checks statistics and provenance.
+Set the operator-provided GRIP token/authority/workspace first; local HTTP needs
+`--allow-http`. `--inject-failure` explicitly opts into operator Docker stop/start
+testing. The removed server-agent/MCP refinement modes are no longer supported.
+
+All resource references use GRIP, including program/schema content. Generate the orchestration from `orchestrate.py.tpl` with references returned by the current deployment; generated programs with historical package digests are not checked in.

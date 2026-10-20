@@ -5,7 +5,7 @@ from loom_v2.contracts.decorators import attach_constraint, task_closure
 def test_decorators_materialize_explicit_metadata_without_calling_function():
     calls = []
 
-    @task_closure(goal="run test code", operation_ref="loom://test_double")
+    @task_closure(goal="run test code", action_ref="grip://loom.local/workspaces/workspace-default/actions/test_double")
     @attach_constraint(
         ConstraintSpec(
             subject=["ComputeSpec"],

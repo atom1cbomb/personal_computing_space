@@ -12,7 +12,24 @@ fi
 OBSERVER_PORT="${LOOM_OBSERVER_PORT:-18080}"
 curl -fsS "http://localhost:${OBSERVER_PORT}/healthz"
 curl -fsS "http://localhost:${OBSERVER_PORT}/" | grep -q "Run drawer"
-curl -fsS "http://localhost:${OBSERVER_PORT}/api/v1/capabilities" | grep -q 'slave-a'
-curl -fsS "http://localhost:${OBSERVER_PORT}/api/v1/capabilities" | grep -q 'slave-b'
+export LOOM_OBSERVER_URL="http://localhost:${OBSERVER_PORT}"
+: "${LOOM_GRIP_TOKEN:?configure the same GRIP token as the Observer}"
+python - <<'PYTHON'
+import asyncio
+import os
+from loom_orchestration import LoomClient
+
+async def check():
+    async with LoomClient(os.environ["LOOM_OBSERVER_URL"], token=os.environ["LOOM_GRIP_TOKEN"],
+                          grip_authority=os.getenv("LOOM_GRIP_AUTHORITY", "loom.local"),
+                          workspace_id=os.getenv("LOOM_WORKSPACE_ID", "workspace-default"),
+                          allow_insecure_grip=True) as client:
+        slaves = await client.resources(kind="slave")
+        available = {r["metadata"]["slave_id"] for r in slaves if r["metadata"]["available"]}
+        assert {"slave-a", "slave-b"} <= available, available
+        for slave in slaves:
+            assert (await client.describe(slave["uri"]))["offers"]
+asyncio.run(check())
+PYTHON
 "$DOCKER_BIN" compose -f deploy/docker-compose.yml ps --status running
 echo "Loom v2 smoke checks passed"

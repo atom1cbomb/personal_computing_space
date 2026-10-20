@@ -1,5 +1,9 @@
 # Dynamic Node Worker Loss Recovery Implementation Plan
 
+> 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](../specs/2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。
+
+> 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Allow an authorized running DynamicNode to replace a lost Slave Attempt atomically, continue on another live Slave, and retain a complete audit trail without changing the Run execution generation.
@@ -147,7 +151,7 @@ async def test_dynamic_node_dispatch_binds_active_slave_instance():
     started = await repo.start(run.run_id, committed.version_id)
     record = await repo.get_run(run.run_id)
     package = next(item for item in record.capability_packages if item.package_id == "summarize")
-    input_ref = next(item.input_ref for item in record.committed.snapshot.node_input_bindings if item.node_id == "loom://summarize")
+    input_ref = next(item.input_ref for item in record.committed.snapshot.node_input_bindings if item.node_id == "grip://loom.local/workspaces/workspace-default/operations/summarize")
     node = await repo.accept_node_intent(
         run.run_id,
         NodeIntent(
@@ -264,7 +268,7 @@ async def test_reassign_marks_old_attempt_lost_without_bumping_run_epoch():
     started = await repo.start(run.run_id, committed.version_id)
     record = await repo.get_run(run.run_id)
     package = next(item for item in record.capability_packages if item.package_id == "summarize")
-    input_ref = next(item.input_ref for item in record.committed.snapshot.node_input_bindings if item.node_id == "loom://summarize")
+    input_ref = next(item.input_ref for item in record.committed.snapshot.node_input_bindings if item.node_id == "grip://loom.local/workspaces/workspace-default/operations/summarize")
     node = await repo.accept_node_intent(
         run.run_id,
         NodeIntent(
@@ -510,7 +514,7 @@ async def test_runtime_reassigns_lost_dynamic_attempt_without_bumping_epoch():
     record = await repo.get_run(run.run_id)
     package = next(item for item in record.capability_packages if item.package_id == "summarize")
     node_ref = ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest)
-    parent_input = next(item.input_ref for item in record.committed.snapshot.node_input_bindings if item.node_id == "loom://orchestrate")
+    parent_input = next(item.input_ref for item in record.committed.snapshot.node_input_bindings if item.node_id == "grip://loom.local/workspaces/workspace-default/operations/orchestrate")
     slave_a = WorkerSession("slave-a", "http://slave-a", transport=httpx.ASGITransport(app=create_slave_app("slave-a")))
     slave_b = WorkerSession("slave-b", "http://slave-b", transport=httpx.ASGITransport(app=create_slave_app("slave-b")))
     runtime = DynamicOrchestrationRuntime(

@@ -12,7 +12,7 @@ from loom_v2.contracts.types import (
 def test_io_contract_round_trips_nullable_schema_refs() -> None:
     contract = IoContract(
         input_schema_ref=ResourceRef(
-            resource_id="content://sha256/" + "1" * 64,
+            resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "1" * 64,
         ),
         output_schema_ref=None,
         success_semantics={"criterion": "non_empty"},
@@ -33,10 +33,10 @@ def test_io_contract_rejects_unknown_fields() -> None:
 
 def test_package_and_node_binding_carry_semantic_refs() -> None:
     contract_ref = ResourceRef(
-        resource_id="content://sha256/" + "2" * 64,
+        resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "2" * 64,
     )
     input_ref = ResourceRef(
-        resource_id="content://sha256/" + "3" * 64,
+        resource_id="grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "3" * 64,
     )
 
     package_fields = CapabilityPackageVersion.model_fields
@@ -48,4 +48,4 @@ def test_package_and_node_binding_carry_semantic_refs() -> None:
         "input_ref": input_ref.model_dump(mode="json"),
         "provenance": [],
     }
-    assert contract_ref.resource_id.startswith("content://sha256/")
+    assert contract_ref.resource_id.startswith("grip://loom.local/workspaces/workspace-default/content/document/sha256/")

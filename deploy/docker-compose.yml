@@ -69,6 +69,9 @@ services:
     command: ["/bin/sh", "-c", "export LOOM_INTERNAL_API_SECRET=\"$$(cat /run/secrets/internal_api_secret)\" && exec uvicorn loom_v2.observer.app:app --host 0.0.0.0 --port 8080"]
     environment:
       LOOM_SERVICE_NAME: observer
+      LOOM_GRIP_AUTHORITY: ${LOOM_GRIP_AUTHORITY:-loom.local}
+      LOOM_GRIP_TOKEN: ${LOOM_GRIP_TOKEN:-}
+      LOOM_PUBLIC_BASE_URL: ${LOOM_PUBLIC_BASE_URL:-http://localhost:18080}
       LOOM_DATABASE_URL: postgresql+asyncpg://loom:loom@observer-db:5432/loom_observer
       LOOM_S3_ENDPOINT_URL: http://minio:9000
       LOOM_S3_BUCKET: loom-content

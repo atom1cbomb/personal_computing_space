@@ -1,9 +1,14 @@
 # Outline HTTP capability package
 
+Public resource use follows [the shared GRIP workflow](../README.md): publish the
+artifact directory with `scripts/publish_service_package.py`, activate the package
+on a Slave, then invoke the ready activation's discovered action URI. The HTTP
+paths below describe the private runtime-to-container binding.
+
 This gateway provides a bounded Outline API surface for the Loom
 `service + container:http/1` runtime. It supports collection discovery,
 document listing/retrieval/search, and ordinary document create/update/archive/
-restore operations. It does not expose arbitrary URLs or Outline methods,
+restore actions. It does not expose arbitrary URLs or Outline methods,
 administration, API-key management, attachments, or permanent deletion.
 
 Outline's API is JSON RPC over `POST /api/<method>` and authenticates with
@@ -30,7 +35,7 @@ The package manifest refers only to the non-sensitive profile name
 replace the example image digest before registration; this repository does not
 push the image or register the package automatically.
 
-Each exported operation has a small input/output schema in `schemas/` and an
+Each exported action has a small input/output schema in `schemas/` and an
 IoContract in `contracts/`. The package example is updated from those files by
 `python scripts/generate_service_contracts.py`; use its `--check` mode in CI.
 

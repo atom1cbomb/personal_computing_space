@@ -1,47 +1,26 @@
 #!/usr/bin/env python3
-"""Live acceptance test: band-gap statistics report (compute-service-desk scenario).
+"""Live band-gap acceptance using GRIP discovery and complete-plan submission.
 
-Targets a running Loom Observer over HTTP (default http://localhost:18080).
-
-Modes:
-  mcp   -- drive the scenario through the public MCP tool surface directly.
-           This validates the band-gap scenario on the live infrastructure
-           (Observer/Driver/Slaves/MinIO/orchestration) without an LLM.
-  agent -- seed the corpus, then send ONE natural-language message and let the
-           real Codex coding-agent refine and execute end-to-end (G1, the
-           discriminating gate). No manual `loom_*` calls in this mode.
-
-Gates (per docs/superpowers/specs/2026-09-02-compute-service-desk-acceptance-design.md):
-  G1  real-agent refinement        (agent mode only)
-  G2  capability-gap closure       (>=1 run_bound candidate package materialized)
-  G3  statistical correctness      (report == independent ground truth)
-  G5  provenance                   (outcome content-addressed; node/attempt trace)
-G4 (slave failure injection) is off by default and available via --inject-failure.
-
-Exit code 0 if all enabled gates pass, 1 otherwise.
+Uses public SDK APIs. Optional operator-owned Docker failure injection remains
+explicit; this harness does not submit prompts to a server-side agent.
 """
-
 from __future__ import annotations
 
+from loom_orchestration.naming import content_digest
+
 import argparse
+import asyncio
 import json
 import math
+import os
 import random
 import subprocess
-import sys
-import threading
 import time
-import urllib.error
-import urllib.request
-import uuid
 from typing import Any, Callable
-from urllib.parse import urljoin
+from uuid import uuid4
 
-from loom_v2.digest import digest_json
+from loom_orchestration import LoomClient, OrchestratorPackage, ResourceRef, SubmissionBuilder, TaskClosure
 
-
-DEFAULT_OBSERVER = "http://localhost:18080"
-WORKSPACE_ID = "workspace-default"
 FAMILIES = ["perovskite", "rutile", "zincblende", "wurtzite", "rocksalt"]
 
 
@@ -98,96 +77,6 @@ class SlaveFailureController:
         )
         self.stopped = False
 
-
-# --------------------------------------------------------------------------- helpers
-
-def _request(
-    method: str,
-    url: str,
-    payload: Any = None,
-    headers: dict[str, str] | None = None,
-    timeout: float = 30.0,
-) -> tuple[int, bytes]:
-    data = None
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    for key, value in (headers or {}).items():
-        req.add_header(key, value)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
-
-
-def _json(method: str, url: str, payload: Any = None, **kw: Any) -> Any:
-    status, body = _request(method, url, payload, **kw)
-    if status >= 400:
-        raise RuntimeError(f"HTTP {status} on {method} {url}: {body[:300]!r}")
-    return json.loads(body) if body else None
-
-
-def mcp_call(observer: str, conversation_ref: str, name: str, arguments: dict, timeout: float = 60.0) -> dict:
-    status, body = _request(
-        "POST",
-        urljoin(observer, "/mcp"),
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}},
-        headers={"X-Loom-Conversation-Ref": conversation_ref},
-        timeout=timeout,
-    )
-    if status >= 400:
-        raise RuntimeError(f"MCP HTTP {status} for {name}: {body[:300]!r}")
-    payload = json.loads(body)
-    result = payload.get("result") or {}
-    text = (result.get("content") or [{}])[0].get("text") or "{}"
-    value = json.loads(text)
-    if result.get("isError"):
-        raise RuntimeError(f"{name} failed: {value}")
-    return value
-
-
-def put_content(observer: str, conversation_ref: str, content: Any, media_type: str) -> dict:
-    return mcp_call(observer, conversation_ref, "loom_put_content", {"content": content, "media_type": media_type})["resource_ref"]
-
-
-def put_descriptor(observer: str, conversation_ref: str, content: dict[str, Any]) -> dict:
-    content_ref = put_content(
-        observer,
-        conversation_ref,
-        content,
-        "application/vnd.loom.operation-descriptor+json",
-    )
-    return {
-        "resource_id": content_ref["resource_id"],
-        "version_or_digest": digest_json(content, domain="loom/operation-descriptor/v1"),
-        "identity_criterion": "descriptor_digest",
-    }
-
-
-def get_run(observer: str, run_id: str) -> dict:
-    return _json("GET", urljoin(observer, f"/api/v1/runs/{run_id}"), timeout=30.0)
-
-
-def get_conversation(observer: str, conversation_ref: str) -> dict:
-    return _json("GET", urljoin(observer, f"/api/v1/conversations/{conversation_ref}"), timeout=30.0)
-
-
-def fetch_content(observer: str, resource_id: str) -> Any:
-    if not resource_id.startswith("content://sha256/"):
-        return None
-    digest = resource_id.split("/")[-1]
-    status, body = _request("GET", urljoin(observer, f"/api/v1/content/{digest}"), timeout=30.0)
-    if status != 200:
-        raise RuntimeError(f"content fetch failed: HTTP {status}")
-    try:
-        return json.loads(body)
-    except (ValueError, TypeError):
-        return body.decode("utf-8", errors="replace")
-
-
-# --------------------------------------------------------------------------- corpus
 
 def make_corpus(seed: int, n: int) -> list[dict]:
     rng = random.Random(seed)
@@ -283,214 +172,6 @@ MERGE_PROGRAM = (
 )
 
 
-def orchestration_source(
-    summarize_ref: dict,
-    summarize_descriptor_ref: dict,
-    merge_ref: dict,
-    merge_descriptor_ref: dict,
-) -> str:
-    return (
-        "SUMMARIZE = " + json.dumps(summarize_ref) + "\n"
-        "SUMMARIZE_DESCRIPTOR = " + json.dumps(summarize_descriptor_ref) + "\n"
-        "MERGE = " + json.dumps(merge_ref) + "\n"
-        "MERGE_DESCRIPTOR = " + json.dumps(merge_descriptor_ref) + "\n"
-        'async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":\n'
-        "    document = await ctx.read_json(input_ref)\n"
-        "    handles = [ctx.emit_node(SUMMARIZE, SUMMARIZE_DESCRIPTOR, [partition]) for partition in document[\"partitions\"]]\n"
-        "    summaries = [await ctx.result(handle) for handle in handles]\n"
-        "    merged = ctx.emit_node(MERGE, MERGE_DESCRIPTOR, summaries)\n"
-        "    return await ctx.result(merged)\n"
-    )
-
-
-# --------------------------------------------------------------------------- mcp mode
-
-def run_mcp_mode(
-    observer: str,
-    corpus: list[dict],
-    partitions: int,
-    *,
-    failure_controller: SlaveFailureController | None = None,
-) -> tuple[dict, list[str]]:
-    passed: list[str] = []
-    conversation_ref = f"accept-bandgap-mcp-{uuid.uuid4().hex[:10]}"
-
-    parent_input_schema = put_content(observer, conversation_ref, {"type": "object", "required": ["partitions"]}, "application/schema+json")
-    sum_in_schema = put_content(observer, conversation_ref, {"type": "object", "required": ["items"]}, "application/schema+json")
-    sum_out_schema = put_content(
-        observer,
-        conversation_ref,
-        {"type": "object", "required": ["count", "by_family"]},
-        "application/schema+json",
-    )
-    merge_in_schema = put_content(observer, conversation_ref, {"type": "object", "required": ["inputs"]}, "application/schema+json")
-    merge_out_schema = put_content(
-        observer,
-        conversation_ref,
-        {"type": "object", "required": ["overall", "by_family"]},
-        "application/schema+json",
-    )
-
-    def contract(input_ref: dict, output_ref: dict) -> dict:
-        return {"schema_version": "io.v1", "input_schema_ref": input_ref, "output_schema_ref": output_ref, "success_semantics": None, "success_validator_ref": None}
-
-    parent_contract = put_content(observer, conversation_ref, contract(parent_input_schema, merge_out_schema), "application/vnd.loom.io-contract+json")
-    summarize_contract = put_content(observer, conversation_ref, contract(sum_in_schema, sum_out_schema), "application/vnd.loom.io-contract+json")
-    merge_contract = put_content(observer, conversation_ref, contract(merge_in_schema, merge_out_schema), "application/vnd.loom.io-contract+json")
-
-    summarize_program = put_content(observer, conversation_ref, SUMMARIZE_PROGRAM, "text/x-python")
-    merge_program = put_content(observer, conversation_ref, MERGE_PROGRAM, "text/x-python")
-    summarize_descriptor = put_descriptor(observer, conversation_ref, {"schema_version": "operation.v1", "resource_id": "loom://summarize-bandgap", "name": "summarize-bandgap"})
-    merge_descriptor = put_descriptor(observer, conversation_ref, {"schema_version": "operation.v1", "resource_id": "loom://merge-bandgap", "name": "merge-bandgap"})
-    orchestration_descriptor = put_descriptor(observer, conversation_ref, {"schema_version": "operation.v1", "resource_id": "loom://orchestrate", "name": "orchestrate"})
-
-    chunks = [corpus[i::partitions] for i in range(partitions)]
-    partitions_payload = [{"items": chunk} for chunk in chunks]
-    partition_refs = [put_content(observer, conversation_ref, part, "application/json") for part in partitions_payload]
-    input_ref = put_content(observer, conversation_ref, {"partitions": partition_refs}, "application/json")
-
-    closure = {
-        "closure_id": "closure-bandgap-mcp",
-        "goal": "per-family band-gap statistics",
-        "resource_budget": {"max_nodes": 8, "max_live_nodes": 2},
-        "recovery_policy": {"allow_reassignment": failure_controller is not None},
-        "body": {
-            "closure_id": "closure-bandgap-mcp",
-            "program": {"operation_ref": "loom://orchestrate", "io_contract_ref": parent_contract},
-        },
-    }
-    opened = mcp_call(observer, conversation_ref, "loom_open_run", {"closure_contract": closure})
-    run_id = opened["run_id"]
-
-    mcp_call(
-        observer,
-        conversation_ref,
-        "loom_apply_plan_patch",
-        {
-            "ops": [
-                {"kind": "set_execution_payload", "value": {"node_id": "loom://orchestrate", "input_ref": input_ref}},
-                {
-                    "kind": "materialize_capability_package_candidate",
-                    "value": {
-                                 "package_id": "summarize-bandgap",
-                                 "package_version": "v1",
-                                 "package_type": "function",
-                                 "execution": {"kind": "process:json_stdio", "version": "1"},
-                                 "capability_exports": [{"capability_descriptor_ref": summarize_descriptor, "io_contract_ref": summarize_contract, "effect_class": "Sandboxed", "permissions": [], "replay_safety": "DeclaredByPackage", "runtime_binding": {}}],
-                                 "body": {
-                                     "program_content_ref": summarize_program,
-                                 },
-                             },
-                },
-                {
-                    "kind": "materialize_capability_package_candidate",
-                    "value": {
-                                 "package_id": "merge-bandgap",
-                                 "package_version": "v1",
-                                 "package_type": "function",
-                                 "execution": {"kind": "process:json_stdio", "version": "1"},
-                                 "capability_exports": [{"capability_descriptor_ref": merge_descriptor, "io_contract_ref": merge_contract, "effect_class": "Sandboxed", "permissions": [], "replay_safety": "DeclaredByPackage", "runtime_binding": {}}],
-                                 "body": {
-                                     "program_content_ref": merge_program,
-                                 },
-                             },
-                },
-            ]
-        },
-    )
-    packages = mcp_call(observer, conversation_ref, "loom_list_run_capability_packages", {})["packages"]
-    summarize_package = next(item for item in packages if item["package_id"] == "summarize-bandgap")
-    merge_package = next(item for item in packages if item["package_id"] == "merge-bandgap")
-    summarize_ref = {"resource_id": f"capability-package://{summarize_package['package_id']}/{summarize_package['package_version']}", "version_or_digest": summarize_package["package_digest"]}
-    merge_ref = {"resource_id": f"capability-package://{merge_package['package_id']}/{merge_package['package_version']}", "version_or_digest": merge_package["package_digest"]}
-
-    orchestration_program = put_content(observer, conversation_ref, orchestration_source(summarize_ref, summarize_descriptor, merge_ref, merge_descriptor), "text/x-python")
-    patched = mcp_call(
-        observer,
-        conversation_ref,
-        "loom_apply_plan_patch",
-        {
-            "ops": [
-                {
-                    "kind": "materialize_capability_package_candidate",
-                    "value": {
-                                 "package_id": "orchestrate",
-                                 "package_version": "v1",
-                                 "package_type": "function",
-                                 "execution": {"kind": "container:python_orchestrator", "version": "1"},
-                                 "capability_exports": [{"capability_descriptor_ref": orchestration_descriptor, "io_contract_ref": parent_contract, "effect_class": "Sandboxed", "permissions": [], "replay_safety": "DeterministicByEventLog", "runtime_binding": {}}],
-                                 "body": {
-                                     "program_content_ref": orchestration_program,
-                                     "allowed_node_package_refs": [summarize_ref, merge_ref],
-                                     "max_nodes": 8,
-                                     "max_live_nodes": 2,
-                                 },
-                             },
-                }
-            ]
-        },
-    )
-    if not patched["readiness"]["ready"]:
-        raise RuntimeError(f"readiness not ready: {patched['readiness'].get('blockers')}")
-    passed.append("G2(part): materialized run_bound candidate packages")
-
-    committed = mcp_call(observer, conversation_ref, "loom_commit_plan", {})
-    monitor_stop = threading.Event()
-    monitor_errors: list[BaseException] = []
-    monitor_thread: threading.Thread | None = None
-    if failure_controller is not None:
-        def monitor() -> None:
-            while not monitor_stop.wait(0.1):
-                try:
-                    current = get_run(observer, run_id)
-                except Exception:
-                    continue
-                try:
-                    failure_controller.observe(current)
-                except BaseException as exc:
-                    monitor_errors.append(exc)
-                    return
-
-        monitor_thread = threading.Thread(target=monitor, name="slave-failure-monitor", daemon=True)
-        monitor_thread.start()
-    try:
-        try:
-            mcp_call(observer, conversation_ref, "loom_start_run", {"closure_version": committed["closure_version"]}, timeout=120.0)
-        except Exception:
-            pass  # observer->driver forward may time out; keep polling persisted state
-
-        run = _poll_run(observer, run_id, timeout=300.0)
-        if monitor_errors:
-            raise RuntimeError(f"failure injection failed: {monitor_errors[0]}")
-        if run["state"] not in {"completed", "closed"}:
-            raise RuntimeError(f"run did not complete: state={run['state']} outcome={run.get('outcome')}")
-        passed.append("G1(infra): closure committed and executed to completion via MCP")
-
-        report = _extract_report(observer, run)
-        gt = ground_truth(corpus)
-        _check_report(report, gt, passed)
-        _check_provenance(run, passed)
-        if failure_controller is not None:
-            _check_failure_reassignment(run, failure_controller, passed)
-        return run, passed
-    finally:
-        monitor_stop.set()
-        if monitor_thread is not None:
-            monitor_thread.join(timeout=5.0)
-        if failure_controller is not None:
-            failure_controller.restore()
-
-
-def _extract_report(observer: str, run: dict) -> Any:
-    outcome = run.get("outcome") or {}
-    if isinstance(outcome.get("value"), dict):
-        return outcome["value"]
-    ref = outcome.get("resource_ref")
-    if isinstance(ref, dict):
-        return fetch_content(observer, ref.get("resource_id", ""))
-    return None
-
-
 def _find_stats(value: Any) -> dict | None:
     if isinstance(value, dict):
         if all(k in value for k in ("count", "sum", "mean", "stddev")) and isinstance(value.get("count"), (int, float)):
@@ -538,7 +219,7 @@ def _check_provenance(run: dict, passed: list[str]) -> None:
         raise RuntimeError(f"no dynamic node events: accepted={len(accepted)} completed={len(completed)}")
     outcome = run.get("outcome") or {}
     ref = outcome.get("resource_ref")
-    if not (isinstance(ref, dict) and ref.get("resource_id", "").startswith("content://sha256/")):
+    if not (isinstance(ref, dict) and content_digest(ref.get("resource_id", "")) is not None):
         raise RuntimeError(f"outcome not content-addressed: {ref!r}")
     node_ids = {n["node_id"] for n in run.get("dynamic_nodes") or []}
     accepted_ids = {e.get("node_id") for e in accepted}
@@ -598,138 +279,132 @@ def _check_failure_reassignment(
     raise RuntimeError("G4 reassignment audit chain is incomplete")
 
 
-def _now() -> str:
-    return time.strftime("%H:%M:%S", time.gmtime()) + f".{int(time.time() * 1000) % 1000:03d}Z"
+def ref_dict(reference):
+    return reference.model_dump(mode="json", include={"resource_id", "version_or_digest", "identity_criterion"}, exclude_none=True)
 
 
-def _poll_run(observer: str, run_id: str, *, timeout: float) -> dict:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        run = get_run(observer, run_id)
-        print(f"[{_now()}] poll_run state={run['state']}")
-        if run["state"] in {"completed", "awaiting_decision", "failed", "cancelled", "closed"}:
-            return run
-        time.sleep(2.0)
-    raise TimeoutError(f"run {run_id} did not reach a terminal state within {timeout}s")
+def package_ref(package):
+    return ResourceRef(resource_id=package["resource"], version_or_digest=package["package_digest"])
 
 
-# --------------------------------------------------------------------------- agent mode
+async def prepare_plan(client, corpus, partitions, request_id, *, allow_reassignment=False, timeout=300):
+    """Upload immutable artifacts and return the complete, reviewable plan."""
+    if not 1 <= partitions <= len(corpus):
+        raise ValueError("partitions must be between one and the corpus size")
 
-def seed_corpus(observer: str, corpus: list[dict], partitions: int) -> str:
-    chunks = [corpus[i::partitions] for i in range(partitions)]
-    partition_payload = [{"items": chunk} for chunk in chunks]
-    refs = [_json("POST", urljoin(observer, "/api/v1/content"), {"content": p, "media_type": "application/json"}) for p in partition_payload]
-    manifest = _json("POST", urljoin(observer, "/api/v1/content"), {"content": {"partitions": refs}, "media_type": "application/json"})
-    return manifest["resource_id"]
+    async def contract(input_keys, output_keys):
+        refs = [await client.upload_content({"type": "object", "required": keys}, media_type="application/schema+json") for keys in (input_keys, output_keys)]
+        return await client.upload_content({"schema_version": "io.v1", "input_schema_ref": ref_dict(refs[0]), "output_schema_ref": ref_dict(refs[1])}, media_type="application/vnd.loom.io-contract+json")
 
+    async def descriptor(name):
+        return await client.upload_content({"schema_version": "action.v1", "resource_id": client.names.name("actions", name), "name": name}, media_type="application/vnd.loom.action-descriptor+json")
 
-def run_agent_mode(observer: str, corpus: list[dict], partitions: int, timeout: float) -> tuple[dict, list[str]]:
-    passed: list[str] = []
-    manifest_ref = seed_corpus(observer, corpus, partitions)
-    conversation_ref = f"accept-bandgap-agent-{uuid.uuid4().hex[:10]}"
-    request_id = f"request-{uuid.uuid4().hex}"
-    prompt = (
-        "You are operating a distributed compute runtime. A band-gap dataset has been uploaded; "
-        f"its manifest is the content ref {manifest_ref}, a JSON document "
-        '{"partitions": [{"items": [{"family", "e_gap", ...}]}]}. '
-        "Build and run a closure that computes per-family band-gap statistics "
-        "(count, sum, min, max, mean, population stddev) for every family plus overall, "
-        "using a map-reduce fan-out across slave-a and slave-b, then returns a report JSON. "
-        "If the needed capabilities (e.g. summarize/merge packages) are not present, "
-        "materialize them as capability-package candidates during refinement. "
-        "Open the run, refine it until readiness is ready, commit, start, and let it complete."
+    async def function(name, source, io_contract, action):
+        program = await client.upload_content(source, media_type="text/x-python")
+        package = await client.register_package({
+            "package_id": f"{name}-{request_id}", "package_version": "v1", "package_type": "function",
+            "execution": {"kind": "process:json_stdio", "version": "1"},
+            "action_exports": [{"action_descriptor_ref": ref_dict(action), "io_contract_ref": ref_dict(io_contract),
+                                    "effect_class": "Sandboxed", "permissions": [], "replay_safety": "SafeRead", "runtime_binding": {}}],
+            "body": {"program_content_ref": ref_dict(program)},
+        })
+        return package_ref(package)
+
+    summary_io = await contract(["items"], ["count", "by_family"])
+    merge_io = await contract(["inputs"], ["overall", "by_family"])
+    parent_io = await contract(["partitions"], ["overall", "by_family"])
+    summary_descriptor = await descriptor("summarize-bandgap")
+    merge_descriptor = await descriptor("merge-bandgap")
+    parent_descriptor = await descriptor("orchestrate")
+    summary = await function("summarize-bandgap", SUMMARIZE_PROGRAM, summary_io, summary_descriptor)
+    merge = await function("merge-bandgap", MERGE_PROGRAM, merge_io, merge_descriptor)
+    source = (
+        f"SUMMARIZE = {ref_dict(summary)!r}\nSUMMARIZE_DESCRIPTOR = {ref_dict(summary_descriptor)!r}\n"
+        f"MERGE = {ref_dict(merge)!r}\nMERGE_DESCRIPTOR = {ref_dict(merge_descriptor)!r}\n"
+        'async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":\n'
+        '    document = await ctx.read_json(input_ref)\n'
+        '    partitions = document["partitions"]\n'
+        '    summaries = []\n'
+        '    for start in range(0, len(partitions), 2):\n'
+        '        handles = [ctx.emit_node("part-" + str(i), SUMMARIZE, SUMMARIZE_DESCRIPTOR, [partitions[i]]) for i in range(start, min(start + 2, len(partitions)))]\n'
+        '        for handle in handles:\n'
+        '            summaries.append(await ctx.result(handle))\n'
+        '    merged = ctx.emit_node("merge", MERGE, MERGE_DESCRIPTOR, summaries)\n'
+        '    return await ctx.result(merged)\n'
     )
-    print(f"[{_now()}] sending message (conversation={conversation_ref})")
-    _json(
-        "POST",
-        urljoin(observer, "/api/v1/messages"),
-        {"text": prompt, "request_id": request_id, "conversation_ref": conversation_ref, "workspace_id": WORKSPACE_ID},
-        timeout=30.0,
-    )
-    print(f"[{_now()}] message accepted by observer")
-
-    deadline = time.monotonic() + timeout
-    run_id = None
-    while time.monotonic() < deadline:
-        poll_started = time.monotonic()
-        conv = get_conversation(observer, conversation_ref)
-        poll_elapsed = time.monotonic() - poll_started
-        runs = conv.get("runs") or []
-        if runs:
-            run_id = runs[-1]["run_id"]
-        status = conv.get("status")
-        print(f"[{_now()}] poll_conv status={status} run_id={run_id} request={poll_elapsed:.2f}s")
-        if status in {"completed", "failed", "interrupted"}:
-            break
-        time.sleep(5.0)
-    if not run_id:
-        raise TimeoutError(f"conversation {conversation_ref} never created a run within {timeout}s")
-    run = _poll_run(observer, run_id, timeout=min(120.0, max(0.0, deadline - time.monotonic())))
-    if run["state"] not in {"completed", "closed"}:
-        raise RuntimeError(f"agent-driven run did not complete: state={run['state']} outcome={run.get('outcome')}")
-    passed.append("G1: one natural-language message drove real-agent refinement to a completed run")
-
-    run_packages = run.get("capability_packages") or []
-    run_bound = [p for p in run_packages if isinstance(p, dict) and p.get("scope") == "run_bound"]
-    if not run_bound:
-        raise RuntimeError(f"no run_bound candidate packages materialized by agent: {run_packages}")
-    passed.append(f"G2: agent materialized {len(run_bound)} run_bound candidate package(s)")
-
-    report = _extract_report(observer, run)
-    gt = ground_truth(corpus)
-    _check_report(report, gt, passed)
-    _check_provenance(run, passed)
-    return run, passed
+    program = await client.upload_content(source, media_type="text/x-python")
+    parent = await client.register_package(OrchestratorPackage(
+        program_content_ref=program, allowed_node_package_refs=[summary, merge],
+        max_nodes=partitions + 1, max_live_nodes=min(2, partitions + 1),
+        package_id=f"bandgap-parent-{request_id}", package_version="v1",
+        action_descriptor_ref=parent_descriptor, io_contract_ref=parent_io,
+    ).manifest())
+    inputs = [ref_dict(await client.upload_content({"items": corpus[i::partitions]})) for i in range(partitions)]
+    input_ref = await client.upload_content({"partitions": inputs})
+    return SubmissionBuilder(
+        goal="per-family band-gap statistics", workspace_id=client.workspace_id,
+        body=TaskClosure(program={"action_ref": parent_descriptor.resource_id, "io_contract_ref": ref_dict(parent_io)}),
+        orchestrator_package=package_ref(parent), input_binding=input_ref,
+        resource_budget={"max_nodes": partitions + 1, "max_live_nodes": 2, "execution_timeout_seconds": timeout},
+        recovery_policy={"allow_reassignment": allow_reassignment},
+    ).build(request_id=request_id)
 
 
-# --------------------------------------------------------------------------- main
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--observer", default=DEFAULT_OBSERVER, help="Observer base URL")
-    parser.add_argument("--mode", choices=["mcp", "agent"], default="agent", help="test driver mode")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--files", type=int, default=60, help="number of DFT samples")
-    parser.add_argument("--partitions", type=int, default=2)
-    parser.add_argument("--timeout", type=float, default=1200.0, help="agent-mode poll timeout (seconds)")
-    parser.add_argument("--inject-failure", action="store_true", help="G4: take slave-a down mid-run (mcp mode)")
-    parser.add_argument("--docker-bin", default="docker", help="Docker CLI used for G4 failure injection")
-    parser.add_argument("--compose-file", default="deploy/docker-compose.yml", help="Compose file used for G4 failure injection")
-    args = parser.parse_args()
-
-    if args.inject_failure and args.mode != "mcp":
-        raise RuntimeError("--inject-failure is supported only in mcp mode")
-
-    health = _json("GET", urljoin(args.observer, "/healthz"), timeout=10.0)
-    if not health.get("ok"):
-        raise RuntimeError(f"observer unhealthy: {health}")
-
+async def run(args):
+    controller = SlaveFailureController(docker_bin=args.docker_bin, compose_file=args.compose_file) if args.inject_failure else None
     corpus = make_corpus(args.seed, args.files)
-    if args.mode == "mcp":
-        failure_controller = (
-            SlaveFailureController(docker_bin=args.docker_bin, compose_file=args.compose_file)
-            if args.inject_failure
-            else None
-        )
-        run, passed = run_mcp_mode(
-            args.observer,
-            corpus,
-            args.partitions,
-            failure_controller=failure_controller,
-        )
-    else:
-        run, passed = run_agent_mode(args.observer, corpus, args.partitions, args.timeout)
+    request_id = "bandgap-" + uuid4().hex[:12]
+    async with LoomClient(args.observer, token=os.environ["LOOM_GRIP_TOKEN"], grip_authority=args.authority,
+                          workspace_id=args.workspace, allow_insecure_grip=args.allow_http) as client:
+        slaves = await client.resources(kind="slave")
+        if len([r for r in slaves if r["metadata"]["available"]]) < 2:
+            raise RuntimeError("two available Slaves required")
+        plan = await prepare_plan(client, corpus, args.partitions, request_id, allow_reassignment=controller is not None, timeout=args.timeout)
+        queued = await client.submit(request_id=request_id, plan=plan)
+        action = client.names.name("runs", queued["run_id"])
+        try:
+            deadline = time.monotonic() + args.timeout
+            while time.monotonic() < deadline:
+                result = await client.invoke(action, client.names.action("read"), {})
+                if controller is not None:
+                    controller.observe(await client.run(queued["run_id"]))
+                if result["state"] in {"completed", "failed", "cancelled", "awaiting_decision"}:
+                    break
+                await asyncio.sleep(.5)
+            else:
+                raise TimeoutError(f"continue inspecting {action}")
+            if result["state"] != "completed":
+                raise RuntimeError(f"execution did not complete: {result}")
+            passed = ["GRIP discovery and complete-plan execution"]
+            _check_report(result["outcome"].get("value"), ground_truth(corpus), passed)
+            run_record = await client.run(queued["run_id"])
+            _check_provenance(run_record, passed)
+            if controller is not None:
+                _check_failure_reassignment(run_record, controller, passed)
+            return {"action": action, "checks": passed, "outcome": result["outcome"]}
+        finally:
+            if controller is not None:
+                controller.restore()
 
-    print(f"mode={args.mode} run={run['run_id']} state={run['state']}")
-    for line in passed:
-        print(f"  PASS {line}")
-    print("ALL GATES PASSED")
-    return 0
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--observer", default=os.getenv("LOOM_OBSERVER_URL", "http://localhost:18080"))
+    parser.add_argument("--authority", default=os.getenv("LOOM_GRIP_AUTHORITY", "loom.local"))
+    parser.add_argument("--workspace", default=os.getenv("LOOM_WORKSPACE_ID", "workspace-default"))
+    parser.add_argument("--allow-http", action="store_true")
+    parser.add_argument("--files", type=int, default=60)
+    parser.add_argument("--partitions", type=int, default=6)
+    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--inject-failure", action="store_true", help="operator test: explicitly stop and restore slave-a via Docker")
+    parser.add_argument("--docker-bin", default="docker")
+    parser.add_argument("--compose-file", default="deploy/docker-compose.yml")
+    args = parser.parse_args()
+    if not 1 <= args.partitions <= args.files or args.timeout < 1:
+        parser.error("require 1 <= partitions <= files and a positive timeout")
+    print(json.dumps(asyncio.run(run(args)), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except Exception as exc:  # report reason clearly, do not touch code
-        print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
-        sys.exit(1)
+    main()

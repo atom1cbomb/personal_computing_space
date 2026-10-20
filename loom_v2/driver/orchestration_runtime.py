@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from loom_v2.contracts.types import (
@@ -13,9 +14,8 @@ from loom_v2.contracts.types import (
     NodeIntent,
     ResourceRef,
     TaskClosure,
-    ManagedResource,
 )
-from loom_v2.contracts.refs import input_binding_for, operation_name, package_body_ref, single_export
+from loom_v2.contracts.refs import input_binding_for, action_name, package_body_ref, single_export
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
 from loom_v2.observer.repository import ObserverRepository
 from loom_v2.driver.worker import WorkerSession, WorkerUnavailableError
@@ -88,8 +88,8 @@ class DynamicOrchestrationRuntime:
                 program_ref,
                 expected_digest=program_ref.digest,
             )
-            operation_ref = snapshot.program.operation_ref or snapshot.compute.operation_ref
-            input_binding = input_binding_for(snapshot, operation_ref)
+            action_ref = snapshot.program.action_ref or snapshot.compute.action_ref
+            input_binding = input_binding_for(snapshot, action_ref)
             if input_binding is None:
                 raise RuntimeError("orchestration_input_missing")
         except BaseException as exc:
@@ -106,49 +106,61 @@ class DynamicOrchestrationRuntime:
             return await self.repository._load_json_content(ref)
 
         async def materialize_json(*, step_id: str, value: Any) -> ResourceRef:
-            return await self.repository.put_content(value, media_type="application/json")
+            return await self.repository.materialize_program_json(
+                run_id, execution_id=record.execution_id, step_id=step_id, value=value,
+            )
 
         async def register_resource(*, step_id: str, resource_type: str, identity: str, package_ref: ResourceRef, managed_by_ref: ResourceRef | None = None) -> ResourceRef:
-            resource_ref = ResourceRef(resource_id=identity if "://" in identity else f"resource://{resource_type}/{identity}")
-            resource = ManagedResource(resource_ref=resource_ref, package_ref=package_ref, managed_by_ref=managed_by_ref)
-            if hasattr(self.repository, "control"):
-                result = await self.repository.register_resource(resource.model_dump(mode="json"))
-                return ResourceRef.model_validate(result["resource_ref"])
-            stored = await self.repository.register_resource(
-                self.repository.workspace_id if hasattr(self.repository, "workspace_id") else "workspace-default",
-                resource,
+            return await self.repository.register_program_resource(
+                run_id, execution_id=record.execution_id, step_id=step_id,
+                resource_type=resource_type, identity=identity, package_ref=package_ref,
+                managed_by_ref=managed_by_ref,
             )
-            return stored.resource_ref
 
         async def ensure_activation(*, step_id: str, package_ref: ResourceRef, target_resource_ref: ResourceRef, instance_name: str = "default", instance_config: dict[str, Any] | None = None, requires_authentication: bool = False) -> ResourceRef:
             await self.repository.refresh_slaves()
             package = await self.repository.get_capability_package(package_ref, run_id=run_id)
-            target = self._select_target(package, package.capability_exports[0].capability_descriptor_ref, record)
-            activation = await self.repository.set_capability_desired(
-                package_ref,
-                target,
-                desired_state="running",
-                idempotency_key=f"{record.execution_id}:{step_id}",
-                run_id=run_id,
+            target = self._select_target(package, package.action_exports[0].action_descriptor_ref, record)
+            activation_ref = await self.repository.ensure_program_activation(
+                run_id, execution_id=record.execution_id, step_id=step_id,
+                package_ref=package_ref, target_slave=target,
                 instance_name=instance_name,
                 target_resource_ref=target_resource_ref,
                 instance_config=instance_config or {},
+                requires_authentication=requires_authentication,
             )
-            return ResourceRef(
-                resource_id=f"activation://{activation.package_version_ref}/{activation.target_slave}/{activation.instance_name}",
-                version_or_digest=activation.package_digest,
-                access_binding={
-                    "activation_revision": activation.activation_revision,
-                    "package_version_ref": activation.package_version_ref,
-                    "target_slave": activation.target_slave,
-                    "instance_name": activation.instance_name,
-                    "target_resource_ref": (
-                        activation.target_resource_ref.model_dump(mode="json")
-                        if activation.target_resource_ref is not None
-                        else None
-                    ),
-                },
-            )
+            binding = activation_ref.access_binding
+            activation = next((item for item in await self.repository.list_package_activations(package)
+                               if item.target_slave == binding["target_slave"]
+                               and item.instance_name == binding["instance_name"]
+                               and item.activation_revision == binding["activation_revision"]), None)
+            if activation is None:
+                raise RuntimeError("activation_not_found")
+            if activation.activation_state in {"provisioning", "not_installed"}:
+                command = CapabilityProvisionCommand(
+                    command_id=f"provision-{record.execution_id}-{step_id}",
+                    package_version_ref=package.version_ref,
+                    package_digest=package.package_digest,
+                    target_slave=activation.target_slave,
+                    workspace_id=record.closure_contract.workspace_id,
+                    activation_closure_version_ref=activation.activation_closure_version_ref,
+                    idempotency_key=activation.last_idempotency_key,
+                    activation_revision=activation.activation_revision,
+                    instance_name=activation.instance_name,
+                    target_resource_ref=activation.target_resource_ref,
+                    instance_config=dict(activation.instance_config),
+                )
+                worker = self.workers.get(activation.target_slave)
+                slave = self.slaves.get(activation.target_slave)
+                if worker is not None:
+                    report = await worker.provision(command=command, package=package,
+                                                    driver_id=self.driver_id, driver_epoch=self.driver_epoch)
+                elif slave is not None:
+                    report = await slave.provision(command, package)
+                else:
+                    raise RuntimeError("node_target_unavailable")
+                await self.repository.record_capability_health(report, run_id=run_id)
+            return activation_ref
 
         async def wait_activation(*, step_id: str, activation_ref: ResourceRef, ready_state: str = "ready") -> dict[str, Any]:
             package_ref = str(activation_ref.access_binding.get("package_version_ref") or "")
@@ -157,14 +169,14 @@ class DynamicOrchestrationRuntime:
             if not package_ref:
                 raise RuntimeError("activation_ref_invalid")
             package = await self.repository.get_capability_package(package_ref, run_id=run_id)
-            if hasattr(self.repository, "list_package_activations"):
+            while True:
                 activations = await self.repository.list_package_activations(package)
-            else:
-                current = await self.repository.get_run(run_id)
-                activations = current.capability_activations
-            activation = next((item for item in activations if item.package_version_ref == package.version_ref and item.package_digest == activation_ref.digest and item.target_slave == target_slave and item.instance_name == instance_name), None)
-            if activation is None:
-                raise RuntimeError("activation_not_found")
+                activation = next((item for item in activations if item.package_version_ref == package.version_ref and item.package_digest == activation_ref.digest and item.target_slave == target_slave and item.instance_name == instance_name), None)
+                if activation is None:
+                    raise RuntimeError("activation_not_found")
+                if activation.activation_state not in {"provisioning", "not_installed"} or activation.activation_revision != activation_ref.access_binding.get("activation_revision"):
+                    break
+                await asyncio.sleep(0.25)
             expected_revision = activation_ref.access_binding.get("activation_revision")
             if expected_revision is not None:
                 try:
@@ -179,28 +191,30 @@ class DynamicOrchestrationRuntime:
             if activation.activation_state == "pending_auth":
                 raise OrchestrationActivationWait({
                     "step_id": step_id,
-                    "package_ref": package_ref,
+                    "package_ref": ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest).model_dump(mode="json"),
                     "activation_ref": activation_ref.model_dump(mode="json"),
                     "target_slave": activation.target_slave,
                     "instance_name": activation.instance_name,
                     "activation_revision": activation.activation_revision,
                     "action": "authenticate",
                 })
-            if activation.activation_state != ready_state:
+            if activation.activation_state != ready_state and not (ready_state == "authenticated" and activation.activation_state == "ready" and activation.runtime_profile.get("authentication", {}).get("status") == "authenticated"):
                 raise RuntimeError("activation_not_ready")
             return activation.model_dump(mode="json")
 
-        async def defer_cleanup(*, step_id: str, resource_ref: ResourceRef, cleanup_operation_ref: ResourceRef, input_mapping: dict[str, Any]) -> None:
-            current = await self.repository.get_run(run_id)
-            current.events.append({"phase": "cleanup_deferred", "step_id": step_id, "resource_ref": resource_ref.model_dump(mode="json"), "cleanup_operation_ref": cleanup_operation_ref.model_dump(mode="json"), "input_mapping": input_mapping})
-            await self.repository._persist(current)
+        async def defer_cleanup(*, step_id: str, resource_ref: ResourceRef, cleanup_action_ref: ResourceRef, input_mapping: dict[str, Any]) -> None:
+            await self.repository.register_cleanup(
+                run_id, execution_id=record.execution_id, step_id=step_id,
+                resource_ref=resource_ref, cleanup_action_ref=cleanup_action_ref,
+                input_mapping=input_mapping,
+            )
 
         async def emit_node(*args: Any, target_resource_ref: ResourceRef | None = None, activation_ref: ResourceRef | None = None) -> str:
             if len(args) == 3:
                 step_id = ""
-                package_ref, capability_descriptor_ref, input_refs = args
+                package_ref, action_descriptor_ref, input_refs = args
             elif len(args) == 4:
-                step_id, package_ref, capability_descriptor_ref, input_refs = args
+                step_id, package_ref, action_descriptor_ref, input_refs = args
             else:
                 raise RuntimeError("node_intent_arguments_invalid")
             nonlocal intent_sequence
@@ -227,7 +241,7 @@ class DynamicOrchestrationRuntime:
             if existing is not None and existing.state == "completed":
                 if (
                     existing.package_ref != package_ref
-                    or existing.capability_descriptor_ref != capability_descriptor_ref
+                    or existing.action_descriptor_ref != action_descriptor_ref
                     or existing.input_refs != input_refs
                     or existing.target_resource_ref != target_resource_ref
                     or existing.activation_ref != activation_ref
@@ -273,14 +287,14 @@ class DynamicOrchestrationRuntime:
             elif existing is not None and previous_target and not record.allow_reassignment:
                 target = previous_target
             else:
-                target = self._select_target(node_package, capability_descriptor_ref, current_record)
+                target = self._select_target(node_package, action_descriptor_ref, current_record)
             intent = NodeIntent(
                 intent_id=intent_id,
                 execution_id=record.execution_id,
                 package_ref=package_ref,
-                capability_descriptor_ref=capability_descriptor_ref,
+                action_descriptor_ref=action_descriptor_ref,
                 input_refs=input_refs,
-                instance_name="default",
+                instance_name=str(activation_ref.access_binding.get("instance_name") or "default") if activation_ref else "default",
                 target_resource_ref=target_resource_ref,
                 activation_ref=activation_ref,
             )
@@ -370,10 +384,56 @@ class DynamicOrchestrationRuntime:
         )
         return completed, execution_result
 
+    async def run_cleanup(self, run_id: str) -> Any:
+        from loom_v2.observer.cleanup import continuation, registrations
+
+        record = await self.repository.get_run(run_id)
+        started = continuation(record)
+        if record.state != "cleaning_up" or started is None:
+            raise RuntimeError("cleanup_not_running")
+        errors = []
+        unresolved = [item for item in record.attempts if item.get("node_id") and item.get("state") in {"created", "running", "unknown"}
+                      and not any(node.node_id == item["node_id"] and node.intent_id.startswith("cleanup:") for node in record.dynamic_nodes)]
+        if unresolved:
+            return await self.repository.finish_cleanup(run_id, execution_id=record.execution_id, errors=[{
+                "code": "execution_recovery_required", "attempt_ids": [item["attempt_id"] for item in unresolved],
+            }])
+        deadline = datetime.fromisoformat(started["deadline_at"])
+        try:
+            async with asyncio.timeout(max(0, (deadline - datetime.now(timezone.utc)).total_seconds())):
+                for event in registrations(record):
+                    current = await self.repository.get_run(run_id)
+                    node = next((item for item in current.dynamic_nodes if item.intent_id == event["intent_id"]), None)
+                    if node is not None and node.state == "completed":
+                        continue
+                    try:
+                        if node is not None and node.state not in {"accepted", "dispatched"}:
+                            raise RuntimeError("cleanup_result_unconfirmed")
+                        package_ref = ResourceRef.model_validate(event["package_ref"])
+                        descriptor_ref = ResourceRef.model_validate(event["action_descriptor_ref"])
+                        package = await self.repository.get_capability_package(package_ref, run_id=run_id)
+                        await self.repository.refresh_slaves()
+                        attempt = next((item for item in reversed(current.attempts) if node is not None and item.get("node_id") == node.node_id), None)
+                        target = str(attempt["target"]) if attempt else self._select_target(package, descriptor_ref, current)
+                        if node is None:
+                            node = await self.repository.accept_node_intent(run_id, NodeIntent(
+                                intent_id=event["intent_id"], execution_id=record.execution_id,
+                                package_ref=package_ref, action_descriptor_ref=descriptor_ref,
+                                input_refs=[ResourceRef.model_validate(value) for value in event["input_refs"]],
+                            ), selected_target=target)
+                        await self._execute_node(run_id, node, target)
+                    except Exception as exc:
+                        if str(getattr(exc, "reason", exc)) == "stale_driver_epoch":
+                            raise
+                        errors.append({"step_id": event["step_id"], "resource_ref": event["arguments"]["resource_ref"], "code": str(exc)})
+        except TimeoutError:
+            errors.append({"code": "cleanup_deadline_exceeded"})
+        return await self.repository.finish_cleanup(run_id, execution_id=record.execution_id, errors=errors)
+
     def _select_target(
         self,
         package: CapabilityPackageVersion,
-        capability_descriptor_ref: ResourceRef,
+        action_descriptor_ref: ResourceRef,
         record: Any,
         *,
         exclude_targets: set[str] | None = None,
@@ -381,10 +441,10 @@ class DynamicOrchestrationRuntime:
         closure = record.committed.snapshot if getattr(record, "committed", None) is not None else record.draft.snapshot
         allowed_effects = set(record.closure_contract.allowed_effects) if record.closure_contract is not None else set()
         try:
-            capability_export = package.export_for(capability_descriptor_ref)
+            action_export = package.export_for(action_descriptor_ref)
         except ValueError as exc:
-            raise RuntimeError("node_capability_export_not_found") from exc
-        if capability_export.permissions and not set(capability_export.permissions).issubset(allowed_effects):
+            raise RuntimeError("node_action_export_not_found") from exc
+        if action_export.permissions and not set(action_export.permissions).issubset(allowed_effects):
             raise RuntimeError("node_permission_denied")
         available = sorted(
             slave_id
@@ -417,7 +477,7 @@ class DynamicOrchestrationRuntime:
         candidates = [slave_id for slave_id in available if slave_id in activation_targets] or available
         cursor_key = (
             f"{package.version_ref}#descriptor:"
-            f"{capability_descriptor_ref.digest or capability_descriptor_ref.resource_id}"
+            f"{action_descriptor_ref.digest or action_descriptor_ref.resource_id}"
         )
         cursor = self._round_robin_cursor.get(cursor_key, 0)
         target = candidates[cursor % len(candidates)]
@@ -477,7 +537,7 @@ class DynamicOrchestrationRuntime:
         source_target = str(attempt["target"])
         source_instance_id = str(attempt["target_instance_id"])
         source_worker = self.workers.get(source_target)
-        recovery_timeout = float(getattr(source_worker, "operation_timeout", 90.0))
+        recovery_timeout = float(getattr(source_worker, "action_timeout", 90.0))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + recovery_timeout
         while True:
@@ -496,7 +556,7 @@ class DynamicOrchestrationRuntime:
             try:
                 replacement_target = self._select_target(
                     package,
-                    node.capability_descriptor_ref,
+                    node.action_descriptor_ref,
                     record,
                     exclude_targets={source_target},
                 )
@@ -526,11 +586,11 @@ class DynamicOrchestrationRuntime:
         target = str(attempt["target"])
         record = await self.repository.get_run(run_id)
         try:
-            capability_export = package.export_for(node.capability_descriptor_ref)
+            action_export = package.export_for(node.action_descriptor_ref)
         except ValueError as exc:
-            raise RuntimeError("node_capability_export_not_found") from exc
-        descriptor_ref = node.capability_descriptor_ref
-        operation_ref = descriptor_ref.resource_id
+            raise RuntimeError("node_action_export_not_found") from exc
+        descriptor_ref = node.action_descriptor_ref
+        action_ref = descriptor_ref.resource_id
         if len(node.input_refs) == 1:
             execution_input_ref = node.input_refs[0]
         else:
@@ -539,16 +599,16 @@ class DynamicOrchestrationRuntime:
         binding = ComputeBinding(
             binding_id=f"binding-{node.node_id}",
             hole_id=node.node_id,
-            capability_descriptor_ref=descriptor_ref,
+            action_descriptor_ref=descriptor_ref,
             capability_package_ref=node.package_ref,
-            target_resource_ref=ResourceRef(resource_id=target),
-            activation_ref=f"{node.package_ref.resource_id}#{node.instance_name}",
+            target_resource_ref=ResourceRef(resource_id=self.repository.names.name("slaves", target)),
+            instance_name=node.instance_name,
         )
         closure = TaskClosure(
             closure_id=node.node_id,
-            program={"operation_ref": operation_ref, "io_contract_ref": capability_export.io_contract_ref.model_dump(mode="json")},
+            program={"action_ref": action_ref, "io_contract_ref": action_export.io_contract_ref.model_dump(mode="json")},
             node_input_bindings=[
-                NodeInputBinding(node_id=operation_ref, input_ref=execution_input_ref)
+                NodeInputBinding(node_id=action_ref, input_ref=execution_input_ref)
             ],
         )
         idempotency_key = f"{record.execution_id}-{node.node_id}-{package.package_digest}"
@@ -565,6 +625,7 @@ class DynamicOrchestrationRuntime:
             ),
             compute_binding_ref=binding.binding_id,
             instance_name=node.instance_name,
+            target_resource_ref=node.target_resource_ref,
         )
         command = CapabilityProvisionCommand(
             command_id=f"provision-{node.node_id}",
@@ -577,8 +638,10 @@ class DynamicOrchestrationRuntime:
             idempotency_key=desired.last_idempotency_key,
             activation_revision=desired.activation_revision,
             instance_name=node.instance_name,
+            target_resource_ref=desired.target_resource_ref,
+            instance_config=dict(desired.instance_config),
         )
-        operation = operation_name(operation_ref)
+        action = action_name(action_ref)
 
         # In production the immutable Worker envelopes are submitted to
         # Observer.  Observer creates the Attempt, forwards both envelopes
@@ -591,7 +654,7 @@ class DynamicOrchestrationRuntime:
                 "package": package.model_dump(mode="json"),
             }
             dispatch_payload: dict[str, Any] = {
-                "operation": operation,
+                "action": action,
                 "payload": {},
                 "closure": closure.model_dump(mode="json"),
                 "binding": binding.model_dump(mode="json"),
@@ -628,7 +691,7 @@ class DynamicOrchestrationRuntime:
                 execution_id=record.execution_id,
                 execution_epoch=record.execution_epoch,
                 workspace_id=record.closure_contract.workspace_id if record.closure_contract else "workspace-default",
-                operation=operation,
+                action=action,
                 payload={},
                 closure=closure,
                 binding=binding,
@@ -644,7 +707,7 @@ class DynamicOrchestrationRuntime:
             await self.repository.record_capability_health(report, run_id=run_id)
             result = await slave.run(
                 attempt_id,
-                operation,
+                action,
                 {},
                 closure=closure,
                 binding=binding,

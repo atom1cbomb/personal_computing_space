@@ -17,15 +17,11 @@
         "properties": {}
       }
     },
-    "PageSpec": {
-      "type": "object",
-      "properties": {}
+    "PageNumber": {
+      "type": "integer"
+    },
+    "PageSize": {
+      "type": "integer"
     }
-  },
-  "required": [
-    "ProjectId",
-    "InstanceIds",
-    "Filters",
-    "PageSpec"
-  ]
+  }
 }

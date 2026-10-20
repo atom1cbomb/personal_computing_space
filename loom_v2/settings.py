@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     execution_timeout_seconds: float = 86400.0
     coding_agent_poll_interval_seconds: float = 5.0
     coding_agent_protocol_failure_seconds: float = 60.0
-    worker_operation_timeout_seconds: float = 90.0
+    worker_action_timeout_seconds: float = 90.0
     observer_forward_timeout_seconds: float = 86400.0
-    capability_operation_timeout_seconds: float = 30.0
+    capability_action_timeout_seconds: float = 30.0
     capability_health_interval_seconds: float = 5.0
     runtime_plugin_dir: str = "/opt/loom/runtime-plugins"
     package_contract_dir: str = "/opt/loom/package-contracts"
@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     internal_api_secret: str = ""
     observer_url: str = "http://observer:8080"
     public_base_url: str = ""
+    grip_authority: str = "loom.local"
+    grip_token: str = ""
     agent_id: str = "driver-default"
     agent_instance_id: str | None = None
     agent_protocol_version: str = "loom.v1"
