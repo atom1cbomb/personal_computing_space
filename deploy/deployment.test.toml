@@ -11,7 +11,6 @@ minio_access_key = "loom"
 minio_secret_key_file = "../secrets/minio_secret_key"
 
 [driver]
-codex_base_url = "http://9.0.3.9:8787"
 workspace_path = "/srv/loom-test/workspace"
 
 [[machines]]

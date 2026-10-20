@@ -204,7 +204,7 @@ Slave 在线只说明租约有效，不保证空闲容量或指定能力可用�
 
 ### 多机部署与安全边界
 
-复制 [deployment.example.toml](deploy/deployment.example.toml)，填写各角色机器、端口、模型和密钥文件配置，再执行：
+复制 [deployment.example.toml](deploy/deployment.example.toml)，填写各角色机器、端口和密钥文件配置，再执行：
 
 ```bash
 python scripts/deploy_cluster.py --config deploy/deployment.example.toml --dry-run
@@ -212,6 +212,8 @@ python scripts/deploy_cluster.py --config deploy/deployment.example.toml
 ```
 
 远程部署在 `[cluster]` 配置 `grip_authority`、`public_base_url`、`grip_token_file`；token 文件仅作为 Observer secret 挂载，dry-run 会隐藏内容。
+
+`[driver]` 仅配置 `workspace_path`。Driver 执行已提交的任务，无需模型服务、Codex/Volcengine 配置或模型 API key；旧的模型配置字段会被拒绝。
 
 目标机需要 Docker/Compose，部署账号需要相应 SSH 和 Docker 权限。这是 **operator 的部署权限**，不是用户使用工作空间或认证外部服务所需的权限。Observer、Driver、Slave 和 MinIO 也可以用 `scripts/deploy_*.py` 分别更新。
 

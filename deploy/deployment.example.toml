@@ -23,10 +23,7 @@ minio_access_key = "loom"
 minio_secret_key_file = "../secrets/minio_secret_key"
 
 [driver]
-codex_base_url = "http://host.docker.internal:8787"
 workspace_path = "/srv/loom/workspace"
-# Optional; when set, the file is uploaded to the Driver host read-only.
-# model_catalog_file = "../../.codex/model_catalog.json"
 
 [[machines]]
 name = "storage"

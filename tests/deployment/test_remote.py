@@ -77,6 +77,22 @@ def test_uploaded_archive_excludes_configured_secret_with_non_secret_extension(t
     assert "source/credentials" not in set(archive.getnames())
 
 
+def test_grip_token_is_uploaded_only_to_observer_and_redacted(tmp_path: Path):
+    from dataclasses import replace
+
+    config = replace(make_config(tmp_path), grip_token="grip-upload-fixture")
+    for machine in ("observer", "driver", "worker-a", "storage"):
+        runner = RecordingRunner()
+        RemoteDeployer(config, source_root=tmp_path, runner=runner, healthcheck=lambda _: True).deploy(machine)
+        with tarfile.open(fileobj=BytesIO(runner.calls[1].input_bytes), mode="r:gz") as archive:
+            assert ("secrets/grip_token" in archive.getnames()) == (machine == "observer")
+            if machine == "observer":
+                token = archive.getmember("secrets/grip_token")
+                assert token.mode == 0o600
+                assert archive.extractfile(token).read() == b"grip-upload-fixture"
+    assert remote_module._redact("failure grip-upload-fixture", config) == "failure <redacted>"
+
+
 def test_build_failure_includes_command_and_diagnostic_commands(tmp_path: Path):
     config = make_config(tmp_path)
     runner = RecordingRunner(fail_at=3, stderr="build failed")

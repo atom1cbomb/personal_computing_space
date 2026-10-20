@@ -61,34 +61,14 @@ def test_driver_project_uses_observer_and_docker_socket(tmp_path: Path):
     assert "internal-token" not in project.redacted_preview
 
 
-def test_driver_project_ignores_legacy_codex_provider_secret(tmp_path: Path):
-    for filename, value in {
-        "internal.secret": "internal-token",
-        "postgres.secret": "pg-password",
-        "minio.secret": "minio-password",
-    }.items():
-        write_secret(tmp_path / filename, value)
-    write_secret(tmp_path / "ark.secret", "ark-key")
-    path = tmp_path / "deployment.toml"
-    path.write_text(
-        config_text().replace(
-            'codex_base_url = "http://codex.internal:8787"',
-            'codex_provider = "volcengine-agent-plan"\n'
-            'codex_base_url = "https://ark.cn-beijing.volces.com/api/plan/v3"\n'
-            'codex_api_key_env = "ARK_API_KEY"\n'
-            'codex_api_key_file = "ark.secret"',
-        ),
-        encoding="utf-8",
-    )
-    project = render_project(DeploymentConfig.from_file(path), "driver")
+def test_driver_project_needs_no_model_configuration(tmp_path: Path):
+    project = render_project(make_config(tmp_path), "driver")
     document = json.loads(project.compose_text)
     driver = document["services"]["driver"]
-
     assert not any(key.startswith("LOOM_CODEX_") for key in driver["environment"])
-    assert "codex_api_key" not in driver["secrets"]
-    assert "codex_api_key" not in document["secrets"]
+    assert driver["secrets"] == ["internal_api_secret"]
     assert "codex_api_key" not in project.secret_files
-    assert "ark-key" not in project.redacted_preview
+    assert not any("codex" in mount for mount in driver["volumes"])
 
 
 def test_minio_project_contains_bucket_initializer(tmp_path: Path):

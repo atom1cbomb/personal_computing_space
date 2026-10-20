@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from pathlib import Path
 from typing import Any
 
 from .config import DeploymentConfig, MachineConfig
@@ -20,7 +19,6 @@ class RenderedProject:
     compose_text: str
     env_text: str
     secret_files: dict[str, str]
-    model_catalog_file: Path | None
     redaction_values: tuple[str, ...] = ()
 
     @property
@@ -60,7 +58,6 @@ def render_project(config: DeploymentConfig, machine_name: str) -> RenderedProje
         compose_text=json.dumps(document, indent=2, sort_keys=True) + "\n",
         env_text=_env_text(env),
         secret_files=secret_files,
-        model_catalog_file=config.driver.model_catalog_file if machine.role == "driver" else None,
         redaction_values=(quote_password(config.postgres_password),),
     )
 
@@ -225,7 +222,6 @@ def _render_driver(config: DeploymentConfig, machine: MachineConfig) -> tuple[di
             "ports": [f"{machine.service_port}:8090"],
             "secrets": [
                 "internal_api_secret",
-
             ],
             "volumes": [
                 f"{config.driver.workspace_path}:/workspace",
