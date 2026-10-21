@@ -1,0 +1,10 @@
+{
+  "mcue": "data/content",
+  "version": "v1",
+  "description": "Immutable content",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

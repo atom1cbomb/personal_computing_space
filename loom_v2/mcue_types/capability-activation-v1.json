@@ -1,0 +1,10 @@
+{
+  "mcue": "capability/activation",
+  "version": "v1",
+  "description": "Activated capability package",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

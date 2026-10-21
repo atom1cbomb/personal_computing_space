@@ -32,7 +32,7 @@ results) lives only in MinIO/S3 and is referenced by immutable
 
 ## Execution flow (end-to-end)
 
-1. Discover available Slaves through `client.resources(kind="slave")`; upload schemas and IoContracts with `client.upload_content`.
+1. Discover available Slaves through `client.resources(mcue="computing/slave")`; upload schemas and IoContracts with `client.upload_content`.
 2. Register `summarize` and `merge-summaries` workspace capability packages
    (`process:json_stdio`).
 3. Register the `orchestrate` capability package

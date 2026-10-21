@@ -1,10 +1,13 @@
 import asyncio
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
 from typing import Any, Sequence
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from loom_v2.content_store import ContentStore, canonical_json_bytes
@@ -32,6 +35,49 @@ from loom_v2.slave.service import SlaveService
 
 
 CUSTOM_KEY = ("test-generic-runtime", "test:echo", "1")
+
+
+@pytest.mark.asyncio
+async def test_invoke_uses_action_budget_and_accepts_output_above_four_mib(tmp_path):
+    manifest = _PluginManifest(
+        root=tmp_path, plugin_id="output-test", protocol_version=PLUGIN_PROTOCOL_VERSION,
+        command=("unused",), supports=(RuntimePluginSupport("service", "container:http", "1"),),
+    )
+    plugin = ProcessRuntimePlugin(manifest, socket_dir=tmp_path, call_timeout=0.01)
+    output = "x" * (5 * 1024 * 1024)
+
+    async def respond(request):
+        assert request.extensions["timeout"]["read"] >= 30.1
+        await asyncio.sleep(0.03)
+        return httpx.Response(200, json={"request_id": json.loads(request.content)["request_id"],
+                                       "ok": True, "result": {"value": {"stdout": output}}})
+
+    plugin.process = SimpleNamespace(returncode=None)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url="http://plugin") as client:
+        plugin._client = client
+        result = await plugin._request_once("POST", "/v1/invoke", {"deadline_seconds": 0.1})
+    assert result["value"]["stdout"] == output
+
+
+@pytest.mark.asyncio
+async def test_invoke_stream_rejects_responses_above_configured_limit(tmp_path, monkeypatch):
+    manifest = _PluginManifest(
+        root=tmp_path, plugin_id="output-test", protocol_version=PLUGIN_PROTOCOL_VERSION,
+        command=("unused",), supports=(RuntimePluginSupport("service", "container:http", "1"),),
+    )
+    plugin = ProcessRuntimePlugin(manifest, socket_dir=tmp_path, response_max_bytes=64)
+    plugin.process = SimpleNamespace(returncode=None)
+    closed = []
+
+    async def close():
+        closed.append(True)
+
+    monkeypatch.setattr(plugin, "close", close)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"x" * 65)), base_url="http://plugin") as client:
+        plugin._client = client
+        with pytest.raises(RuntimePluginError, match="runtime_plugin_protocol_error"):
+            await plugin._request_once("POST", "/v1/invoke", {"deadline_seconds": 0.1})
+    assert closed == [True]
 
 
 def _register_custom_contract() -> None:

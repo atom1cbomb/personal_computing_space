@@ -1,0 +1,10 @@
+{
+  "mcue": "grip/schema",
+  "version": "v1",
+  "description": "Action input or output schema",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

@@ -33,7 +33,7 @@ class ServicePackage:
         refs: dict[str, dict[str, Any]] = {}
         for coordinate, target in (dependencies or {}).items():
             description = await client.describe(target)
-            if description["resource"]["kind"] != "capability-package":
+            if description["resource"]["mcue"] != "capability/package":
                 raise ValueError("package_dependency_required")
             package = await client.invoke(target, client.names.action("read"), {})
             # Match the source template's coordinate; target is the published URI.
@@ -42,6 +42,10 @@ class ServicePackage:
             refs[coordinate] = {"resource_id": target, "version_or_digest": package["package_digest"]}
 
         prefix = self.manifest["package_id"]
+        definitions = {
+            Names().root + item["uri"].removeprefix(client.names.root): item["uri"]
+            for item in await client.resources(mcue="grip/mcue-type")
+        }
 
         def wire(ref):
             return ref.model_dump(mode="json", include={"resource_id", "version_or_digest", "identity_criterion"}, exclude_none=True)
@@ -74,6 +78,10 @@ class ServicePackage:
             pass
 
         def resolve(value):
+            if isinstance(value, str) and value.startswith(Names().root + "/mcue-types/"):
+                if value not in definitions:
+                    raise ValueError(f"service_mcue_definition_missing:{value}")
+                return definitions[value]
             if isinstance(value, list):
                 return [resolve(item) for item in value]
             if not isinstance(value, dict):

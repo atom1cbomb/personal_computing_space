@@ -12,6 +12,11 @@ generic authentication paths, and `POST /v1/exec`.
 
 `/v1/exec` accepts `{command, timeout_seconds}`. The VM host, user and port
 are never accepted from a request; they come from the activation config.
+The v3 execution contract accepts up to 1,048,576 command characters and an
+8 MiB JSON request. The script is sent on SSH stdin to `sh -s`; the default
+timeout is 300 seconds and the accepted range is 1–3600 seconds. Each output
+stream retains at most 16 MiB with `truncated=true` on overflow. See the
+[shared execution limits and build commands](../README.md#ssh-执行限制).
 OpenSSH uses `StrictHostKeyChecking=accept-new`, a per-instance
 `known_hosts`, and a stable resource-derived `HostKeyAlias` (TOFU on first
 connection, strict thereafter). A changed key fails the command.

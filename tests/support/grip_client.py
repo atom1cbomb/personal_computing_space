@@ -22,6 +22,6 @@ def invoke(client, target, action, input=None):
     return result["body"]
 
 
-def resources(client, kind):
+def resources(client, mcue):
     n = client.app.state.grip.names
-    return invoke(client, n.root, n.action("list-resources"), {"kind": kind})["resources"]
+    return invoke(client, n.root, n.action("list-resources"), {"mcue": mcue})["resources"]

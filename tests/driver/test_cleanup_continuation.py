@@ -56,7 +56,7 @@ async def lifecycle_run(repo, *, max_nodes=4, register=True):
     record = await repo.get_run(submission["run_id"])
     if not register:
         return record, node_ref, None
-    resource = await repo.register_program_resource(record.run_id, execution_id=record.execution_id, step_id="resource", resource_type="compute.vm", identity="vm-test", package_ref=node_ref)
+    resource = await repo.register_program_resource(record.run_id, execution_id=record.execution_id, step_id="resource", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="vm-test", package_ref=node_ref)
     await repo.register_cleanup(record.run_id, execution_id=record.execution_id, step_id="delete", resource_ref=resource,
                                 cleanup_action_ref=ResourceRef.model_validate(descriptor.model_dump(mode="json")), input_mapping={"id": "$resource.identity"})
     return record, node_ref, resource
@@ -168,10 +168,14 @@ async def test_activation_registration_replay_keeps_target_and_rejects_changed_a
     repo = ObserverRepository()
     record, package, resource = await lifecycle_run(repo)
     arguments = dict(execution_id=record.execution_id, step_id="access", package_ref=package, target_resource_ref=resource,
-                     target_slave="slave-a", instance_name="vm-test", instance_config={}, requires_authentication=True)
+                     target_slave="slave-a", instance_name="vm-test", instance_config={}, credential_profile="ssh-account-a", requires_authentication=True)
     first = await repo.ensure_program_activation(record.run_id, **arguments)
     replayed = await repo.ensure_program_activation(record.run_id, **{**arguments, "target_slave": "slave-b"})
     assert replayed == first
+    saved, = await repo.list_resource_activations("workspace-default", resource)
+    assert saved.credential_profile == "ssh-account-a"
+    with pytest.raises(ValueError, match="program_step_conflict"):
+        await repo.ensure_program_activation(record.run_id, **{**arguments, "credential_profile": "ssh-account-b"})
     with pytest.raises(ValueError, match="program_step_conflict"):
         await repo.ensure_program_activation(record.run_id, **{**arguments, "instance_config": {"host": "other"}})
     assert len(await repo.list_resource_activations("workspace-default", resource)) == 1
@@ -275,9 +279,11 @@ async def test_remote_host_commands_and_cleanup_owner_fencing():
     ref = await remote.materialize_program_json(record.run_id, execution_id=record.execution_id, step_id="remote-input", value={"id": "vm-test"})
     assert await repo._load_json_content(ref) == {"id": "vm-test"}
     activation = await remote.ensure_program_activation(record.run_id, execution_id=record.execution_id, step_id="remote-access", package_ref=package,
-        target_resource_ref=resource, target_slave="slave-a", instance_name="vm-test", instance_config={}, requires_authentication=False)
+        target_resource_ref=resource, target_slave="slave-a", instance_name="vm-test", instance_config={}, requires_authentication=False,
+        credential_profile="remote-account")
     activations = await remote.list_package_activations(await remote.get_capability_package(package))
     assert activations[0].activation_revision == activation.access_binding["activation_revision"]
+    assert activations[0].credential_profile == "remote-account"
     await repo.cancel_run(record.run_id)
     with pytest.raises(ValueError, match="stale_execution_owner"):
         await remote.finish_cleanup(record.run_id, execution_id=record.execution_id, errors=[])
@@ -311,7 +317,7 @@ async def test_one_run_create_authenticate_use_cleanup_without_duplicate_create(
     monkeypatch.setattr(worker, "provision", provision)
 
     async def health(state):
-        activation, = await repo.list_resource_activations("workspace-default", "grip://loom.local/workspaces/workspace-default/resources/compute.vm/vm-test")
+        activation, = await repo.list_resource_activations("workspace-default", "grip://loom.local/workspaces/workspace-default/resources/computing/vm/vm-test")
         return await repo.record_capability_health(CapabilityHealthReport(
             report_id=f"health-{state}", package_version_ref=package.version_ref, package_digest=package.package_digest,
             target_slave=activation.target_slave, instance_name=activation.instance_name,
@@ -323,7 +329,7 @@ async def test_one_run_create_authenticate_use_cleanup_without_duplicate_create(
         async def run(self, program, input_ref, **context):
             created = await context["emit_node"]("create", package_ref, descriptor, [input_ref])
             await context["result"](created)
-            resource = await context["register_resource"](step_id="resource", resource_type="compute.vm", identity="vm-test", package_ref=package_ref)
+            resource = await context["register_resource"](step_id="resource", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="vm-test", package_ref=package_ref)
             await context["defer_cleanup"](step_id="delete", resource_ref=resource, cleanup_action_ref=descriptor, input_mapping={"id": "$resource.identity"})
             activation = await context["ensure_activation"](step_id="access", package_ref=package_ref, target_resource_ref=resource,
                 instance_name="vm-test", instance_config={"host": "192.0.2.1", "port": 22, "user": "root"}, requires_authentication=True)
@@ -340,7 +346,7 @@ async def test_one_run_create_authenticate_use_cleanup_without_duplicate_create(
     assert waiting.outcome is None
     assert continuation(waiting) is None
     assert len(provisions) == 1
-    assert provisions[0].target_resource_ref.resource_id == "grip://loom.local/workspaces/workspace-default/resources/compute.vm/vm-test"
+    assert provisions[0].target_resource_ref.resource_id == "grip://loom.local/workspaces/workspace-default/resources/computing/vm/vm-test"
     assert provisions[0].instance_config == {"host": "192.0.2.1", "port": 22, "user": "root"}
     original_execution = waiting.execution_id
     await health("ready")

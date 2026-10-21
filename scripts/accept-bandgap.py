@@ -356,7 +356,7 @@ async def run(args):
     request_id = "bandgap-" + uuid4().hex[:12]
     async with LoomClient(args.observer, token=os.environ["LOOM_GRIP_TOKEN"], grip_authority=args.authority,
                           workspace_id=args.workspace, allow_insecure_grip=args.allow_http) as client:
-        slaves = await client.resources(kind="slave")
+        slaves = await client.resources(mcue="computing/slave")
         if len([r for r in slaves if r["metadata"]["available"]]) < 2:
             raise RuntimeError("two available Slaves required")
         plan = await prepare_plan(client, corpus, args.partitions, request_id, allow_reassignment=controller is not None, timeout=args.timeout)

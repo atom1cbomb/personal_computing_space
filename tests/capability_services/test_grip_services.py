@@ -24,7 +24,7 @@ from loom_v2.testing.observer import create_embedded_app, seed_embedded_slaves
 from runtime_plugins.container_http_v1.runtime import DockerCommandResult, DockerContainerHTTPRuntimeV1, RUNTIME_DESCRIPTOR
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGES = ("kubernetes_http", "outline_http", "suanlicloud_http", "vm_ssh_http", "suanli_vm_ssh_http")
+PACKAGES = ("kubernetes_http", "volcano_http", "outline_http", "suanlicloud_http", "vm_ssh_http", "suanli_vm_ssh_http")
 IMAGE = "registry.example/loom/test@sha256:" + "a" * 64
 
 
@@ -131,9 +131,22 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
         command.write_text('#!/bin/sh\ncase "$*" in *"auth can-i"*) echo yes;; *) echo \'{"items":[]}\';; esac\n')
         command.chmod(0o755)
         gateway = module.KubernetesGateway(credential_root=credentials, kubectl=str(command))
+    elif directory == "volcano_http":
+        instance.write_text(json.dumps({"api_origin": "https://volcano-internal.example"}))
+        def provider(request):
+            external["calls"].append((str(request.url), request.method))
+            if external["failed"]:
+                return httpx.Response(503)
+            if external["invalid"]:
+                return httpx.Response(200, json=[])
+            item = {"metadata": {"name": "fixture", "namespace": "test"}}
+            if request.url.path == "/api/pods":
+                item.update(spec={"nodeName": "node-a", "containers": [{"resources": {"limits": {"nvidia.com/gpu": "2"}}}]}, status={"phase": "Running"})
+            return httpx.Response(200, json={"items": [item], "totalCount": 1})
+        gateway = module.VolcanoGateway(instance_path=instance, transport=httpx.MockTransport(provider))
     elif directory in {"vm_ssh_http", "suanli_vm_ssh_http"}:
         command = tmp_path / "ssh"
-        command.write_text('#!/bin/sh\nfor arg do last="$arg"; done\ncase "$last" in false) exit 1;; *) echo executed;; esac\n')
+        command.write_text('#!/bin/sh\nexec /bin/sh\n')
         command.chmod(0o755)
         if directory == "vm_ssh_http":
             (credentials / "id_ed25519").write_text("fixture-key")
@@ -200,7 +213,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
     with serve(handler) as port:
         runner = DockerFixture()
         transport = LocalGatewayTransport(port)
-        profile = bundle.manifest["body"].get("credential_profile")
+        profile = "service-test" if directory not in {"suanli_vm_ssh_http", "volcano_http"} else None
         if profile:
             shutil.copytree(tmp_path / "credentials", tmp_path / profile)
         runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="internal", egress_network="egress", runner=runner, http_transport=transport, credential_dir=tmp_path, instance_state_dir=tmp_path / "instances")
@@ -210,17 +223,36 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
             async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
                 dependencies = {}
                 if directory == "suanlicloud_http":
-                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
+                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
                 package = await bundle.publish(client, image_ref=IMAGE, dependencies=dependencies)
                 raw = await client.invoke(package, client.names.action("read"), {})
                 assert raw["publication_state"] == "published"
                 exports = (await client.describe(package))["resource"]["metadata"]["actions"]
                 assert len(exports) == len(bundle.manifest["action_exports"])
-                slave = next(r["uri"] for r in await client.resources(kind="slave") if r["metadata"]["slave_id"] == "slave-a")
+                slave = next(r["uri"] for r in await client.resources(mcue="computing/slave") if r["metadata"]["slave_id"] == "slave-a")
                 config = {"host": "192.0.2.7", "port": 22, "user": "root"} if "ssh" in directory else {}
-                activation = await client.invoke(slave, client.names.action("activate-package"), {"package": package, "instance_name": "integration", "instance_config": config, "idempotency_key": "activate"})
+                binding = {}
+                if directory == "volcano_http":
+                    config = {"api_origin": "https://volcano-internal.example"}
+                    volcano_uri = client.names.name("resources", "volcano", "beijing")
+                    related_kubernetes = client.names.name("activations", "kubernetes-http", "v4", "slave-a", "beijing")
+                    await client.invoke(client.names.root, client.names.action("register-resource"), {
+                        "resource_id": volcano_uri, "mcue_ref": client.names.mcue("computing/volcano"), "package": package,
+                        "attributes": {"dashboard_url": "https://volcano.example:7443", "kubernetes_ref": related_kubernetes},
+                    })
+                    binding = {"target": volcano_uri}
+                activation = await client.invoke(slave, client.names.action("activate-package"), {"package": package, "instance_name": "integration", "instance_config": config, "credential_profile": profile, "idempotency_key": "activate", **binding})
                 target = activation["resource"]
-                auth = await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activation["revision"]})
+                stored = next(a for a in app.state.slaves["slave-a"].activations.values() if a.instance_name == "integration")
+                assert stored.credential_profile == profile
+                assert "credential_profile" not in json.dumps(await client.describe(target))
+                mounts = [args for args in runner.calls if args[0] == "create"]
+                if profile:
+                    assert any(f"src={tmp_path / profile},dst=/run/loom/credentials,readonly" in arg for args in mounts for arg in args)
+                else:
+                    assert not any("dst=/run/loom/credentials" in arg for args in mounts for arg in args)
+                auth = (await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activation["revision"]})
+                        if bundle.manifest["body"].get("authentication") else None)
                 if directory == "suanli_vm_ssh_http":
                     assert activation["state"] == "pending_auth"
                     assert auth["browser_auth"][0]["client"]["bridge_url"].endswith("/api/v1/auth/browser/bridge")
@@ -242,7 +274,8 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     assert (await client.describe(target))["resource"]["metadata"]["state"] == "ready"
                 else:
                     assert activation["state"] == "ready", activation
-                    assert auth["health_reports"][0]["activation_state"] == "ready", auth
+                    if auth is not None:
+                        assert auth["health_reports"][0]["activation_state"] == "ready", auth
                 description = await client.describe(target)
                 metadata = description["resource"]["metadata"]
                 assert metadata["package"] == package
@@ -277,30 +310,57 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                 calls = [p for _, p, _ in transport.calls if p in business_paths]
                 assert sorted(calls) == sorted(business_paths), "each export runs once despite repeated GRIP invocation"
                 if "ssh" in directory:
+                    long_script = "#" + "x" * (200 * 1024) + '\nprintf "large script ok"'
+                    call = await client.invoke(target, exports[0]["uri"], {"arguments": {"command": long_script, "timeout_seconds": 600}, "expected_revision": activation["revision"], "idempotency_key": "long-script"})
+                    long_result = await wait_result(app, client, call["run"])
+                    assert long_result["state"] == "completed", long_result
+                    assert long_result["outcome"]["value"]["stdout"] == "large script ok"
+                    for invalid in ({"command": "id", "timeout_seconds": 3601}, {"command": "x" * (1048576 + 1)}):
+                        with pytest.raises(GripError, match="invalid_input"):
+                            await client.invoke(target, exports[0]["uri"], {"arguments": invalid, "expected_revision": activation["revision"], "idempotency_key": "above-exec-limit"})
                     call = await client.invoke(target, exports[0]["uri"], {"arguments": {"command": "false"}, "expected_revision": activation["revision"], "idempotency_key": "failed-command"})
                     failure_result = await wait_result(app, client, call["run"])
                     assert failure_result["state"] in {"failed", "awaiting_decision"}, failure_result
                     with pytest.raises(GripError, match="invalid_input"):
                         await client.invoke(target, exports[0]["uri"], {"arguments": {"command": "id", "timeout_seconds": -1}, "expected_revision": activation["revision"], "idempotency_key": "invalid-input"})
-                elif directory in {"outline_http", "suanlicloud_http"}:
+                elif directory in {"outline_http", "suanlicloud_http", "volcano_http"}:
                     for failure in ("failed", "invalid"):
                         external[failure] = True
                         call = await client.invoke(target, exports[0]["uri"], {"arguments": {}, "expected_revision": activation["revision"], "idempotency_key": failure})
                         failure_result = await wait_result(app, client, call["run"])
                         assert failure_result["state"] in {"failed", "awaiting_decision"}, failure_result
                         external[failure] = False
+                if directory == "volcano_http":
+                    domain = await client.describe(volcano_uri)
+                    assert domain["resource"]["metadata"]["attributes"]["kubernetes_ref"] == related_kubernetes
+                    assert domain["resource"]["metadata"]["attributes"]["dashboard_url"] == "https://volcano.example:7443"
+                    assert config["api_origin"] != domain["resource"]["metadata"]["attributes"]["dashboard_url"]
+                    assert domain["resource"]["metadata"]["activations"] == [target]
+                    assert metadata["target"] == volcano_uri
+                    gpu_action = next(a["uri"] for a in declarations if a["name"] == "gpu_usage")
+                    direct = await client.invoke(volcano_uri, gpu_action, {
+                        "arguments": {}, "expected_revision": activation["revision"], "idempotency_key": "direct-volcano-gpu",
+                    })
+                    direct_result = await wait_result(app, client, direct["run"])
+                    assert direct_result["state"] == "completed"
+                    assert direct_result["outcome"]["value"]["allocated"] == 2
                 # A second instance has its own Docker identity and can be stopped
                 # independently even though it shares the immutable package.
                 second_config = {**config, "host": "192.0.2.8"} if config else {}
+                if directory == "volcano_http":
+                    second_config = {"api_origin": "https://second-volcano-internal.example"}
                 second = await client.invoke(slave, client.names.action("activate-package"), {
                     "package": package, "instance_name": "second", "instance_config": second_config,
                     "idempotency_key": "activate-second",
                 })
                 assert second["resource"] != target
                 assert {c["Config"]["Labels"]["io.loom.instance-name"] for c in runner.containers.values()} == {"integration", "second"}
-                if config:
+                if "host" in config:
                     configurations = [json.loads(path.read_text()) for path in (tmp_path / "instances").rglob("*.json")]
                     assert {c["host"] for c in configurations} == {"192.0.2.7", "192.0.2.8"}
+                elif directory == "volcano_http":
+                    configurations = [json.loads(path.read_text()) for path in (tmp_path / "instances").rglob("*.json")]
+                    assert {c["api_origin"] for c in configurations} == {config["api_origin"], second_config["api_origin"]}
                 stopped = await client.invoke(target, client.names.action("stop"), {"expected_revision": activation["revision"], "idempotency_key": "stop"})
                 assert stopped["state"] == "stopped"
                 stopped_description = await client.describe(target)
@@ -332,6 +392,6 @@ async def test_service_publisher_rejects_mutable_image_and_unresolved_access_pac
     async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
         with pytest.raises(ValueError, match="immutable_image_ref_required"):
             await bundle.publish(client, image_ref="registry.example/cloud:latest")
-        with pytest.raises(ValueError, match="service_artifact_dependency_missing:grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2"):
+        with pytest.raises(ValueError, match="service_artifact_dependency_missing:grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"):
             await bundle.publish(client, image_ref=IMAGE)
-        assert await client.resources(kind="capability-package") == []
+        assert await client.resources(mcue="capability/package") == []

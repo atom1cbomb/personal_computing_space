@@ -43,4 +43,4 @@ markers = [
 include = ["loom_v2*", "loom_orchestration*", "migrations*"]
 
 [tool.setuptools.package-data]
-loom_v2 = ["web/static/*"]
+loom_v2 = ["web/static/*", "mcue_types/*.json"]

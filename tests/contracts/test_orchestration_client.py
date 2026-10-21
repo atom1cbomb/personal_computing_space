@@ -29,7 +29,7 @@ async def test_public_client_can_discover_metadata_and_resolve_contracts():
         contract = await client.read_json(ResourceRef.model_validate(export["io_contract_ref"]))
         schema = await client.read_json(ResourceRef.model_validate(contract["output_schema_ref"]))
         assert schema["properties"]["result"]["properties"]["Instances"]["items"]["required"] == ["InstanceId"]
-        assert await client.resources(kind="slave") == []
+        assert await client.resources(mcue="computing/slave") == []
 
 
 @pytest.mark.asyncio

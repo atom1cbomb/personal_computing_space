@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -18,6 +19,22 @@ from runtime_plugins.container_http_v1.runtime import (
 
 
 IMAGE_REF = "registry.example/loom/http-test@sha256:" + "d" * 64
+
+
+def test_instance_config_is_service_owned_json_with_a_runtime_owned_target(tmp_path):
+    runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="internal", instance_state_dir=tmp_path)
+    config = {"api_origin": "https://volcano.example:7443", "options": {"read_only": True}}
+    target = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/volcano/beijing"}
+    path = runtime._write_instance_config("workspace-default", "a" * 64, "beijing", {
+        "target_resource_ref": target, "instance_config": config,
+    })
+    assert json.loads(path.read_text()) == {"target_resource_ref": target, **config}
+    assert config == {"api_origin": "https://volcano.example:7443", "options": {"read_only": True}}
+    assert runtime._instance_config({"instance_config": {}}) == {}
+    with pytest.raises(RuntimeError, match="activation_instance_config_invalid"):
+        runtime._instance_config({"instance_config": {"target_resource_ref": "overwrite"}})
+    with pytest.raises(RuntimeError, match="activation_instance_config_invalid"):
+        runtime._instance_config({"instance_config": []})
 
 
 @pytest.mark.asyncio
@@ -58,6 +75,37 @@ async def test_long_container_name_uses_docker_dns_id_for_health_auth_and_execut
     )
     assert result["value"] == {"status": "authenticated"}
     assert paths == ["/healthz", "/v1/auth/status", "/v1/echo"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_deadline_overrides_control_timeout_and_accepts_large_output():
+    package = _package(["/v1/exec"])
+    runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="loom-internal", request_timeout=0.01)
+    name = runtime._container_name("workspace-default", package.package_digest, "default")
+    output = "x" * (5 * 1024 * 1024)
+
+    class Runner:
+        async def run(self, args, *, timeout):
+            return DockerCommandResult(0, json.dumps([{
+                "Id": "a" * 64,
+                "Config": {"Labels": runtime._labels("workspace-default", package.version_ref, package.package_digest, "default"), "Image": IMAGE_REF},
+                "State": {"Running": True},
+            }]))
+
+    async def respond(request):
+        assert request.extensions["timeout"]["read"] == 1
+        await asyncio.sleep(0.03)
+        return httpx.Response(200, json={"stdout": output})
+
+    runtime.runner = Runner()
+    runtime.http_transport = httpx.MockTransport(respond)
+    result = await runtime.invoke(
+        package.model_dump(mode="json"), package.action_exports[0].model_dump(mode="json"), {},
+        activation={"workspace_id": "workspace-default", "target_slave": "slave-a", "instance_name": "default",
+                    "package_version_ref": package.version_ref, "package_digest": package.package_digest},
+        attempt_id="large-output", deadline_seconds=1,
+    )
+    assert result["value"]["stdout"] == output
 
 
 def _ref(resource_id: str, *, descriptor_digest: str | None = None) -> dict[str, Any]:
@@ -156,7 +204,7 @@ def test_credential_mount_accepts_an_operator_owned_aksk_profile(tmp_path: Path)
     )
 
     args = runtime._credential_mount_args(
-        {"body": {"credential_profile": "suanlicloud-prod"}}
+        {"credential_profile": "suanlicloud-prod"}
     )
 
     assert args == [
@@ -176,7 +224,7 @@ def test_credential_mount_accepts_an_operator_owned_named_profile(tmp_path: Path
     )
 
     args = runtime._credential_mount_args(
-        {"body": {"credential_profile": "named-service-prod"}}
+        {"credential_profile": "named-service-prod"}
     )
 
     assert args == [
@@ -196,7 +244,7 @@ def test_credential_mount_is_opaque_to_generic_runtime(tmp_path: Path) -> None:
     )
 
     args = runtime._credential_mount_args(
-        {"body": {"credential_profile": "custom-service-prod"}}
+        {"credential_profile": "custom-service-prod"}
     )
 
     assert args == [
@@ -370,7 +418,6 @@ async def test_credential_profile_is_mounted_read_only_from_operator_directory(t
         http_transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
     )
     package = _package(["/v1/echo"])
-    package.body["credential_profile"] = "k8s-prod"
 
     await runtime.provision(
         package.model_dump(mode="json"),
@@ -381,6 +428,7 @@ async def test_credential_profile_is_mounted_read_only_from_operator_directory(t
             target_slave="slave-test",
             idempotency_key="provision-1",
             activation_revision=1,
+            credential_profile="k8s-prod",
         ).model_dump(mode="json"),
     )
 
@@ -398,7 +446,6 @@ async def test_missing_credential_profile_fails_before_docker_mutation(tmp_path:
         slave_id="slave-test", network="loom-test-internal", credential_dir=tmp_path, runner=runner
     )
     package = _package(["/v1/echo"])
-    package.body["credential_profile"] = "missing"
 
     with pytest.raises(RuntimeError, match="credential_profile_unavailable"):
         await runtime.provision(
@@ -410,6 +457,7 @@ async def test_missing_credential_profile_fails_before_docker_mutation(tmp_path:
                 target_slave="slave-test",
                 idempotency_key="provision-1",
                 activation_revision=1,
+            credential_profile="missing",
             ).model_dump(mode="json"),
         )
 
@@ -567,3 +615,63 @@ async def test_reconcile_stopped_requires_exact_package_identity_before_remove()
         "runtime_plugin_identity_mismatch"
     )
     assert runner.calls == []
+
+
+async def test_one_package_selects_credentials_per_instance_and_reconcile(tmp_path):
+    runner = RecordingRunner()
+    runtime = DockerContainerHTTPRuntimeV1(slave_id='slave-test', network='internal',
+        credential_dir=tmp_path, runner=runner,
+        http_transport=httpx.MockTransport(lambda request: httpx.Response(204)))
+    package = _package(['/v1/echo'])
+    digest = package.package_digest
+    activations = []
+    for instance in ('beijing', 'nanjing'):
+        profile = tmp_path / ('k8s-' + instance)
+        profile.mkdir()
+        (profile / 'kubeconfig').write_text('fixture-' + instance)
+        command = CapabilityProvisionCommand(command_id=instance, package_version_ref=package.version_ref,
+            package_digest=digest, target_slave='slave-test', instance_name=instance,
+            idempotency_key=instance, activation_revision=1, credential_profile=profile.name)
+        await runtime.provision(package.model_dump(mode='json'), command.model_dump(mode='json'))
+        activations.append({**command.model_dump(mode='json'), 'activation_key': instance,
+            'package_payload': package.model_dump(mode='json'), 'desired_state': 'running'})
+    creates = [args for args in runner.calls if args[0] == 'create']
+    assert len(creates) == 2
+    assert creates[0][creates[0].index('--name') + 1] != creates[1][creates[1].index('--name') + 1]
+    for args, instance in zip(creates, ('beijing', 'nanjing')):
+        assert f'type=bind,src={tmp_path / ("k8s-" + instance)},dst=/run/loom/credentials,readonly' in args
+    runner.calls.clear()
+    restored = await runtime.reconcile(activations)
+    assert [a['activation_state'] for a in restored['activations']] == ['ready', 'ready']
+    recreated = [args for args in runner.calls if args[0] == 'create']
+    assert recreated == creates
+    assert package.package_digest == digest
+
+
+async def test_runtime_never_uses_historical_package_credential_selection():
+    runner = RecordingRunner()
+    runtime = DockerContainerHTTPRuntimeV1(slave_id='slave-test', network='internal', runner=runner,
+        http_transport=httpx.MockTransport(lambda request: httpx.Response(204)))
+    original = _package(['/v1/echo'])
+    package = original.model_dump(mode='json')
+    package['body']['credential_profile'] = 'legacy-unavailable'
+    command = CapabilityProvisionCommand(command_id='no-credentials', package_version_ref=original.version_ref,
+        package_digest=package['package_digest'], target_slave='slave-test', idempotency_key='no-credentials', activation_revision=1)
+    await runtime.provision(package, command.model_dump(mode='json'))
+    create = next(args for args in runner.calls if args[0] == 'create')
+    assert not any('dst=/run/loom/credentials' in arg for arg in create)
+
+
+def test_credential_selection_rejects_symlink_profiles_and_entries(tmp_path):
+    actual = tmp_path / 'actual'
+    actual.mkdir()
+    (actual / 'token').write_text('fixture')
+    (tmp_path / 'linked').symlink_to(actual, target_is_directory=True)
+    runtime = DockerContainerHTTPRuntimeV1(slave_id='slave-test', network='internal', credential_dir=tmp_path)
+    with pytest.raises(RuntimeError, match='credential_profile_unavailable'):
+        runtime._credential_mount_args({'credential_profile': 'linked'})
+    profile = tmp_path / 'profile'
+    profile.mkdir()
+    (profile / 'token').symlink_to(actual / 'token')
+    with pytest.raises(RuntimeError, match='credential_profile_unavailable'):
+        runtime._credential_mount_args({'credential_profile': 'profile'})

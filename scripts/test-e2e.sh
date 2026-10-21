@@ -24,7 +24,7 @@ async def check():
                           grip_authority=os.getenv("LOOM_GRIP_AUTHORITY", "loom.local"),
                           workspace_id=os.getenv("LOOM_WORKSPACE_ID", "workspace-default"),
                           allow_insecure_grip=True) as client:
-        slaves = await client.resources(kind="slave")
+        slaves = await client.resources(mcue="computing/slave")
         available = {r["metadata"]["slave_id"] for r in slaves if r["metadata"]["available"]}
         assert {"slave-a", "slave-b"} <= available, available
         for slave in slaves:

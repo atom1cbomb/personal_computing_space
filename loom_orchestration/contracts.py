@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Annotated, Any
 
 from loom_orchestration.grip import URI
 from loom_orchestration.naming import content_digest
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+CredentialProfile = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")]
 
 
 class ContractModel(BaseModel):

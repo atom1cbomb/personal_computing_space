@@ -82,7 +82,18 @@ Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` UR
 
 所有资源引用都使用可读 GRIP 名称，包括包内 Schema、IoContract、descriptor 和程序内容。例如 `content/suanlicloud-http/schemas/instances-list-output/sha256/<摘要>`；摘要用于校验，不再单独充当整个资源名字。SDK 和资源目录使用相同 URI。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。五个内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
+`metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
+
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。六个内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+
+Volcano 面板使用独立的 `volcano-http` 服务包，支持队列、PodGroup 和 GPU 分配查询。
+`computing/volcano` 资源的 MCUE 属性公开面板地址与对应 Kubernetes 的 GRIP 引用；
+不同面板使用同一包的不同激活实例，见 [Volcano 接入说明](capability_services/volcano_http/README.md)。
+
+凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
+同包不同实例可以使用不同账号或集群。现有部署需协调升级 Observer、Driver、Slave、runtime
+和 SDK 0.6.0，并执行 Alembic 007；见 [激活凭据升级说明](docs/activation-credentials-upgrade.md)。
 
 ## 能力包、资源和实例
 
@@ -104,9 +115,9 @@ Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` UR
 
 包的公开描述和运行时实现分离。新增已有 HTTP runtime 支持的业务包，只需交付服务镜像、manifest、descriptor 和 IO contract；如果要增加新的执行方式，则由 operator 安装相应 contract schema 和进程外 runtime plugin，并重启加载，不需要为每种业务修改核心代码。
 
-### 资源引用能力包，避免重复描述
+### 资源类型、描述与访问能力
 
-资源内部通过 `package_ref` 指向使用包，通过可选的 `managed_by_ref` 指向管理者。使用方通过 GRIP DESCRIBE 一次取得可调用的 offers 与 Schema 引用；Observer 负责解析包、实例及内部执行绑定。
+资源通过 MCUE 定义公开描述属性，通过可选的 `package_ref` 保留来源或接入包，通过可选的 `managed_by_ref` 指向管理者。登记资源不要求先有能力包。使用方通过 GRIP DESCRIBE 一次取得可调用的 offers 与 Schema 引用；Observer 根据实际激活绑定生成执行动作。
 
 例如，一台 VM 的使用包是 VM SSH 包，而管理它的云资源使用 Suanli Cloud 包：**在 VM 上执行命令**和**创建、停止或销毁 VM**是两套不同职责，不需要混在同一个包里。
 

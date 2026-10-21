@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from loom_orchestration.naming import content_digest
 from loom_orchestration.grip import Names
+from loom_orchestration.mcue import McueDefinition, merge_attributes
 
 import ast
 import asyncio
@@ -16,6 +17,7 @@ import hashlib
 import hmac
 import shutil
 from typing import Any
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select, text
@@ -54,6 +56,7 @@ from loom_v2.db.models import (
     RuntimeAgentRow,
     WorkspaceCapabilityPackageRow,
     WorkspaceResourceRow,
+    McueDefinitionRow,
 )
 from loom_v2.db.migrations import apply_migrations
 from loom_v2.contracts.agents import DRIVER_COMMANDS, DRIVER_RUN_SCOPED_COMMANDS, AgentLease, AgentRegistration, DriverCommand, DriverThreadBinding
@@ -62,6 +65,8 @@ from loom_v2.db.session import make_session_factory
 from loom_v2.content_store import ContentStore, canonical_json_bytes, put_typed_content
 from loom_v2.digest import digest_bytes, digest_json
 from loom_v2.contracts.io_schema import ValidationError as SchemaValidationError, validate, validate_schema
+from loom_orchestration.contracts import CredentialProfile
+from pydantic import TypeAdapter
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
 from loom_v2.contracts.resource_effects import ResourceEffect, schema_path_exists, validate_action_descriptor
 from loom_v2.contracts.refs import (
@@ -291,6 +296,11 @@ class ObserverRepository:
         self.workspace_package_activations: dict[tuple[str, str], list[CapabilityPackageActivation]] = {}
         self.workspace_package_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self.workspace_resources: dict[tuple[str, str], ManagedResource] = {}
+        self.mcue_definitions: dict[tuple[str, str], dict[str, Any]] = {}
+        self._mcue_content: dict[str, dict[str, Any]] = {}
+        self._mcue_bootstrapped: set[str] = set()
+        self._mcue_bootstrap_lock = asyncio.Lock()
+        self._resource_lock = asyncio.Lock()
         self.engine = engine
         self.sessions = make_session_factory(engine) if engine is not None else None
         self.settings = settings or Settings()
@@ -384,7 +394,13 @@ class ObserverRepository:
         return computed
 
     async def get_action_descriptor(self, ref: ResourceRef) -> dict[str, Any]:
-        """Resolve and validate a public action descriptor reference."""
+        """Resolve a descriptor and validate it against the current authoring contract."""
+        payload = await self.read_action_descriptor(ref)
+        validate_action_descriptor(payload)
+        return payload
+
+    async def read_action_descriptor(self, ref: ResourceRef) -> dict[str, Any]:
+        """Read immutable evidence with digest verification, including historical packages."""
         digest = (ref.digest or "").lower()
         if not digest:
             raise ValueError("action_descriptor_unavailable")
@@ -400,7 +416,8 @@ class ObserverRepository:
                 raise ValueError("action_descriptor_unavailable") from exc
             if digest_json(payload, domain="loom/action-descriptor/v1") != digest:
                 raise ValueError("action_descriptor_digest_mismatch")
-            validate_action_descriptor(payload)
+            if not isinstance(payload, dict):
+                raise ValueError("action_descriptor_unavailable")
             return payload
         payload = self.action_descriptor_registry.get((ref.resource_id, digest))
         if payload is None:
@@ -408,7 +425,6 @@ class ObserverRepository:
         payload = deepcopy(payload)
         if digest_json(payload, domain="loom/action-descriptor/v1") != digest:
             raise ValueError("action_descriptor_digest_mismatch")
-        validate_action_descriptor(payload)
         return payload
 
     async def public_package_payload(self, package: CapabilityPackageVersion) -> dict[str, Any]:
@@ -425,7 +441,7 @@ class ObserverRepository:
             ref = export.action_descriptor_ref
             entry: dict[str, Any] = {"resource_ref": ref.model_dump(mode="json")}
             try:
-                entry["descriptor"] = await self.get_action_descriptor(ref)
+                entry["descriptor"] = await self.read_action_descriptor(ref)
             except (FileNotFoundError, TypeError, ValueError) as exc:
                 entry["error"] = str(exc) or "action_descriptor_unavailable"
             descriptors.append(entry)
@@ -435,7 +451,9 @@ class ObserverRepository:
     async def _validate_action_descriptor_ref(self, ref: ResourceRef) -> None:
         await self.get_action_descriptor(ref)
 
-    async def _validate_package_exports(self, package: CapabilityPackageVersion) -> None:
+    async def _validate_package_exports(self, package: CapabilityPackageVersion, *, publication: bool = False) -> None:
+        if publication and "credential_profile" in (package.body or {}):
+            raise ValueError("credential_profile_requires_activation")
         for action_export in package.action_exports:
             await self._validate_action_descriptor_ref(action_export.action_descriptor_ref)
             try:
@@ -1612,6 +1630,7 @@ class ObserverRepository:
                 instance_name=str(args.get("instance_name") or "default"),
                 target_resource_ref=ResourceRef.model_validate(args["target_resource_ref"]) if args.get("target_resource_ref") else None,
                 instance_config=dict(args["instance_config"]) if args.get("instance_config") is not None else None,
+                credential_profile=args.get("credential_profile"),
             )
             result = activation.model_dump(mode="json")
         elif command.command == "capability.health":
@@ -1638,7 +1657,7 @@ class ObserverRepository:
             if resource_payload is None:
                 resource_payload = {
                     key: args[key]
-                    for key in ("resource_ref", "package_ref", "managed_by_ref", "state")
+                    for key in ("resource_ref", "mcue_ref", "attributes", "package_ref", "managed_by_ref", "state")
                     if key in args
                 }
             if not isinstance(resource_payload, dict):
@@ -1716,6 +1735,7 @@ class ObserverRepository:
 
     async def init_db(self) -> None:
         if self.engine is None:
+            await self.ensure_mcue_definitions(self.settings.workspace_id)
             return
         async with self.engine.begin() as connection:
             if connection.dialect.name == "postgresql":
@@ -1728,6 +1748,7 @@ class ObserverRepository:
                 from loom_v2.db.base import Base
 
                 await connection.run_sync(Base.metadata.create_all)
+        await self.ensure_mcue_definitions(self.settings.workspace_id)
         # A health report may have completed while the Observer process was
         # down. Reconcile persisted activation waits after the schema and
         # workspace projections are available so those Runs are claimable
@@ -1941,67 +1962,194 @@ class ObserverRepository:
             ]
             self.workspace_package_events[key] = list(row.events or [])
 
-    async def _load_workspace_resources(self) -> None:
+    @asynccontextmanager
+    async def _resource_transaction(self, workspace_id: str, key: str):
+        """Serialize resource writes, including the first registration."""
         if self.sessions is None:
+            async with self._resource_lock:
+                yield None
             return
-        async with self.sessions() as session:
-            rows = (await session.scalars(select(WorkspaceResourceRow))).all()
-        for row in rows:
-            resource = ManagedResource.model_validate(row.resource)
-            self.workspace_resources[(row.workspace_id, row.resource_id)] = resource
-
-    async def _persist_workspace_resource(
-        self, workspace_id: str, resource: ManagedResource
-    ) -> None:
-        key = (workspace_id, resource.resource_ref.resource_id)
-        self.workspace_resources[key] = resource
-        if self.sessions is None:
-            return
-        async with self.sessions() as session:
-            row = await session.get(WorkspaceResourceRow, key)
-            values = {
-                "workspace_id": workspace_id,
-                "resource_id": resource.resource_ref.resource_id,
-                "resource": resource.model_dump(mode="json"),
-            }
-            if row is None:
-                session.add(WorkspaceResourceRow(**values))
+        async with self.sessions() as session, session.begin():
+            if session.bind.dialect.name == "postgresql":
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": f"loom:resource:{workspace_id}:{key}"},
+                )
             else:
-                row.resource = values["resource"]
-            await session.commit()
+                # SQLite has no row locks; acquire its write transaction before
+                # reading the value to be modified.
+                await session.execute(text("BEGIN IMMEDIATE"))
+            yield session
+
+    async def ensure_mcue_definitions(self, workspace_id: str) -> None:
+        if workspace_id in self._mcue_bootstrapped:
+            return
+        async with self._mcue_bootstrap_lock:
+            if workspace_id in self._mcue_bootstrapped:
+                return
+            for path in sorted((Path(__file__).parents[1] / "mcue_types").glob("*.json")):
+                await self.publish_mcue_type(workspace_id, json.loads(path.read_text()))
+            self._mcue_bootstrapped.add(workspace_id)
+
+    async def publish_mcue_type(self, workspace_id: str, payload: dict[str, Any]) -> str:
+        try:
+            definition = McueDefinition.model_validate(payload)
+        except ValueError as exc:
+            raise ValueError("mcue_definition_invalid") from exc
+        body = definition.model_dump(mode="json")
+        names = Names(self.settings.grip_authority, workspace_id)
+        target = names.mcue(definition.mcue, definition.version)
+        ref = await self.put_content(
+            body, media_type="application/json",
+            name=f"mcue-types/{definition.mcue}/{definition.version}",
+        )
+        async with self._resource_transaction(workspace_id, target) as session:
+            if session is None:
+                previous = self.mcue_definitions.get((workspace_id, target))
+                if previous is not None and canonical_json_bytes(previous) != canonical_json_bytes(body):
+                    raise ValueError("mcue_version_conflict")
+                self.mcue_definitions[(workspace_id, target)] = deepcopy(body)
+            else:
+                row = await session.get(McueDefinitionRow, (workspace_id, definition.mcue, definition.version))
+                if row is not None:
+                    if row.content_ref != ref.model_dump(mode="json"):
+                        raise ValueError("mcue_version_conflict")
+                else:
+                    session.add(McueDefinitionRow(
+                        workspace_id=workspace_id, mcue=definition.mcue, version=definition.version,
+                        content_ref=ref.model_dump(mode="json"),
+                    ))
+        self._mcue_content[ref.resource_id] = body
+        return target
+
+    async def list_mcue_definitions(self, workspace_id: str) -> dict[str, dict[str, Any]]:
+        await self.ensure_mcue_definitions(workspace_id)
+        if self.sessions is None:
+            return {uri: deepcopy(body) for (scope, uri), body in self.mcue_definitions.items() if scope == workspace_id}
+        async with self.sessions() as session:
+            rows = (await session.scalars(select(McueDefinitionRow).where(McueDefinitionRow.workspace_id == workspace_id))).all()
+        result = {}
+        names = Names(self.settings.grip_authority, workspace_id)
+        for row in rows:
+            ref = ResourceRef.model_validate(row.content_ref)
+            if ref.resource_id not in self._mcue_content:
+                self._mcue_content[ref.resource_id] = await self._load_json_content(ref)
+            result[names.mcue(row.mcue, row.version)] = deepcopy(self._mcue_content[ref.resource_id])
+        return result
+
+    async def get_mcue_definition(self, workspace_id: str, target: str) -> McueDefinition:
+        definitions = await self.list_mcue_definitions(workspace_id)
+        if target not in definitions:
+            raise KeyError(target)
+        return McueDefinition.model_validate(definitions[target])
+
+    @staticmethod
+    def _resource_from_row(row: WorkspaceResourceRow) -> ManagedResource:
+        if "mcue_ref" not in row.resource:
+            raise ValueError("resource_mcue_migration_required")
+        return ManagedResource.model_validate({**row.resource, "attributes_revision": row.attributes_revision})
+
+    async def _load_workspace_resources(self, workspace_id: str) -> None:
+        if self.sessions is None:
+            return
+        async with self.sessions() as session:
+            rows = (await session.scalars(select(WorkspaceResourceRow).where(WorkspaceResourceRow.workspace_id == workspace_id))).all()
+        self.workspace_resources = {key: value for key, value in self.workspace_resources.items() if key[0] != workspace_id} | {
+            (row.workspace_id, row.resource_id): self._resource_from_row(row) for row in rows
+        }
 
     async def register_resource(
         self, workspace_id: str, payload: ManagedResource | dict[str, Any]
     ) -> ManagedResource:
-        """Register or update one workspace resource handle."""
+        """Register an identity or update state without overwriting attributes."""
         resource = payload if isinstance(payload, ManagedResource) else ManagedResource.model_validate(payload)
-        if not resource.resource_ref.resource_id:
-            raise ValueError("resource_ref_required")
-        if resource.package_ref.digest is None:
-            raise ValueError("package_digest_required")
-        package = await self.get_capability_package(resource.package_ref)
-        if package.workspace_id != workspace_id or package.publication_state != "published":
-            raise ValueError("resource_package_unavailable")
+        names = Names(self.settings.grip_authority, workspace_id)
+        if not resource.resource_ref.resource_id.startswith(names.root + "/resources/"):
+            raise ValueError("resource_namespace_invalid")
+        definition = await self.get_mcue_definition(workspace_id, resource.mcue_ref)
+        if resource.package_ref is not None:
+            if resource.package_ref.digest is None:
+                raise ValueError("package_digest_required")
+            package = await self.get_capability_package(resource.package_ref)
+            if package.workspace_id != workspace_id or package.publication_state != "published":
+                raise ValueError("resource_package_unavailable")
         if resource.managed_by_ref is not None:
             if resource.managed_by_ref.resource_id == resource.resource_ref.resource_id:
                 raise ValueError("resource_manager_self_reference")
             await self.get_resource(workspace_id, resource.managed_by_ref)
-        await self._load_workspace_resources()
         key = (workspace_id, resource.resource_ref.resource_id)
-        existing = self.workspace_resources.get(key)
-        if existing is not None:
-            if (
-                existing.package_ref != resource.package_ref
-                or existing.managed_by_ref != resource.managed_by_ref
-            ):
-                raise ValueError("resource_binding_conflict")
-        await self._persist_workspace_resource(workspace_id, resource)
+        async with self._resource_transaction(*key) as session:
+            if session is None:
+                row, existing = None, self.workspace_resources.get(key)
+            else:
+                row = await session.get(WorkspaceResourceRow, key, with_for_update=True)
+                existing = self._resource_from_row(row) if row else None
+            if existing is not None:
+                if any(
+                    field in resource.model_fields_set and getattr(existing, field) != getattr(resource, field)
+                    for field in ("package_ref", "managed_by_ref")
+                ):
+                    raise ValueError("resource_binding_conflict")
+                if existing.mcue_ref != resource.mcue_ref:
+                    raise ValueError("resource_mcue_conflict")
+                if "attributes" in resource.model_fields_set and canonical_json_bytes(existing.attributes) != canonical_json_bytes(resource.attributes):
+                    raise ValueError("resource_attributes_require_update")
+                resource = existing.model_copy(deep=True)
+                if "state" in (payload.model_fields_set if isinstance(payload, ManagedResource) else payload):
+                    resource.state = payload.state if isinstance(payload, ManagedResource) else payload["state"]
+            else:
+                definition.validate_attributes(resource.attributes)
+                resource = resource.model_copy(deep=True, update={"attributes_revision": 1})
+            if session is None:
+                self.workspace_resources[key] = resource.model_copy(deep=True)
+            elif row is None:
+                session.add(WorkspaceResourceRow(
+                    workspace_id=workspace_id, resource_id=key[1],
+                    resource=resource.model_dump(mode="json", exclude={"attributes_revision"}),
+                    attributes_revision=resource.attributes_revision,
+                ))
+            else:
+                row.resource = resource.model_dump(mode="json", exclude={"attributes_revision"})
+        return resource.model_copy(deep=True)
+
+    async def update_resource_attributes(
+        self, workspace_id: str, target: str, *, expected_attributes_revision: int,
+        patch: dict[str, Any], mcue_ref: str | None = None,
+    ) -> ManagedResource:
+        definitions = await self.list_mcue_definitions(workspace_id)
+        key = (workspace_id, target)
+        async with self._resource_transaction(*key) as session:
+            if session is None:
+                row, current = None, self.workspace_resources.get(key)
+            else:
+                row = await session.get(WorkspaceResourceRow, key, with_for_update=True)
+                current = self._resource_from_row(row) if row else None
+            if current is None:
+                raise KeyError(target)
+            if current.attributes_revision != expected_attributes_revision:
+                raise ValueError("attributes_revision_conflict")
+            old_definition = McueDefinition.model_validate(definitions[current.mcue_ref])
+            definition = McueDefinition.model_validate(definitions[mcue_ref or current.mcue_ref])
+            if definition.mcue != old_definition.mcue:
+                raise ValueError("resource_mcue_conflict")
+            attributes = merge_attributes(current.attributes, patch)
+            definition.validate_attributes(attributes)
+            changed = canonical_json_bytes(attributes) != canonical_json_bytes(current.attributes) or (mcue_ref or current.mcue_ref) != current.mcue_ref
+            resource = current.model_copy(deep=True, update={
+                "attributes": attributes, "mcue_ref": mcue_ref or current.mcue_ref,
+                "attributes_revision": current.attributes_revision + int(changed),
+            })
+            if session is None:
+                self.workspace_resources[key] = resource.model_copy(deep=True)
+            elif changed:
+                row.resource = resource.model_dump(mode="json", exclude={"attributes_revision"})
+                row.attributes_revision = resource.attributes_revision
         return resource
 
     async def list_resources(self, workspace_id: str) -> list[ManagedResource]:
-        await self._load_workspace_resources()
+        await self._load_workspace_resources(workspace_id)
         return [
-            resource
+            resource.model_copy(deep=True)
             for (scope, _), resource in sorted(self.workspace_resources.items())
             if scope == workspace_id
         ]
@@ -2060,7 +2208,7 @@ class ObserverRepository:
     async def get_resource(
         self, workspace_id: str, resource_ref: ResourceRef | str
     ) -> ManagedResource:
-        await self._load_workspace_resources()
+        await self._load_workspace_resources(workspace_id)
         resource_id = resource_ref.resource_id if isinstance(resource_ref, ResourceRef) else resource_ref
         resource = self.workspace_resources.get((workspace_id, resource_id))
         if resource is None:
@@ -2068,7 +2216,7 @@ class ObserverRepository:
         if isinstance(resource_ref, ResourceRef) and resource_ref.digest is not None:
             if resource.resource_ref.digest != resource_ref.digest:
                 raise ValueError("resource_digest_mismatch")
-        return resource
+        return resource.model_copy(deep=True)
 
     async def _persist_workspace_package(
         self, package: CapabilityPackageVersion, *,
@@ -2125,7 +2273,7 @@ class ObserverRepository:
             body=(dict(manifest.get("body")) if manifest.get("body") is not None else None),
             package_digest=str(manifest.get("package_digest") or ""),
         )
-        await self._validate_package_exports(package)
+        await self._validate_package_exports(package, publication=True)
         await self._load_workspace_packages()
         key = self._workspace_package_key(package)
         existing = self.workspace_packages.get(key)
@@ -3156,7 +3304,7 @@ class ObserverRepository:
                     or candidate.body.get("captured_path_refs")
                 ):
                     raise ValueError("package_captures_run_state")
-            await self._validate_package_exports(candidate)
+            await self._validate_package_exports(candidate, publication=True)
             source_record = next(
                 (
                     record
@@ -3231,9 +3379,12 @@ class ObserverRepository:
         instance_name: str = "default",
         target_resource_ref: ResourceRef | None = None,
         instance_config: dict[str, Any] | None = None,
+        credential_profile: str | None = None,
         expected_revision: int | None = None,
     ) -> CapabilityPackageActivation:
         """Atomically assign the next desired-state revision for one activation."""
+        if credential_profile is not None:
+            credential_profile = TypeAdapter(CredentialProfile).validate_python(credential_profile)
         if desired_state not in {"running", "stopped"}:
             raise ValueError("activation_desired_state_invalid")
         if not target_slave:
@@ -3302,7 +3453,9 @@ class ObserverRepository:
             if current is not None:
                 requested_target = target_resource_ref if target_resource_ref is not None else current.target_resource_ref
                 requested_config = dict(current.instance_config if instance_config is None else instance_config)
-                if requested_target != current.target_resource_ref or requested_config != current.instance_config:
+                requested_profile = current.credential_profile if credential_profile is None else credential_profile
+                if (requested_target != current.target_resource_ref or requested_config != current.instance_config
+                        or requested_profile != current.credential_profile):
                     raise ValueError("activation_instance_binding_conflict")
             if current is not None and current.last_idempotency_key == idempotency_key:
                 if current.desired_state != desired_state:
@@ -3373,7 +3526,8 @@ class ObserverRepository:
                 runtime_profile={},
                 instance_name=instance_name,
                 target_resource_ref=target_resource_ref if target_resource_ref is not None else (current.target_resource_ref if current is not None else None),
-                instance_config=dict(instance_config or (current.instance_config if current is not None else {})),
+                instance_config=dict(instance_config if instance_config is not None else (current.instance_config if current is not None else {})),
+                credential_profile=credential_profile if credential_profile is not None else (current.credential_profile if current else None),
             )
             activation_list[:] = [
                 item
@@ -4350,7 +4504,7 @@ class ObserverRepository:
                     )
                 except (TypeError, ValueError) as exc:
                     raise ValueError(str(exc) or "capability_package_invalid") from exc
-                await self._validate_package_exports(package)
+                await self._validate_package_exports(package, publication=True)
                 # Re-materializing the exact immutable package is idempotent,
                 # but a logical coordinate must not silently change meaning
                 # within one Run.  A caller that changes the program or any

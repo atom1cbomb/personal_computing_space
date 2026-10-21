@@ -1,0 +1,131 @@
+{
+  "package_type": "service",
+  "package_id": "volcano-http",
+  "package_version": "v2",
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
+  "body": {
+    "image_ref": "registry.example/loom/volcano-gateway@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "network_profile": "egress"
+  },
+  "action_exports": [
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/namespaces-list",
+        "version_or_digest": "b03339abc22809d27425568ec9d2f8502acd24742e0931e6fff41c21ef71d4d9",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/contracts/namespaces-list/sha256/5e1ae1c3d6d6aea327e35a324aee453a415148c1ba91d54f50a573bd1763c481",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "volcano.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/namespaces/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/queues-list",
+        "version_or_digest": "8b494ca6852558d511e9ffef847a5ff7f83608e189c10ca9fcff981f74141dd8",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/contracts/queues-list/sha256/194c1f1330219a77211a53b95f529950553e8b905810ddf2277fc0750bc2c1d4",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "volcano.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/queues/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/podgroups-list",
+        "version_or_digest": "7b06398bc87f9823247d856166dcf5ee8e7e929e81ecbe707752f3542df3df1a",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/contracts/podgroups-list/sha256/3afee4edbe16c322b2fd5f5c5ca4e29445b0f051298764ba98e19613ced78dc9",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "volcano.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/podgroups/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/pods-list",
+        "version_or_digest": "dab090a086f4c51c0aa7faf7fbcf5c6de1a3c5b63ddc447f529182b12d87fd66",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/contracts/pods-list/sha256/ad8b50b9a73c1288f4f66d39a9d027b9c4f499dd39180b998c31f8489df1d157",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "volcano.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/pods/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/jobs-list",
+        "version_or_digest": "2f167cfae7345416d0d13bf54c744b365e580ac183a7bcba760741250d28e359",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/contracts/jobs-list/sha256/a97ff0f79946455f6aeb926cf3695e601362704d40a64f3656725b997e92fcfa",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "volcano.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/jobs/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/gpu-usage",
+        "version_or_digest": "8289579a46f9343541db0768d392a8b0136f84459a5454f778f28b3419110388",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/contracts/gpu-usage/sha256/a01e3c6522afc6b09848933a29349a17dcd18e1120d53ae41b28508623114168",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "volcano.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/gpu/usage"
+      }
+    }
+  ]
+}

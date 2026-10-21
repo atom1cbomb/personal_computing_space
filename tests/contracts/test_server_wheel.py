@@ -15,3 +15,8 @@ def test_server_wheel_contains_runtime_assets(tmp_path):
     assert "migrations/alembic/env.py" in names
     assert "migrations/alembic/versions/004_run_execution_requests.py" in names
     assert "migrations/alembic/versions/005_slave_action_name.py" in names
+    assert "migrations/alembic/versions/006_mcue_attributes.py" in names
+    assert "migrations/alembic/versions/007_activation_credentials.py" in names
+    assert "loom_v2/mcue_types/computing-vm-v1.json" in names
+    assert "loom_v2/mcue_types/computing-volcano-v1.json" in names
+    assert "loom_orchestration/mcue.py" in names

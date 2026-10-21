@@ -4,7 +4,8 @@ import json
 import re
 from typing import Any, Literal
 
-from loom_orchestration.grip import URI, Names
+from loom_orchestration.contracts import CredentialProfile
+from loom_orchestration.grip import URI, MCUE, Names
 from loom_orchestration.naming import content_digest, CONTENT_PATTERN
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -389,6 +390,7 @@ class CapabilityPackageActivation(ContractModel):
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
+    credential_profile: CredentialProfile | None = None
 
 
 class CapabilityPackage(ContractModel):
@@ -414,6 +416,7 @@ class CapabilityProvisionCommand(ContractModel):
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
+    credential_profile: CredentialProfile | None = None
 
 
 class CapabilityDeprovisionCommand(ContractModel):
@@ -427,6 +430,7 @@ class CapabilityDeprovisionCommand(ContractModel):
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
+    credential_profile: CredentialProfile | None = None
 
 
 class CapabilityHealthReport(ContractModel):
@@ -475,7 +479,7 @@ class DynamicNode(ContractModel):
 
 class ResourceEventFrame(ContractModel):
     event_id: str
-    resource_type: str = "capability_package_activation"
+    mcue: MCUE = "capability/activation"
     resource_ref: str
     event_type: str
     package_version_ref: str | None = None
@@ -486,10 +490,13 @@ class ResourceEventFrame(ContractModel):
 
 
 class ManagedResource(ContractModel):
-    """A workspace resource and the package describing how to use it."""
+    """A stable resource identity with versioned public attributes."""
 
     resource_ref: ResourceRef
-    package_ref: ResourceRef
+    mcue_ref: URI
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    attributes_revision: int = Field(default=1, ge=1)
+    package_ref: ResourceRef | None = None
     managed_by_ref: ResourceRef | None = None
     state: str = "unknown"
 

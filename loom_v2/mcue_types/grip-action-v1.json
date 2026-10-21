@@ -1,0 +1,10 @@
+{
+  "mcue": "grip/action",
+  "version": "v1",
+  "description": "Callable action",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "complete": {
+      "const": true
+    },
+    "metric": {
+      "type": "string",
+      "const": "scheduled_pod_requests"
+    },
+    "collected_at": {
+      "type": "string"
+    },
+    "namespace": {
+      "type": "string"
+    },
+    "resource_name": {
+      "type": "string"
+    },
+    "pod_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "terminal_pods": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "allocated": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "running_allocated": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "unscheduled_requested": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "by_namespace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "namespace": {
+            "type": "string"
+          },
+          "gpu_pods": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "allocated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "running_allocated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unscheduled_requested": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "namespace",
+          "gpu_pods",
+          "allocated",
+          "running_allocated",
+          "unscheduled_requested"
+        ]
+      }
+    },
+    "gpu_pods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "namespace": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "gpu_requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scheduled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "node_name",
+          "phase",
+          "gpu_requests",
+          "scheduled"
+        ]
+      }
+    }
+  },
+  "required": [
+    "status",
+    "complete",
+    "metric",
+    "collected_at",
+    "namespace",
+    "resource_name",
+    "pod_count",
+    "terminal_pods",
+    "allocated",
+    "running_allocated",
+    "unscheduled_requested",
+    "by_namespace",
+    "gpu_pods"
+  ]
+}

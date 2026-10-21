@@ -30,8 +30,11 @@ put the key in a file named `outline_key`, for example:
 /var/lib/loom/runtime-credentials/outline-prod/outline_key
 ```
 
-The package manifest refers only to the non-sensitive profile name
-`outline-prod`. The runtime mounts that profile read-only. Build the image and
+Package v2 selects credentials at activation: pass
+`"credential_profile": "outline-prod"` in the GRIP `activate-package` input,
+alongside `instance_name` and `instance_config`. The package manifest contains
+no profile selection. Different named instances can select different profiles;
+the runtime mounts each selected directory read-only. Build the image and
 replace the example image digest before registration; this repository does not
 push the image or register the package automatically.
 

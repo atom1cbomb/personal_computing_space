@@ -1,7 +1,7 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/exec-input/sha256/a6fafecadc8d3de5747bae56f403c946378650bab1d3e6157e78ac6ab5102735",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/exec-input/sha256/264df2b79b7555d60d650bedb4c6b9698b37a495c1d81fb593c16499174c3511",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {

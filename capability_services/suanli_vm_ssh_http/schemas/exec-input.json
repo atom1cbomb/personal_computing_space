@@ -5,12 +5,14 @@
   ],
   "properties": {
     "command": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1048576
     },
     "timeout_seconds": {
       "type": "number",
       "minimum": 1,
-      "maximum": 120
+      "maximum": 3600
     }
   }
 }

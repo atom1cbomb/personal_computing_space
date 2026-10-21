@@ -1,6 +1,7 @@
 """Migration transaction and process-lock tests against disposable PostgreSQL."""
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from loom_v2.db.migrations import _config, apply_migrations
+from loom_v2.observer.repository import ObserverRepository
+from loom_v2.observer.mcue_migration import backfill_resource_mcue
 
 
 pytestmark = pytest.mark.integration
@@ -78,6 +81,39 @@ async def test_existing_slave_attempt_survives_action_column_migration(database)
         assert "operation" not in columns
 
 
+async def test_mcue_upgrade_preserves_existing_resource_and_serializes_writers(database):
+    engine, _ = database
+    repo = ObserverRepository(engine)
+    scope = "workspace-default"
+    target = repo.names.name("resources", "vm", "pre-mcue")
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda sync: command.upgrade(_config("observer", sync), "005_slave_action_name"))
+        await connection.execute(text(
+            "INSERT INTO workspace_resources (workspace_id, resource_id, resource) "
+            "VALUES (:workspace, :target, CAST(:resource AS jsonb))"
+        ), {"workspace": scope, "target": target, "resource": json.dumps({"resource_ref": {"resource_id": target}, "state": "running"})})
+        await apply_migrations(connection, "observer")
+        assert (await connection.execute(text("SELECT attributes_revision FROM workspace_resources"))).scalar_one() == 1
+    await repo.ensure_mcue_definitions(scope)
+    assert await backfill_resource_mcue(repo, scope, {target: {"mcue_ref": repo.names.mcue("computing/vm")}}) == 1
+    other = ObserverRepository(engine, content_store=repo.content_store)
+    await other.init_db()
+    results = await asyncio.gather(
+        repo.update_resource_attributes(scope, target, expected_attributes_revision=1, patch={"cpu_cores": 4}),
+        other.update_resource_attributes(scope, target, expected_attributes_revision=1, patch={"cpu_cores": 8}),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, ValueError) and str(result) == "attributes_revision_conflict" for result in results) == 1
+    await asyncio.gather(
+        repo.register_resource(scope, {"resource_ref": {"resource_id": target}, "mcue_ref": repo.names.mcue("computing/vm"), "state": "stopped"}),
+        other.update_resource_attributes(scope, target, expected_attributes_revision=2, patch={"labels": {"environment": "test"}}),
+    )
+    persisted = await ObserverRepository(engine, content_store=repo.content_store).get_resource(scope, target)
+    assert persisted.state == "stopped" and persisted.attributes_revision == 3
+    assert persisted.attributes["cpu_cores"] in {4, 8}
+    assert persisted.attributes["labels"] == {"environment": "test"}
+
+
 @pytest.mark.parametrize("role,own_table,other_table", [
     ("observer", "runs", "slave_attempts"),
     ("slave", "slave_attempts", "runs"),
@@ -111,7 +147,7 @@ async def test_failed_migration_rolls_back_schema_and_version(database, monkeypa
         assert (await connection.execute(text(f"SELECT to_regclass('{other_table}')"))).scalar() is None
         assert (await connection.execute(text(
             f"SELECT version_num FROM loom_{role}_alembic_version"
-            ))).scalar_one() == "005_slave_action_name"
+            ))).scalar_one() == "007_activation_credentials"
 
 
 @pytest.mark.parametrize("role", ["observer", "slave"])
@@ -157,9 +193,57 @@ asyncio.run(main())
         async with engine.connect() as connection:
             assert (await connection.execute(text(
                 f"SELECT version_num FROM loom_{role}_alembic_version"
-                ))).scalars().all() == ["005_slave_action_name"]
+                ))).scalars().all() == ["007_activation_credentials"]
     finally:
         for process in processes:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+
+
+@pytest.mark.parametrize('role', ['observer', 'slave'])
+async def test_activation_credential_migration_preserves_packages_and_existing_selections(database, role):
+    from copy import deepcopy
+    from loom_v2.contracts.types import CapabilityPackageActivation
+    from loom_v2.db.models import RunRow, WorkspaceCapabilityPackageRow, SlaveReplicaRow
+    from tests.slave.test_container_http_runtime import _package
+
+    engine, _ = database
+    package = _package(['/v1/echo']).model_dump(mode='json')
+    package['body']['credential_profile'] = 'legacy-profile'
+    original = deepcopy(package)
+    ref = 'grip://loom.local/workspaces/workspace-default/packages/pkg-http-runtime/v1'
+    base = CapabilityPackageActivation(package_version_ref=ref, package_digest=package['package_digest'],
+        target_slave='slave-a', activation_closure_version_ref='closure-1', compute_binding_ref='',
+        desired_state='running', activation_revision=7, last_idempotency_key='original', activation_state='ready',
+        instance_name='legacy').model_dump(mode='json', exclude={'credential_profile'})
+    activations = [base, {**base, 'instance_name': 'explicit', 'credential_profile': 'keep-me'},
+                   {**base, 'instance_name': 'anonymous', 'credential_profile': None}]
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda sync: command.upgrade(_config(role, sync), '006_mcue_attributes'))
+        if role == 'observer':
+            await connection.execute(WorkspaceCapabilityPackageRow.__table__.insert().values(
+                workspace_id='workspace-default', package_ref=ref, package=package,
+                capability_activations=activations, events=[]))
+            await connection.execute(RunRow.__table__.insert().values(run_id='historic', task_ref='task',
+                goal='existing', draft={}, state='completed', outcome={'value': 'unchanged'},
+                capability_packages=[package], capability_activations=activations))
+        else:
+            await connection.execute(SlaveReplicaRow.__table__.insert().values(
+                slave_id='slave-a', workspace_id='workspace-default', state='ready',
+                capability_activations=[{**a, 'package_payload': package} for a in activations]))
+        await apply_migrations(connection, role)
+        await apply_migrations(connection, role)
+        if role == 'observer':
+            row = (await connection.execute(WorkspaceCapabilityPackageRow.__table__.select())).mappings().one()
+            assert row['package'] == original
+            updated = row['capability_activations']
+            run = (await connection.execute(RunRow.__table__.select())).mappings().one()
+            assert run['outcome'] == {'value': 'unchanged'} and run['capability_packages'] == [original]
+            assert run['capability_activations'] == updated
+        else:
+            row = (await connection.execute(SlaveReplicaRow.__table__.select())).mappings().one()
+            updated = row['capability_activations']
+            assert all(a['package_payload'] == original for a in updated)
+        assert [a['credential_profile'] for a in updated] == ['legacy-profile', 'keep-me', None]
+        assert all(a['activation_revision'] == 7 and a['package_digest'] == original['package_digest'] for a in updated)

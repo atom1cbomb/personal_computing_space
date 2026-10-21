@@ -110,14 +110,14 @@ class DynamicOrchestrationRuntime:
                 run_id, execution_id=record.execution_id, step_id=step_id, value=value,
             )
 
-        async def register_resource(*, step_id: str, resource_type: str, identity: str, package_ref: ResourceRef, managed_by_ref: ResourceRef | None = None) -> ResourceRef:
+        async def register_resource(*, step_id: str, mcue_ref: str, identity: str, package_ref: ResourceRef | None = None, managed_by_ref: ResourceRef | None = None, attributes: dict[str, Any] | None = None) -> ResourceRef:
             return await self.repository.register_program_resource(
                 run_id, execution_id=record.execution_id, step_id=step_id,
-                resource_type=resource_type, identity=identity, package_ref=package_ref,
-                managed_by_ref=managed_by_ref,
+                mcue_ref=mcue_ref, identity=identity, package_ref=package_ref,
+                managed_by_ref=managed_by_ref, attributes=attributes,
             )
 
-        async def ensure_activation(*, step_id: str, package_ref: ResourceRef, target_resource_ref: ResourceRef, instance_name: str = "default", instance_config: dict[str, Any] | None = None, requires_authentication: bool = False) -> ResourceRef:
+        async def ensure_activation(*, step_id: str, package_ref: ResourceRef, target_resource_ref: ResourceRef, instance_name: str = "default", instance_config: dict[str, Any] | None = None, requires_authentication: bool = False, credential_profile: str | None = None) -> ResourceRef:
             await self.repository.refresh_slaves()
             package = await self.repository.get_capability_package(package_ref, run_id=run_id)
             target = self._select_target(package, package.action_exports[0].action_descriptor_ref, record)
@@ -127,6 +127,7 @@ class DynamicOrchestrationRuntime:
                 instance_name=instance_name,
                 target_resource_ref=target_resource_ref,
                 instance_config=instance_config or {},
+                credential_profile=credential_profile,
                 requires_authentication=requires_authentication,
             )
             binding = activation_ref.access_binding
@@ -149,6 +150,7 @@ class DynamicOrchestrationRuntime:
                     instance_name=activation.instance_name,
                     target_resource_ref=activation.target_resource_ref,
                     instance_config=dict(activation.instance_config),
+                    credential_profile=activation.credential_profile,
                 )
                 worker = self.workers.get(activation.target_slave)
                 slave = self.slaves.get(activation.target_slave)
@@ -640,6 +642,7 @@ class DynamicOrchestrationRuntime:
             instance_name=node.instance_name,
             target_resource_ref=desired.target_resource_ref,
             instance_config=dict(desired.instance_config),
+            credential_profile=desired.credential_profile,
         )
         action = action_name(action_ref)
 

@@ -48,7 +48,7 @@ async def test_sdk_rejects_untrusted_description(failure):
     n = Names()
     def respond(request):
         payload = json.loads(request.content)
-        body = {"resource": {"uri": n.root, "kind": "workspace"}, "offers": []}
+        body = {"resource": {"uri": n.root, "mcue": "loom/workspace"}, "offers": []}
         reply = {"version": "grip.v1", "request_id": payload["request_id"], "kind": "reply", "body": body}
         if failure == "correlation": reply["request_id"] = "wrong"
         if failure == "target": body["resource"]["uri"] = n.name("other")
@@ -77,7 +77,7 @@ async def test_sdk_never_forwards_token_to_untrusted_binding(failure):
         if failure == "endpoint": binding["endpoint"] = "https://foreign.example/grip"
         if failure == "audience": binding["audience"] = "grip://foreign.example/service"
         if failure == "plain-http": binding["endpoint"] = "http://observer.example/grip"
-        body = {"resource": {"uri": n.root, "kind": "workspace"}, "offers": [{
+        body = {"resource": {"uri": n.root, "mcue": "loom/workspace"}, "offers": [{
             "action": {"uri": n.action("read"), "mode": "request-reply", "input_schema": n.schema("read-input"), "output_schema": n.schema("read-output")},
             "bindings": [binding],
         }]}

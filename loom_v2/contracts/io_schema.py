@@ -28,6 +28,8 @@ SUPPORTED_KEYWORDS = frozenset(
         "const",
         "minimum",
         "maximum",
+        "minLength",
+        "maxLength",
     }
 )
 
@@ -124,7 +126,7 @@ def _expected(error: Any) -> Any:
         return "one of allowed values"
     if validator == "const":
         return "constant"
-    if validator in {"minimum", "maximum"}:
+    if validator in {"minimum", "maximum", "minLength", "maxLength"}:
         return error.validator_value
     if validator == "items":
         return "item schema"
@@ -143,6 +145,8 @@ def _message(keyword: str) -> str:
         "const": "value does not equal the required constant",
         "minimum": "number is below the minimum",
         "maximum": "number is above the maximum",
+        "minLength": "string is shorter than the minimum length",
+        "maxLength": "string is longer than the maximum length",
     }.get(keyword, "value failed schema validation")
 
 

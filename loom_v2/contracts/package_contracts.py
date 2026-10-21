@@ -205,6 +205,8 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                 "pattern": _ORIGIN_PATH_PATTERN,
             },
             "credential_profile": {
+                "description": "Historical stored packages only; new publications select credentials on the activation.",
+                "deprecated": True,
                 "type": "string",
                 "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
             },

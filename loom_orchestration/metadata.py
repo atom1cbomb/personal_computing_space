@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .contracts import ContractModel, ResourceRef
+from .grip import URI
 
 
 _PATH = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+|\[\])*$")
@@ -97,7 +98,7 @@ def validate_mapping(mapping: dict[str, Any]) -> None:
 
 class ResourceEffect(ContractModel):
     effect: Literal["create", "update", "delete"]
-    resource_type: str = Field(min_length=1)
+    mcue_ref: URI
     identity_path: str = Field(min_length=1)
     readiness: ResourceReadiness | None = None
     access_requirements: list[ResourceAccessRequirement] = Field(default_factory=list)

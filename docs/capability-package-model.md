@@ -96,11 +96,11 @@ Schema 必须校验完整的执行 manifest：
 `body=null`、export 的 `runtime_binding={}`。`none/1` 不对应 runtime provider，接口包
 可以上传、发布和查询，但不能 provision、dispatch 或激活到 Slave。
 
-workspace 资源通过 `package_ref` 引用这个使用包；资源不重复保存 descriptor、IoContract
+workspace 资源通过 `mcue_ref` 引用类型定义，并可选通过 `package_ref` 记录来源或接入包；资源不重复保存 descriptor、IoContract
 或 runtime binding。包的 `action_exports` 描述声明契约；实际可调用动作由资源的 GRIP DESCRIBE offers 给出，只有明确绑定且 ready 的执行实例才提供业务 binding。资源可
 以通过 `managed_by_ref` 指向同 workspace 的管理资源（例如 VM 由云资源管理），但管理包
 和使用包保持分离。资源登记使用 workspace 资源的 GRIP `register-resource` 动作，重复登记同一绑定幂等，改变
-绑定返回冲突；资源状态单独持久化。
+绑定返回冲突；公开扩展值保存在 `attributes`，由 MCUE Schema 校验，通过 `update-attributes` 和属性修订号独立更新。属性更新不改变 URI、激活配置或激活 revision。
 
 ## 4. 引用与 digest
 
@@ -138,7 +138,6 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
   "image_ref": "registry.example/org/service@sha256:<64 lowercase hex>",
   "container_port": 8080,
   "health_path": "/healthz",
-  "credential_profile": "optional-slave-local-profile",
   "network_profile": "internal",
   "authentication": {
     "start_path": "/v1/auth/start",
@@ -153,11 +152,17 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
 }
 ```
 
-`credential_profile` 是 Slave operator 在本机配置的非敏感名称，不是
-kubeconfig、token 或任意宿主机路径。`container-http-v1` 只为该名称匹配
-operator 配置的只读 credential profile，并挂载到能力容器的固定路径；package
-digest 不包含 profile 内容。没有配置匹配 profile 时，provision 失败并返回
-`credential_profile_unavailable`。
+凭据选择属于激活实例：在 GRIP `activate-package` 输入中传入顶层
+`credential_profile`，与 `instance_config` 并列。它是 Slave operator 配置的名称，
+不是 kubeconfig、token 或宿主机路径。`container-http-v1` 只从激活配置读取该名称，
+把匹配目录只读挂载到 `/run/loom/credentials`。包摘要不包含 profile 选择或文件内容，
+同一包的不同实例可以选择不同凭据。目录不存在时，在 Docker 操作前返回
+`credential_profile_unavailable`。新实例省略/null 表示不挂载，已有实例省略/null
+保留原绑定；切换 profile 使用新实例名。
+
+新发布的包不能包含 `body.credential_profile`。历史不可变包保留读取和摘要核验能力，
+数据库迁移将旧选择转存到已有激活记录；运行时不再从包读取凭据配置。
+部署顺序与旧数据处理见 [升级说明](activation-credentials-upgrade.md)。
 
 `network_profile` 默认为 `internal`，能力容器只加入 Loom 的隔离网络。需要访问
 外部 Kubernetes/API 服务的包可声明 `egress`，但只有在 Slave operator 配置了

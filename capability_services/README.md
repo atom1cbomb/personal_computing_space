@@ -1,20 +1,28 @@
 # 通过 GRIP 使用能力服务包
 
-五个服务包都使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 调用业务 action → 读取 Run。
+六个服务包都使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 调用业务 action → 读取 Run。
 能力包是不可变资源，Slave 是执行资源，激活实例也是资源；外部调用方只使用返回的 GRIP URI。
 包内的 `/v1/...` 是 `container:http/1` runtime 到容器的内部绑定。
 
 | 目录 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---:|---|
-| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v2 | 6 | `k8s-prod` profile；Kubernetes/OIDC |
-| [outline_http](outline_http/README.md) | outline-http/v1 | 12 | `outline-prod/outline_key` |
-| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v2 | 12 | `suanlicloud-prod/{AccessKeyId,SecretKey}` |
-| [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v2 | 1 | `{host,port,user}`；SSH profile 的 `id_ed25519` |
-| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v2 | 1 | `{host,port,user}`；opkssh 浏览器认证 |
+| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v4 | 6 | 实例选择 profile，其中含 Kubernetes kubeconfig/policy |
+| [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
+| [outline_http](outline_http/README.md) | outline-http/v2 | 12 | 实例选择 profile，其中含 `outline_key` |
+| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v4 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v4 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
+| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v3 | 1 | `{host,port,user}`；opkssh 浏览器认证 |
 
 ## 发布
 
 先构建并推送相应目录的 Dockerfile，记录仓库返回的真实 `registry/repository@sha256:...`。
+两个 SSH 镜像共用 `capability_services/ssh_execution.py`，从仓库根目录构建：
+
+```sh
+docker build -f capability_services/vm_ssh_http/Dockerfile -t loom/vm-ssh-gateway .
+docker build -f capability_services/suanli_vm_ssh_http/Dockerfile -t loom/suanli-vm-ssh-gateway .
+```
+
 配置 `LOOM_OBSERVER_URL`、`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID` 和 `LOOM_GRIP_TOKEN`。
 安装仓库 SDK 后，从仓库根目录运行：
 
@@ -34,7 +42,7 @@ python scripts/publish_service_package.py capability_services/outline_http \
 Suanli Cloud 的创建 VM descriptor 引用 Suanli SSH 使用包。先发布 SSH 包，再创建依赖映射文件：
 
 ```json
-{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2": "<刚发布的 SSH 包完整 GRIP URI>"}
+{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3": "<刚发布的 SSH 包完整 GRIP URI>"}
 ```
 
 发布 Suanli Cloud 时用 `--dependencies dependencies.json`，发布工具会校验引用的包坐标和真实 digest。
@@ -51,14 +59,24 @@ activation = await client.invoke(slave_uri, client.names.action("activate-packag
     "package": package_uri,
     "instance_name": "service-main",
     "instance_config": {},
+    "credential_profile": "operator-configured-profile",
     "idempotency_key": "activate-service-main",
 })
 description = await client.describe(activation["resource"])
 ```
 
 `activate-package` 自动创建或复用激活实例资源，`activation["resource"]` 就是其 GRIP URI。
-例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v2/slave-a/default`。
+例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v4/slave-a/default`。
 仅手工启动 Docker 容器不会向 Observer 注册实例；应通过 Slave 的激活动作使用服务包。
+
+`credential_profile` 是激活实例的字段，与 `instance_config` 并列；填 Slave operator 已配置的
+profile 名称，不能填密钥、kubeconfig 或宿主机路径。包 manifest 不指定 profile。
+同一个 Kubernetes 包可以激活 `beijing` / `k8s-bj` 和 `nanjing` / `k8s-nj` 两个实例，
+分别挂载各自的 kubeconfig 和 policy。选择不会改变包摘要，也不会自动出现在公开描述中。
+新实例省略或传 null 表示不挂载凭据；浏览器认证的算力云 SSH 实例通常省略此字段。
+已有实例省略或传 null 保留原选择，重试、停止再启动及 Slave 重启均保留绑定。
+同一实例名不能改绑 profile；切换账号使用新实例名。升级已有部署见
+[激活凭据升级说明](../docs/activation-credentials-upgrade.md)。
 
 DESCRIBE 的 `resource.metadata` 包含包、宿主、实例名、状态、revision 和全部业务 `actions`。
 算力云包含 12 个业务 action；每项提供 `name`、`description`、完整 `uri`、权限和副作用、
@@ -88,6 +106,23 @@ result = await client.invoke(run["run"], client.names.action("read"), {})
 停止实例调用其 `stop`，输入 `expected_revision` 和一个新的 `idempotency_key`。
 SSH 的成功标准是退出码为 0 且没有超时，两种 SSH 包均携带确定性 validator。
 
+## SSH 执行限制
+
+普通 SSH v4 与算力云 SSH v3 使用同一执行契约：请求体最多 8 MiB；`command` 最多 1,048,576 个字符；
+`stdout`、`stderr` 分别保留前 16 MiB 原始字节，超过则返回 `truncated=true`。
+输出边读边截断，超过上限后继续排空管道。长脚本通过 SSH 标准输入交给远端 `sh -s`；
+需要 Bash 等其他 shell 时，在脚本中显式调用。
+
+`timeout_seconds` 默认 300 秒，可指定 1–3600 秒；越界会报错，不会静默缩短。
+命令超时后终止本地 SSH 进程组，返回 `timed_out=true`、`exit_code=null`；远端独立后台任务
+仍应由调用方按任务自身的生命周期管理。输入 Schema 与 action 描述都通过 GRIP 可读。
+
+Slave action 默认预算 3660 秒；插件 invoke 按该预算等待并预留 30 秒；Worker 转发默认等待
+3720 秒。HTTP runtime 与插件 invoke 响应默认最多 256 MiB，为两路输出经过 JSON 转义留出空间。
+控制请求保留短超时。部署覆盖了 `LOOM_CAPABILITY_ACTION_TIMEOUT_SECONDS`、
+`LOOM_WORKER_ACTION_TIMEOUT_SECONDS` 或 `LOOM_RUNTIME_PLUGIN_RESPONSE_MAX_BYTES` 时，应同步检查
+这些值。已发布的旧版本不会自动变化，需要构建新镜像、发布当前模板版本并激活新实例。
+
 ## 维护与验证
 
 能力包业务术语统一为 `action`：manifest 使用 `action_exports`、`action_descriptor_ref`，
@@ -102,7 +137,7 @@ python scripts/generate_service_contracts.py --check
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest -q tests/capability_services tests/api/test_grip.py
 ```
 
-集成测试逐个发布五个真实包并执行全部 32 个业务导出，经过 GRIP、Driver、Slave、
+集成测试逐个发布六个真实包并执行全部 38 个业务导出，经过 GRIP、Driver、Slave、
 真实 `container:http` runtime 和本机 HTTP gateway。Docker、kubectl/SSH 可执行文件及外部 provider
 使用测试替身；这些结果不代表生产云、真实 Docker 或浏览器登录验收。
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用

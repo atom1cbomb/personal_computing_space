@@ -72,7 +72,7 @@ async def test_activation_reference_crosses_real_sandbox_protocol(monkeypatch):
     input_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "a" * 64)
     activation = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/activations/vm-test", access_binding={"instance_name": "vm-test", "activation_revision": 1})
     program = b'''async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":
-    activation = await ctx.ensure_activation(step_id="access", package_ref=input_ref, target_resource_ref=input_ref, instance_name="vm-test", instance_config={}, requires_authentication=True)
+    activation = await ctx.ensure_activation(step_id="access", package_ref=input_ref, target_resource_ref=input_ref, instance_name="vm-test", instance_config={}, requires_authentication=True, credential_profile="ssh-account-a")
     await ctx.wait_activation(step_id="auth", activation_ref=activation, ready_state="authenticated")
     return input_ref
 '''
@@ -80,6 +80,7 @@ async def test_activation_reference_crosses_real_sandbox_protocol(monkeypatch):
     async def ensure_activation(**arguments):
         assert arguments["package_ref"] == input_ref
         assert arguments["target_resource_ref"] == input_ref
+        assert arguments["credential_profile"] == "ssh-account-a"
         return activation
 
     async def wait_activation(**arguments):
@@ -90,6 +91,30 @@ async def test_activation_reference_crosses_real_sandbox_protocol(monkeypatch):
 
     returned = await executor.run(program, input_ref, read_json=lambda ref: {}, emit_node=lambda *args: "unused", result=lambda handle: input_ref, ensure_activation=ensure_activation, wait_activation=wait_activation)
     assert returned == input_ref
+
+
+async def test_resource_mcue_and_attributes_cross_real_sandbox_protocol(monkeypatch):
+    executor = DockerOrchestrationExecutor()
+    monkeypatch.setattr(executor, "docker_args", lambda: [sys.executable, "-u", "-c", _BOOTSTRAP])
+    input_ref = _ref("grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "a" * 64, "a" * 64)
+    target = ResourceRef(resource_id="grip://loom.local/workspaces/workspace-default/resources/vm/test")
+    program = b'''async def orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef":
+    await ctx.register_resource(step_id="vm", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="test", attributes={"display_name": "Development"})
+    return input_ref
+'''
+
+    async def register_resource(**arguments):
+        assert arguments == {
+            "step_id": "vm", "mcue_ref": "grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1",
+            "identity": "test", "attributes": {"display_name": "Development"},
+            "package_ref": None, "managed_by_ref": None,
+        }
+        return target
+
+    assert await executor.run(
+        program, input_ref, read_json=lambda ref: {}, emit_node=lambda *args: "unused",
+        result=lambda handle: input_ref, register_resource=register_resource,
+    ) == input_ref
 
 
 def test_orchestration_sandbox_environment_does_not_inherit_secrets(monkeypatch):

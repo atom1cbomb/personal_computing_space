@@ -267,7 +267,10 @@ class KubernetesGateway:
     def _resource(self, value: Any) -> str:
         if not isinstance(value, str) or value not in ALLOWED_RESOURCES:
             raise GatewayError("resource_kind_not_allowed")
-        return value
+        # Public resource names need not be kubectl short names. Volcano
+        # registers vcjob/vj, not vcjobs; use its full API resource to avoid
+        # confusing Volcano jobs with native batch/v1 jobs.
+        return "jobs.batch.volcano.sh" if value == "vcjobs" else value
 
     def _manifest(self, value: Any) -> dict[str, Any]:
         if not isinstance(value, dict) or value.get("apiVersion") != "batch.volcano.sh/v1alpha1" or value.get("kind") != "Job":

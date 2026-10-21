@@ -22,18 +22,14 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-MAX_BODY = 128 * 1024
-MAX_OUTPUT = 4 * 1024 * 1024
-COMMAND_TIMEOUT = 120.0
+from capability_services.ssh_execution import (
+    DEFAULT_TIMEOUT, MAX_BODY, GatewayError, execute_ssh, validate_exec,
+)
+
+# Browser responses remain independent of the larger command request budget.
+MAX_BROWSER_RESPONSE = 128 * 1024
 ISSUER = "https://connect.cs.ac.cn"
 LOCAL_CALLBACK = "http://localhost:3000/login-callback"
-
-
-class GatewayError(Exception):
-    def __init__(self, code: str, status: int = 400) -> None:
-        super().__init__(code)
-        self.code = code
-        self.status = status
 
 
 class VmSshGateway:
@@ -228,7 +224,7 @@ class VmSshGateway:
             size = 0
             for chunk in response.iter_bytes():
                 size += len(chunk)
-                if size > MAX_BODY:
+                if size > MAX_BROWSER_RESPONSE:
                     raise GatewayError("browser_response_too_large", 502)
             return response
 
@@ -316,35 +312,9 @@ class VmSshGateway:
                 return {"status": "authenticated"}
             return {"status": "auth_failed" if self._credentials_present() else "auth_required"}
 
-    def exec(self, command: str, timeout_seconds: float) -> dict[str, Any]:
-        if not isinstance(command, str) or not command.strip() or len(command) > 16 * 1024:
-            raise GatewayError("command_invalid")
-        timeout = max(1.0, min(float(timeout_seconds), COMMAND_TIMEOUT))
-        args = [*self._ssh_args(), command]
-        try:
-            process = subprocess.Popen(
-                args,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                stdout, stderr = process.communicate()
-                timed_out = True
-        except OSError as exc:
-            raise GatewayError("ssh_unavailable", 503) from exc
-        return {
-            "stdout": stdout[:MAX_OUTPUT].decode("utf-8", errors="replace"),
-            "stderr": stderr[:MAX_OUTPUT].decode("utf-8", errors="replace"),
-            "exit_code": None if timed_out else int(process.returncode or 0),
-            "timed_out": timed_out,
-            "truncated": len(stdout) > MAX_OUTPUT or len(stderr) > MAX_OUTPUT,
-        }
+    def exec(self, command: Any, timeout_seconds: Any = DEFAULT_TIMEOUT) -> dict[str, Any]:
+        timeout = validate_exec(command, timeout_seconds)
+        return execute_ssh(self._ssh_args(), command, timeout)
 
     def handle(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path == "/v1/auth/start":
@@ -354,7 +324,7 @@ class VmSshGateway:
         if path == "/v1/auth/browser":
             return self.browser(payload)
         if path == "/v1/exec":
-            return self.exec(payload.get("command"), payload.get("timeout_seconds", COMMAND_TIMEOUT))
+            return self.exec(payload.get("command"), payload.get("timeout_seconds", DEFAULT_TIMEOUT))
         raise GatewayError("not_found", 404)
 
 

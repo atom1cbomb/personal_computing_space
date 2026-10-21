@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63
+    },
+    "resource_name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 253
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "mcue": "loom/workspace",
+  "version": "v1",
+  "description": "Loom workspace",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

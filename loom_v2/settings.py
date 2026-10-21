@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     execution_timeout_seconds: float = 86400.0
     coding_agent_poll_interval_seconds: float = 5.0
     coding_agent_protocol_failure_seconds: float = 60.0
-    worker_action_timeout_seconds: float = 90.0
+    worker_action_timeout_seconds: float = 3720.0
     observer_forward_timeout_seconds: float = 86400.0
-    capability_action_timeout_seconds: float = 30.0
+    capability_action_timeout_seconds: float = 3660.0
     capability_health_interval_seconds: float = 5.0
     runtime_plugin_dir: str = "/opt/loom/runtime-plugins"
     package_contract_dir: str = "/opt/loom/package-contracts"
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     runtime_plugin_pids_limit: int = 128
     runtime_plugin_tmpfs_size: str = "64m"
     runtime_plugin_request_timeout_seconds: float = 30.0
-    runtime_plugin_response_max_bytes: int = 4 * 1024 * 1024
+    runtime_plugin_response_max_bytes: int = 256 * 1024 * 1024
     runtime_plugin_max_concurrency: int = 16
     runtime_plugin_docker_timeout_seconds: float = 120.0
     orchestrator_image: str = "python:3.12-slim"

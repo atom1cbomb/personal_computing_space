@@ -1,0 +1,10 @@
+{
+  "mcue": "computing/slave",
+  "version": "v1",
+  "description": "Compute executor",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

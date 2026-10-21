@@ -147,10 +147,10 @@ async def _register_packages(repo: ObserverRepository, *, mutate=None, access_wo
         }, media_type="application/schema+json")).model_dump(mode="json"),
     })
     ssh_package = await repo.register_workspace_package(access_workspace, manifest(
-        "suanli-vm-ssh-http", [export(ssh, await contract(empty, empty), "/v1/exec")], "v2",
+        "suanli-vm-ssh-http", [export(ssh, await contract(empty, empty), "/v1/exec")], "v3",
     ))
     effect = {
-        "effect": "create", "resource_type": "compute.vm",
+        "effect": "create", "mcue_ref": "grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1",
         "identity_path": "result.Instances[].InstanceId",
         "readiness": {
             "action_ref": status.model_dump(mode="json"),
@@ -247,7 +247,7 @@ async def test_public_observer_projection_exposes_resource_effects_to_external_a
         assert effect["identity_path"] == "result.Instances[].InstanceId"
         assert effect["readiness"]["action_ref"]["resource_id"] == status_ref
         assert effect["access_requirements"][0]["package_ref"]["resource_id"] == (
-            "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2"
+            "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"
         )
         assert effect["access_requirements"][0]["requires_authentication"] is True
 
@@ -265,7 +265,7 @@ def test_resource_effect_metadata_rejects_unbounded_or_script_paths() -> None:
 
     with pytest.raises(ValueError, match="resource_identity_path_invalid"):
         ResourceEffect.model_validate(
-            {"effect": "create", "resource_type": "compute.vm", "identity_path": "result[?(@.id)]"}
+            {"effect": "create", "mcue_ref": "grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", "identity_path": "result[?(@.id)]"}
         )
 
 
@@ -316,7 +316,7 @@ def _public_metadata_relationships(client: TestClient, skill_root: Path) -> list
     access = effect["access_requirements"][0]
     return [
         "call " + run_descriptor["resource_id"],
-        "register resource as " + effect["resource_type"],
+        "register resource as " + effect["mcue_ref"],
         "poll " + effect["readiness"]["action_ref"]["resource_id"],
         "activate " + access["package_ref"]["resource_id"],
         "wait for " + access["ready_state"],
@@ -336,9 +336,9 @@ async def test_public_metadata_describes_vm_workflow_relationships() -> None:
         )
     assert plan == [
         "call grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-run",
-        "register resource as compute.vm",
+        "register resource as grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1",
         "poll grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-status",
-        "activate grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2",
+        "activate grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3",
         "wait for authenticated",
         "execute grip://loom.local/workspaces/workspace-default/actions/suanli-vm/exec",
         "cleanup grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-terminate",

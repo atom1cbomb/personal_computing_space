@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "total_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "complete": {
+      "const": true
+    }
+  },
+  "required": [
+    "status",
+    "items",
+    "total_count",
+    "complete"
+  ]
+}

@@ -173,9 +173,9 @@ class LoomClient:
             raise GripError("invalid_output")
         return result
 
-    async def resources(self, *, kind: str | None = None) -> list[dict[str, Any]]:
+    async def resources(self, *, mcue: str | None = None) -> list[dict[str, Any]]:
         result = await self.invoke(self.names.root, self.names.action("list-resources"),
-                                   {"kind": kind} if kind is not None else {})
+                                   {"mcue": mcue} if mcue is not None else {})
         return result["resources"]
 
     async def cancel(self, run_id: str, *, request_id: str | None = None, reason: str = "user_cancel") -> dict[str, Any]:

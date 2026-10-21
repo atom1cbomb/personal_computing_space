@@ -1,0 +1,10 @@
+{
+  "mcue": "execution/run",
+  "version": "v1",
+  "description": "Execution run",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

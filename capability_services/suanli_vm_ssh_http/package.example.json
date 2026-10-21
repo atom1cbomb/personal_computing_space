@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanli-vm-ssh-http",
-  "package_version": "v2",
+  "package_version": "v3",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -27,11 +27,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/exec",
-        "version_or_digest": "89f2bb99cf00d448dd14bd66e8980a6d33bc5b8445115903b1f24cab5998d564",
+        "version_or_digest": "6d362495734aa29dc05123dfe35d734851297b33184c849290bf7a4463f1a024",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-vm-ssh-http/contracts/exec/sha256/64d6b763b64f18198057fc9077c923df01bbe3dd4fb06ae7f84a6cea2d7f73ed",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-vm-ssh-http/contracts/exec/sha256/0138bb9834d6e551557c374fff600ac06e85991382189f42bff16b2ff9d46054",
         "identity_criterion": "content_digest"
       },
       "effect_class": "RemoteExecution",

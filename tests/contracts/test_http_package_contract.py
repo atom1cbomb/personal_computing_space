@@ -95,7 +95,7 @@ def test_http_contract_round_trips_full_manifest() -> None:
     assert restored == package
 
 
-def test_http_contract_accepts_credential_profile_name() -> None:
+def test_historical_http_package_credential_profile_remains_readable() -> None:
     payload = http_package_payload()
     payload["body"]["credential_profile"] = "k8s-prod_1"
 
@@ -182,3 +182,15 @@ def test_content_backed_descriptor_digest_participates_in_package_identity() -> 
     right = CapabilityPackageVersion.model_validate(right_payload)
 
     assert right.package_digest != left.package_digest
+
+
+async def test_new_package_publication_rejects_package_level_credentials():
+    from loom_v2.observer.repository import ObserverRepository
+    repo = ObserverRepository()
+    payload = http_package_payload()
+    payload['body']['credential_profile'] = 'k8s-prod'
+    # Stored immutable manifests can still be decoded, but cannot be published anew.
+    historical = CapabilityPackageVersion.model_validate(payload)
+    assert historical.body['credential_profile'] == 'k8s-prod'
+    with pytest.raises(ValueError, match='credential_profile_requires_activation'):
+        await repo.register_workspace_package('workspace-default', payload)

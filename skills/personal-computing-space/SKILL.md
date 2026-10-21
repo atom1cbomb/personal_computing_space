@@ -1,6 +1,6 @@
 ---
 name: personal-computing-space
-description: Use when a coding agent needs to submit, monitor, continue, resolve, or cancel a distributed task through a deployed Personal Computing Space (Loom) Observer.
+description: Use when a coding agent needs to discover or describe Loom resources, update their public attributes, or submit, monitor, continue, resolve, or cancel a distributed task through a deployed Personal Computing Space (Loom) Observer.
 ---
 
 # Personal Computing Space
@@ -15,6 +15,24 @@ skill archive includes its wheel under `assets/wheels/`; install that wheel
 in the external agent's environment, not in the orchestration sandbox.
 See [references/sdk.md](references/sdk.md) for installation, discovery, and
 source-checkout fallback. Do not assume the package is published on PyPI.
+
+## Resource types and public attributes
+
+For resource descriptions, registration, or attribute updates, read
+[references/mcue.md](references/mcue.md). MCUE defines the resource's public
+extension attributes. The contract uses `resource.mcue` (for example,
+`computing/vm`), a versioned `metadata.mcue_ref`, and `metadata.attributes`.
+It replaces resource-level `kind`; it does not rename GRIP reply/error kinds.
+
+MCUE requires SDK 0.5 and the matching Observer release with its resource
+migration applied. Discover the deployed Observer's offers and schemas before
+invoking actions; updating this skill alone does not upgrade a deployment.
+
+The selected MCUE schema decides whether connection or runtime information
+is a public attribute. Do not impose a universal host/user/port blacklist or
+copy `instance_config` into attributes. Credentials normally remain in the
+authentication/runtime credential channels. Public attributes describe a
+resource; action offers and runtime configuration govern its use.
 
 ## Boundary
 
@@ -44,6 +62,16 @@ For a Kubernetes task, require a ready `service + container:http/1` export whose
 package contract documents the Kubernetes gateway. `available=true` alone does
 not mean that a Kubernetes credential profile is configured.
 
+Credentials are selected per activation. For a named service, pass the
+operator-provided `credential_profile` in the Slave's `activate-package` input,
+alongside `instance_config`; never put the selection in a package manifest or
+copy credential files into requests or content. Different instances may select
+different profiles. Omission/null preserves an existing binding, or mounts no
+credentials for a new instance; changing profiles requires a new instance name.
+See [references/sdk.md](references/sdk.md) for the matching server/SDK requirement
+and orchestration's `ensure_activation` argument. Do not infer a profile from the
+package name or from DESCRIBE, which does not expose credential configuration.
+
 ## Resource-producing capability packages
 
 When a package export contains `action_descriptors`, treat its
@@ -52,6 +80,8 @@ follow-up package from a provider name or from an action's prose.
 
 For a `create` effect, generate source that extracts the declared `identity_path`,
 registers each resource and explicitly defers cleanup before readiness polling.
+In the MCUE contract, use the effect's explicit `mcue_ref` for registration;
+do not infer a type from a package name, URI path, or connection address.
 Use readiness `result_path` and its item-relative `identity_path` to match the
 correct resource before testing conditions. Follow the declared `input_mapping`.
 Before emitting a
@@ -80,9 +110,10 @@ authentication → `exec`; retain the InstanceId for
 
 1. Check `GET /healthz` and `GET /api/v1/runtime`. Stop and report
    `driver_unavailable` rather than bypassing the Observer.
-2. Discover compute with `await client.resources(kind="slave")`; select available
-   leases using each resource's `metadata.available`. Inspect executor and runtime
-   descriptors, then `describe` the selected URI to obtain its callable offers.
+2. Discover compute with `await client.resources(mcue="computing/slave")` and inspect descriptions
+   for Slave `run-package` / `activate-package` offers. Select available leases
+   using `metadata.available` and inspect executor/runtime descriptors.
+   Use exact returned action URIs and the deployed action schemas.
 3. Publish source/packages through the authoring data plane. Discover registered
    resources and activations through GRIP. A resource description lists the exact
    ready activation URIs bound to it; choose explicitly if more than one exists.
@@ -118,3 +149,12 @@ kubeconfig in a task message.
 Invoke the discovered jobs-submit action only with a VolcanoJob manifest
 (`apiVersion: batch.volcano.sh/v1alpha1`, `kind: Job`). Use its status, logs, and
 delete exports. Runtime HTTP paths are private implementation bindings.
+
+## Volcano visibility
+
+For queues, PodGroups, cross-namespace workload visibility and GPU allocation,
+discover resources with `mcue="computing/volcano"`. Their MCUE public attributes
+include `dashboard_url` and `kubernetes_ref`, which identifies the associated
+Kubernetes resource. Read [references/volcano.md](references/volcano.md) before
+querying or connecting a Dashboard. Use its ready activation and exact discovered
+action URI; Dashboard addresses differ across clusters.

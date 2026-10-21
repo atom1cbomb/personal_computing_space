@@ -159,8 +159,48 @@ def suanli_definitions() -> dict[str, dict[str, Any]]:
     return result
 
 
+def volcano_definitions() -> dict[str, dict[str, Any]]:
+    namespace = {"type": "string", "minLength": 1, "maxLength": 63}
+    text = {"type": "string", "maxLength": 256}
+    count = {"type": "integer", "minimum": 0}
+    filters = {"namespace": namespace, "status": text, "search": text}
+    inputs = {
+        "namespaces-list": obj(),
+        "queues-list": obj(state=text, search=text),
+        "podgroups-list": obj(**filters),
+        "pods-list": obj(**filters),
+        "jobs-list": obj(**filters, queue=text),
+        "gpu-usage": obj(namespace=namespace, resource_name={
+            "type": "string", "minLength": 3, "maxLength": 253,
+        }),
+    }
+    metrics = {key: count for key in ("allocated", "running_allocated", "unscheduled_requested")}
+    gpu_pod = obj(["namespace", "name", "node_name", "phase", "gpu_requests", "scheduled"],
+                  namespace=string(), name=string(), node_name={"type": ["string", "null"]},
+                  phase=string(), gpu_requests=count, scheduled={"type": "boolean"})
+    namespace_totals = obj(["namespace", "gpu_pods", *metrics], namespace=string(), gpu_pods=count, **metrics)
+    gpu_output = obj(
+        ["status", "complete", "metric", "collected_at", "namespace", "resource_name", "pod_count",
+         "terminal_pods", *metrics, "by_namespace", "gpu_pods"],
+        status=string(const="ok"), complete={"const": True},
+        metric=string(const="scheduled_pod_requests"), collected_at=string(), namespace=string(),
+        resource_name=string(), pod_count=count, terminal_pods=count, **metrics,
+        by_namespace=array(namespace_totals), gpu_pods=array(gpu_pod),
+    )
+    result = {}
+    for action, input_schema in inputs.items():
+        result[action] = {
+            "input": input_schema,
+            "output": gpu_output if action == "gpu-usage" else obj(
+                ["status", "items", "total_count", "complete"], status=string(const="ok"),
+                items=array(obj()), total_count=count, complete={"const": True}),
+        }
+    return result
+
+
 DEFINITIONS = {
     "kubernetes_http": k8s_definitions,
+    "volcano_http": volcano_definitions,
     "outline_http": outline_definitions,
     "suanlicloud_http": suanli_definitions,
     "vm_ssh_http": None,

@@ -7,7 +7,7 @@ Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `o
 | 能力包 | 不可变的程序与契约，可以作为 action 的输入传递 |
 | Slave | 承载执行的资源，提供 run-package 和 activate-package |
 | 激活实例 | 一个包在某 Slave 上运行的命名实例，提供业务动作、stop，必要时提供 auth-start |
-| VM 等登记资源 | 通过显式绑定的激活实例提供业务动作 |
+| VM 等登记资源 | 提供 update-attributes，并通过显式绑定的激活实例提供业务动作 |
 | Run | 一次异步执行的任务资源，提供 read 和 cancel |
 
 能力包和激活实例是不同的资源。同一个包的两个命名实例有不同 URI；实例停止后 URI 仍可描述。激活 revision 表示当前生命周期版本。
@@ -18,9 +18,9 @@ Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `o
 
 ```text
 grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-list
-grip://loom.local/workspaces/workspace-default/packages/suanlicloud-http/v2
+grip://loom.local/workspaces/workspace-default/packages/suanlicloud-http/v4
 grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/instances-list-output/sha256/<摘要>
-grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v2/slave-a/default
+grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v4/slave-a/default
 ```
 
 同一个 URI 在包内引用、SDK 和资源目录中保持一致，不再将资源地址编码后嵌入另一层地址。内容摘要仍用于校验与存储去重；完整名称绑定会持久化，不能只换一个名称就读取同一摘要。包版本不可变，包摘要保留在契约中；激活实例的变更通过 revision 管理。
@@ -72,9 +72,9 @@ async def main():
         token=os.environ["LOOM_GRIP_TOKEN"],
         grip_authority="loom.example.com",
     ) as client:
-        slaves = await client.resources(kind="slave")
+        slaves = await client.resources(mcue="computing/slave")
         slave = next(r for r in slaves if r["uri"].endswith("/slave-a"))
-        packages = await client.resources(kind="capability-package")
+        packages = await client.resources(mcue="capability/package")
         package = next(r for r in packages if r["metadata"]["package_id"] == "double")
         export = package["metadata"]["actions"][0]
 
@@ -111,6 +111,7 @@ activation = await client.invoke(slave_uri, client.names.action("activate-packag
     "package": package_uri,
     "instance_name": "vm-access",
     "instance_config": {"host": "vm.example.com", "port": 22, "user": "worker"},
+    "credential_profile": "vm-ssh-default",
     "target": vm_resource_uri,
     "idempotency_key": "activate-vm-access-1",
 })
@@ -125,6 +126,13 @@ IoContract、权限和副作用，以及 `available` / `unavailable_reason`。�
 `offers` 列出当前可调用的动作与 binding。实例未就绪或停止时，仍能查看全部业务动作说明。
 
 instance_config 必须符合包的配置 Schema；target 可省略，提供时必须是已登记在当前 workspace 的领域资源。配置仅进入受控激活记录，不放进公开目录。`pending_auth` 表示还需认证，不能执行业务动作；如果描述提供 auth-start，可在该实例上调用它，输入 `{"expected_revision": revision}`，按返回的认证指引完成操作。浏览器 bridge 复用现有认证辅助通道。
+
+`credential_profile` 与 `instance_config` 并列，选择 Slave operator 预先配置的凭据目录名称。
+同包不同实例可以选择不同 profile；包 manifest 不再指定凭据选择。不能传凭据内容或任意路径。
+新实例省略/null 表示不挂载凭据，已有实例省略/null 保留原绑定；同一实例名不能改绑 profile。
+停止再启动、重试和 Slave 恢复均使用已保存的选择。该字段不进入公开 DESCRIBE 或 MCUE 属性。
+此接口需要激活凭据版本的 Observer、Driver、Slave 和 SDK 0.6.0；见
+[升级说明](activation-credentials-upgrade.md)。
 
 ready 后，从实例的 offers 选定业务动作并调用：
 
@@ -155,13 +163,18 @@ description = await client.describe(package_uri)
 包列表、详情和 GRIP read 也返回这个字段；SDK 与脚本不再自行拼接发布包的名称。
 `ServicePackage.publish` 直接返回该 URI，可作为 `activate-package` 的 `package` 输入。
 
-对 workspace 调用 `register-resource`，输入领域身份和已发布包 URI：
+先从 `grip/mcue-type` 目录取得类型定义，再对 workspace 调用 `register-resource`。包引用可选：
 
 ```python
+types = await client.resources(mcue="grip/mcue-type")
+vm_type = next(r for r in types if r["metadata"]["mcue"] == "computing/vm"
+               and r["metadata"]["version"] == "v1")
 registered = await client.invoke(client.names.root, client.names.action("register-resource"), {
-    "resource_id": client.names.name("resources", "compute.vm", "vm-001"),
+    "resource_id": client.names.name("resources", "vm", "development"),
+    "mcue_ref": vm_type["uri"],
     "package": ssh_package_uri,
     "state": "running",
+    "attributes": {"display_name": "开发测试机", "labels": {"project": "loom"}},
 })
 vm_resource_uri = registered["resource"]
 ```
@@ -170,7 +183,61 @@ vm_resource_uri = registered["resource"]
 改变包或管理关系会拒绝。登记不创建 VM、不激活包；随后以该 URI 作为 activate-package 的 target。
 完整编排内的 `ctx.register_resource` 等原语属于持久执行内部协议。
 
-五个服务包都有完整可上传产物，统一使用 `ServicePackage.publish` 或
+## MCUE 与动态描述属性
+
+MCUE（Multipurpose Computing Utility Extension）使用 `category/subtype` 描述资源类型，取代资源级 `kind`。
+所有资源的描述都包含 `resource.mcue` 和 `metadata.mcue_ref`；后者指向不可变类型定义。
+目录过滤使用 `resources(mcue="computing/vm")`，GRIP 的 list-resources 输入使用 `{"mcue":"computing/vm"}`。
+消息外层 `kind: reply/error` 仍表示消息种类。
+
+对 MCUE 定义调用 read 返回 `mcue`、`version`、`description` 和 `attributes_schema`。
+computing/vm/v1 定义 `display_name`、`description`、`labels`、`cpu_cores`、`memory_bytes`、`os`、`disks`；
+这些字段全部可选。公开值统一位于 `metadata.attributes`。
+`package`、`managed_by`、`state` 和 `activations` 是系统 metadata。
+
+```python
+description = await client.describe(vm_resource_uri)
+metadata = description["resource"]["metadata"]
+definition = await client.invoke(metadata["mcue_ref"], client.names.action("read"), {})
+updated = await client.invoke(vm_resource_uri, client.names.action("update-attributes"), {
+    "expected_attributes_revision": metadata["attributes_revision"],
+    "patch": {"description": "开发与数值计算验证", "labels": {"environment": "test"}},
+})
+```
+
+patch 对对象递归合并、对数组整体替换，null 删除对应字段。Observer 校验合并后的完整属性；
+非法值整体拒绝，修订过期返回 `attributes_revision_conflict`，应重新读取并决定修改。
+无变化的有效 patch 不递增修订号。更新直接返回资源 URI 和 attributes_revision，无需 VM 在线，也不创建 Run。
+资源 URI、访问绑定、执行配置和 activation revision 保持稳定；完整描述的 revision 随可见内容变化。
+
+公开哪些连接或运行时字段由 MCUE Schema 决定。平台不统一禁止 host/user/port，
+也不会自动公开 instance_config。凭据通常保留在认证和运行时凭据渠道。
+修改描述中的同名字段不改变实际 SSH 连接配置。
+
+自定义类型通过 workspace 的 `publish-mcue-type` 发布：
+
+```python
+published_type = await client.invoke(client.names.root, client.names.action("publish-mcue-type"), {
+    "mcue": "network/endpoint",
+    "version": "v1",
+    "description": "公开服务端点",
+    "attributes_schema": {
+        "type": "object",
+        "properties": {"host": {"type": "string"}, "port": {"type": "integer", "minimum": 1}},
+        "additionalProperties": False,
+    },
+})
+```
+
+MCUE 支持自包含 JSON Schema 2020-12 和本地 `$defs` 引用，不解析远程 Schema；它与动作 io.v1 的 Schema 子集独立。
+同一类型版本不能覆盖。发布新版本后，已有资源仍绑定旧版本；
+在 update-attributes 中同时传入同类型的新 mcue_ref 和属性 patch，可原子迁移定义版本。
+平台类型包括 computing/slave、capability/package、capability/activation、execution/run、loom/workspace、
+grip/action、grip/schema、data/content 和 grip/mcue-type；平台系统字段由各自权威记录维护。
+
+已有部署使用 SDK 0.5 和对应服务端时，需要先执行[MCUE 迁移](mcue-upgrade.md)。
+
+六个服务包都有完整可上传产物，统一使用 `ServicePackage.publish` 或
 `scripts/publish_service_package.py` 发布；参见 [服务包指南](../capability_services/README.md)
 和 [可运行示例](../examples/grip/README.md)。
 

@@ -1,0 +1,71 @@
+{
+  "mcue": "computing/vm",
+  "version": "v1",
+  "description": "Virtual machine public description",
+  "attributes_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "display_name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 4096
+      },
+      "labels": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "cpu_cores": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "memory_bytes": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "os": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "disks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "size_bytes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

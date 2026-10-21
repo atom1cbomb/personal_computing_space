@@ -38,8 +38,8 @@ async def wait_result(app, client, run):
 
 
 async def identities(client):
-    slave = next(r for r in await client.resources(kind="slave") if r["uri"].endswith("slave-a"))
-    package, = await client.resources(kind="capability-package")
+    slave = next(r for r in await client.resources(mcue="computing/slave") if r["uri"].endswith("slave-a"))
+    package, = await client.resources(mcue="capability/package")
     return slave["uri"], package["uri"], package["metadata"]["actions"][0]["uri"]
 
 
@@ -47,7 +47,7 @@ async def test_describe_run_package_and_read_real_result(setup):
     app, repo, client, package = setup
     slave, package_uri, action = await identities(client)
     description = await client.describe(slave)
-    assert description["resource"]["kind"] == "slave"
+    assert description["resource"]["mcue"] == "computing/slave"
     assert description["offers"][0]["bindings"][0]["endpoint"] == "http://observer/.well-known/grip"
     data = {"package": package_uri, "action": action, "arguments": {"value": 21}, "idempotency_key": "double-1"}
     first = await client.invoke(slave, client.names.action("run-package"), data)
@@ -57,7 +57,7 @@ async def test_describe_run_package_and_read_real_result(setup):
     result = await wait_result(app, client, first["run"])
     assert result["state"] == "completed", result
     assert result["outcome"]["value"] == {"value": 42}
-    activations = await client.resources(kind="activation")
+    activations = await client.resources(mcue="capability/activation")
     assert len(activations) == 1
     assert activations[0]["metadata"]["package"] == package_uri
     assert "instance_config" not in json.dumps(activations)
@@ -133,22 +133,33 @@ async def test_resource_binding_is_explicit_and_ambiguous_instances_are_not_chos
     resource_id = "grip://loom.local/workspaces/workspace-default/resources/vm/test"
     await repo.register_resource("workspace-default", {
         "resource_ref": {"resource_id": resource_id},
-        "package_ref": {"resource_id": raw_package["resource"], "version_or_digest": raw_package["package_digest"]},
+        "mcue_ref": client.names.mcue("computing/vm"),
         "state": "running",
     })
     target = resource_id
-    assert (await client.describe(target))["offers"] == []
+    assert (await client.describe(target))["resource"]["metadata"]["package"] is None
+    assert [o["action"]["uri"] for o in (await client.describe(target))["offers"]] == [client.names.action("update-attributes")]
     activation = await client.invoke(slave, client.names.action("activate-package"), {
         "package": package, "instance_name": "vm-one", "target": target, "idempotency_key": "vm-one",
+        "instance_config": {"host": "private.example", "user": "internal", "port": 22},
     })
-    assert len((await client.describe(target))["offers"]) == 1
+    assert len((await client.describe(target))["offers"]) == 2
+    before = await client.describe(target)
+    await client.invoke(target, client.names.action("update-attributes"), {
+        "expected_attributes_revision": 1, "patch": {"description": "Public description"},
+    })
+    after = await client.describe(target)
+    assert after["revision"] != before["revision"]
+    assert after["resource"]["metadata"]["activations"] == before["resource"]["metadata"]["activations"]
+    assert "private.example" not in json.dumps(after)
+    assert (await client.describe(activation["resource"]))["resource"]["metadata"]["revision"] == activation["revision"]
     run = await client.invoke(target, action, {"arguments": {"value": 3}, "expected_revision": activation["revision"], "idempotency_key": "vm-call"})
     assert (await wait_result(app, client, run["run"]))["outcome"]["value"] == {"value": 6}
     await client.invoke(slave, client.names.action("activate-package"), {
         "package": package, "instance_name": "vm-two", "target": target, "idempotency_key": "vm-two",
     })
     description = await client.describe(target)
-    assert description["offers"] == []
+    assert [o["action"]["uri"] for o in description["offers"]] == [client.names.action("update-attributes")]
     assert len(description["resource"]["metadata"]["activations"]) == 2
 
 
@@ -185,19 +196,24 @@ async def test_directory_and_queued_action_survive_repository_reload(setup, tmp_
     persisted_ref = await repo.put_content(definition, media_type="application/vnd.loom.action-descriptor+json")
     manifest["action_exports"] = [{**raw["action_exports"][0], "action_descriptor_ref": persisted_ref.model_dump(mode="json")}]
     package = await repo.register_workspace_package("workspace-default", manifest)
-    await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="persist", instance_name="saved")
+    await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="persist", instance_name="saved", credential_profile="saved-account")
     await repo.record_capability_health(CapabilityHealthReport(report_id="saved-ready", package_version_ref=package.version_ref, package_digest=package.package_digest, target_slave="slave-a", instance_name="saved", activation_state="ready", activation_revision=1))
-    await repo.register_resource("workspace-default", {"resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/persisted"}, "package_ref": {"resource_id": package.version_ref, "version_or_digest": package.package_digest}})
+    await repo.register_resource("workspace-default", {"resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/persisted"}, "mcue_ref": repo.names.mcue("computing/vm"), "package_ref": {"resource_id": package.version_ref, "version_or_digest": package.package_digest}})
     app = create_app(repo, settings=settings)
     async with LoomClient("http://observer", token="persistent", allow_insecure_grip=True, transport=httpx.ASGITransport(app=app)) as client:
         slave, package_uri, action = await identities(client)
         run = await client.invoke(slave, client.names.action("run-package"), {"package": package_uri, "action": action, "arguments": {"value": 1}, "idempotency_key": "persist-call"})
     restored = ObserverRepository(engine, content_store=original.content_store, settings=settings)
     await restored.init_db()
+    saved, = await restored.list_package_activations(await restored.get_capability_package(package.version_ref))
+    assert saved.credential_profile == "saved-account"
+    assert saved.activation_revision == 1
+    retry = await restored.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="persist", instance_name="saved")
+    assert retry.credential_profile == "saved-account" and retry.activation_revision == 1
     restored_app = create_app(restored, settings=settings)
     async with LoomClient("http://observer", token="persistent", allow_insecure_grip=True, transport=httpx.ASGITransport(app=restored_app)) as client:
-        assert len(await client.resources(kind="activation")) == 1
-        assert len(await client.resources(kind="resource")) == 1
+        assert len(await client.resources(mcue="capability/activation")) == 1
+        assert len(await client.resources(mcue="computing/vm")) == 1
         result = await client.invoke(run["run"], client.names.action("read"), {})
         assert result["state"] == "committed"
         cancelled = await client.invoke(run["run"], client.names.action("cancel"), {})
@@ -234,7 +250,7 @@ async def test_named_activation_binding_survives_http_worker_envelope(setup, mon
 async def test_foreign_workspace_and_unconfigured_auth_are_not_visible(setup):
     app, repo, client, raw = setup
     await repo.register_workspace_package("foreign", {**raw, "package_id": "foreign-package"})
-    assert len(await client.resources(kind="capability-package")) == 1
+    assert len(await client.resources(mcue="capability/package")) == 1
     base = {"version": "grip.v1", "request_id": "foreign", "method": "DESCRIBE", "auth": {"scheme": "bearer", "credential": "test-grip-token"}, "accepted_protocols": ["loom-http-json.v1"], "target": Names(workspace="foreign").root}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://observer") as raw_client:
         response = await raw_client.post("/.well-known/grip", json=base)

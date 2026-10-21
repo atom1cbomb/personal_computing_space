@@ -23,6 +23,13 @@ def test_valid_value_has_no_errors() -> None:
     assert validate(SCORE_SCHEMA, value) == []
 
 
+def test_unicode_string_length_uses_characters_and_reports_bounds():
+    schema = {"type": "string", "minLength": 1, "maxLength": 2}
+    assert validate(schema, "汉字") == []
+    assert [error.keyword for error in validate(schema, "")] == ["minLength"]
+    assert [error.keyword for error in validate(schema, "三个字")] == ["maxLength"]
+
+
 def test_extra_payload_wrapper_reports_required_scores() -> None:
     errors = validate(SCORE_SCHEMA, {"payload": {"scores": [80]}})
 

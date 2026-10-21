@@ -84,6 +84,16 @@ class WorkspaceResourceRow(Base):
     workspace_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     resource_id: Mapped[str] = mapped_column(String(512), primary_key=True)
     resource: Mapped[dict] = mapped_column(JSON, nullable=False)
+    attributes_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class McueDefinitionRow(Base):
+    __tablename__ = "mcue_definitions"
+
+    workspace_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    mcue: Mapped[str] = mapped_column(String(256), primary_key=True)
+    version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 class IdempotencyRow(Base):

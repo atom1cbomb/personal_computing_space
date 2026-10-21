@@ -14,10 +14,12 @@ from .polling import poll_submission
 from .program import OrchestrationContext, ProgramSource
 from .submission import SubmissionBuilder
 from .metadata import ResourceEffect, validate_action_descriptor
+from .mcue import McueDefinition
 
 __all__ = [
     "ClosureContract",
     "LoomClient",
+    "McueDefinition",
     "ServicePackage",
     "GripError",
     "Names",

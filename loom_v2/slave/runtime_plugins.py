@@ -10,6 +10,7 @@ provider can be written in any language without importing Slave internals.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import tomllib
@@ -225,11 +226,13 @@ class ProcessRuntimePlugin:
         socket_dir: Path,
         startup_timeout: float = 10.0,
         call_timeout: float = 90.0,
+        response_max_bytes: int = 256 * 1024 * 1024,
     ) -> None:
         self.manifest = manifest
         self.socket_dir = socket_dir
         self.startup_timeout = max(0.1, float(startup_timeout))
         self.call_timeout = max(0.1, float(call_timeout))
+        self.response_max_bytes = response_max_bytes
         self.socket_path = self.socket_dir / f"{manifest.plugin_id}-{uuid4().hex[:12]}.sock"
         self.process: asyncio.subprocess.Process | None = None
         self._client: httpx.AsyncClient | None = None
@@ -360,19 +363,31 @@ class ProcessRuntimePlugin:
         request_id = uuid4().hex
         request_payload = dict(payload or {})
         request_payload["request_id"] = request_id
+        timeout = self.call_timeout
+        response_limit = 4 * 1024 * 1024
+        if path == "/v1/invoke":
+            response_limit = self.response_max_bytes
+            deadline = request_payload.get("deadline_seconds")
+            if deadline is not None:
+                timeout = max(timeout, float(deadline) + 30.0)
         try:
-            async with asyncio.timeout(self.call_timeout):
-                response = await self._client.request(method, path, json=request_payload)
+            async with asyncio.timeout(timeout):
+                async with self._client.stream(method, path, json=request_payload, timeout=timeout) as response:
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(raw) + len(chunk) > response_limit:
+                            raise RuntimePluginError("runtime_plugin_protocol_error")
+                        raw.extend(chunk)
+        except RuntimePluginError:
+            await self.close()
+            raise
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise RuntimePluginError("runtime_plugin_timeout") from exc
         except httpx.HTTPError as exc:
             await self.close()
             raise RuntimePluginError("runtime_plugin_unavailable") from exc
-        if len(response.content) > 4 * 1024 * 1024:
-            await self.close()
-            raise RuntimePluginError("runtime_plugin_protocol_error")
         try:
-            body = response.json()
+            body = json.loads(raw)
         except ValueError as exc:
             await self.close()
             raise RuntimePluginError("runtime_plugin_protocol_error") from exc
@@ -558,6 +573,7 @@ class RuntimePluginHost:
     socket_dir: Path | str = "/run/loom/runtime-plugins"
     startup_timeout: float = 10.0
     call_timeout: float = 90.0
+    response_max_bytes: int = 256 * 1024 * 1024
     plugins: dict[tuple[str, str, str], RuntimePlugin] = field(default_factory=dict)
     _process_plugins: list[ProcessRuntimePlugin] = field(default_factory=list, init=False, repr=False)
 
@@ -655,6 +671,7 @@ class RuntimePluginHost:
                     socket_dir=Path(self.socket_dir),
                     startup_timeout=self.startup_timeout,
                     call_timeout=self.call_timeout,
+                    response_max_bytes=self.response_max_bytes,
                 )
                 await plugin.start()
                 try:

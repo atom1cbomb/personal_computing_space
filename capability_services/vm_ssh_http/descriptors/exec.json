@@ -2,7 +2,7 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/exec",
   "name": "exec",
-  "description": "Exec through the vm-ssh-http activation.",
+  "description": "Execute a POSIX shell script on the bound VM (up to 1048576 characters, timeout 1–3600 seconds, default 300). Retain up to 16 MiB per output stream; success requires exit_code zero and timed_out false, checked by the declared validator.",
   "capability_kinds": [
     "compute.vm.remote_shell"
   ],

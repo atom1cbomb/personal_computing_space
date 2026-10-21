@@ -74,16 +74,19 @@ async def materialize_json(repository: Any, run_id: str, *, execution_id: str, s
 
 
 async def register_program_resource(repository: Any, run_id: str, *, execution_id: str, step_id: str,
-                                    resource_type: str, identity: str, package_ref: ResourceRef,
-                                    managed_by_ref: ResourceRef | None = None) -> ResourceRef:
+                                    mcue_ref: str, identity: str, package_ref: ResourceRef | None = None,
+                                    managed_by_ref: ResourceRef | None = None,
+                                    attributes: dict[str, Any] | None = None) -> ResourceRef:
     record = await repository.get_run(run_id)
     if record.execution_id != execution_id or record.state != "running" or not step_id or not identity:
         raise ValueError("execution_not_running")
-    resource_ref = ResourceRef(resource_id=identity if "://" in identity else repository.names.name("resources", resource_type, identity))
+    workspace = record.closure_contract.workspace_id
+    definition = await repository.get_mcue_definition(workspace, mcue_ref)
+    resource_ref = ResourceRef(resource_id=identity if "://" in identity else repository.names.name("resources", *definition.mcue.split("/"), identity))
     payload = {
-        "resource_type": resource_type, "identity": identity,
+        "mcue_ref": mcue_ref, "identity": identity, "attributes": attributes or {},
         "resource_ref": resource_ref.model_dump(mode="json"),
-        "package_ref": package_ref.model_dump(mode="json"),
+        "package_ref": package_ref.model_dump(mode="json") if package_ref else None,
         "managed_by_ref": managed_by_ref.model_dump(mode="json") if managed_by_ref else None,
     }
     previous = next((event for event in record.events if event.get("phase") == "program_resource_registered"
@@ -92,14 +95,15 @@ async def register_program_resource(repository: Any, run_id: str, *, execution_i
         if previous["arguments"] != payload:
             raise ValueError("program_step_conflict")
         return ResourceRef.model_validate(previous["arguments"]["resource_ref"])
-    workspace = record.closure_contract.workspace_id
-    package = await repository.get_capability_package(package_ref, run_id=run_id)
-    orchestrator = await repository.get_capability_package(record.committed.snapshot.program_systems.package_ref, run_id=run_id)
-    allowed = [ResourceRef.model_validate(value) for value in orchestrator.body["allowed_node_package_refs"]]
-    if not any(ref.digest == package.package_digest and ref.resource_id == package_ref.resource_id for ref in allowed):
-        raise ValueError("node_package_not_allowed")
+    if package_ref is not None:
+        package = await repository.get_capability_package(package_ref, run_id=run_id)
+        orchestrator = await repository.get_capability_package(record.committed.snapshot.program_systems.package_ref, run_id=run_id)
+        allowed = [ResourceRef.model_validate(value) for value in orchestrator.body["allowed_node_package_refs"]]
+        if not any(ref.digest == package.package_digest and ref.resource_id == package_ref.resource_id for ref in allowed):
+            raise ValueError("node_package_not_allowed")
     await repository.register_resource(workspace, ManagedResource(
         resource_ref=resource_ref, package_ref=package_ref, managed_by_ref=managed_by_ref,
+        mcue_ref=mcue_ref, attributes=attributes or {},
     ))
     record.events.append({
         "phase": "program_resource_registered", "execution_id": execution_id,
@@ -111,7 +115,8 @@ async def register_program_resource(repository: Any, run_id: str, *, execution_i
 
 async def ensure_program_activation(repository: Any, run_id: str, *, execution_id: str, step_id: str,
                                     package_ref: ResourceRef, target_slave: str, target_resource_ref: ResourceRef,
-                                    instance_name: str, instance_config: dict[str, Any], requires_authentication: bool) -> ResourceRef:
+                                    instance_name: str, instance_config: dict[str, Any], requires_authentication: bool,
+                                    credential_profile: str | None = None) -> ResourceRef:
     record = await repository.get_run(run_id)
     if record.execution_id != execution_id or record.state != "running" or not step_id:
         raise ValueError("execution_not_running")
@@ -119,6 +124,7 @@ async def ensure_program_activation(repository: Any, run_id: str, *, execution_i
         "package_ref": package_ref.model_dump(mode="json"),
         "target_resource_ref": target_resource_ref.model_dump(mode="json"),
         "instance_name": instance_name, "instance_config": instance_config,
+        "credential_profile": credential_profile,
         "requires_authentication": requires_authentication,
     }
     previous = next((event for event in record.events if event.get("phase") == "program_activation_ensured"
@@ -133,6 +139,7 @@ async def ensure_program_activation(repository: Any, run_id: str, *, execution_i
     activation = await repository.set_capability_desired(
         package_ref, target_slave, desired_state="running", idempotency_key=f"{execution_id}:{step_id}",
         run_id=run_id, instance_name=instance_name, target_resource_ref=target_resource_ref, instance_config=instance_config,
+        credential_profile=credential_profile,
     )
     activated_package = await repository.get_capability_package(package_ref, run_id=run_id)
     ref = ResourceRef(

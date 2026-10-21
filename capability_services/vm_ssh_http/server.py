@@ -9,23 +9,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
-import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-MAX_BODY = 128 * 1024
-MAX_OUTPUT = 4 * 1024 * 1024
-MAX_COMMAND = 16 * 1024
-MAX_TIMEOUT = 120.0
-
-
-class GatewayError(Exception):
-    def __init__(self, code: str, status: int = 400) -> None:
-        super().__init__(code)
-        self.code = code
-        self.status = status
+from capability_services.ssh_execution import (
+    DEFAULT_TIMEOUT, MAX_BODY, GatewayError, execute_ssh, validate_exec,
+)
 
 
 class VmSshGateway:
@@ -86,34 +76,9 @@ class VmSshGateway:
             raise GatewayError("authentication_not_supported")
         return self.auth_status()
 
-    def exec(self, command: Any, timeout_seconds: Any = MAX_TIMEOUT) -> dict[str, Any]:
-        if not isinstance(command, str) or not command.strip() or len(command) > MAX_COMMAND:
-            raise GatewayError("command_invalid")
-        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
-            raise GatewayError("timeout_invalid")
-        timeout = max(1.0, min(float(timeout_seconds), MAX_TIMEOUT))
-        try:
-            process = subprocess.Popen(
-                [*self._ssh_args(), command],
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                stdout, stderr = process.communicate()
-                timed_out = True
-        except OSError as exc:
-            raise GatewayError("ssh_unavailable", 503) from exc
-        return {
-            "stdout": stdout[:MAX_OUTPUT].decode("utf-8", errors="replace"),
-            "stderr": stderr[:MAX_OUTPUT].decode("utf-8", errors="replace"),
-            "exit_code": None if timed_out else int(process.returncode or 0),
-            "timed_out": timed_out,
-            "truncated": len(stdout) > MAX_OUTPUT or len(stderr) > MAX_OUTPUT,
-        }
+    def exec(self, command: Any, timeout_seconds: Any = DEFAULT_TIMEOUT) -> dict[str, Any]:
+        timeout = validate_exec(command, timeout_seconds)
+        return execute_ssh(self._ssh_args(), command, timeout)
 
     def handle(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path == "/v1/auth/status":
@@ -121,7 +86,7 @@ class VmSshGateway:
         if path == "/v1/auth/start":
             return self.auth_start(payload)
         if path == "/v1/exec":
-            return self.exec(payload.get("command"), payload.get("timeout_seconds", MAX_TIMEOUT))
+            return self.exec(payload.get("command"), payload.get("timeout_seconds", DEFAULT_TIMEOUT))
         raise GatewayError("not_found", 404)
 
 

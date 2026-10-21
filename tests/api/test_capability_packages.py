@@ -56,7 +56,7 @@ async def test_user_upload_registers_workspace_package_without_run() -> None:
         promoted = client.post(publication_url, json={"approved_digest": package["package_digest"], "idempotency_key": "publish-only"})
         assert promoted.status_code == 200, promoted.text
         assert promoted.json()["resource"] == package["resource"]
-        assert resources(client, "activation") == []
+        assert resources(client, "capability/activation") == []
 
         listed = client.get("/api/v1/capability-packages").json()
         assert [item["package_id"] for item in listed].count("uploaded-package") == 1
@@ -87,13 +87,14 @@ async def test_uploaded_workspace_package_can_be_activated_without_run(resource_
         if resource_bound:
             resource = invoke(client, n.root, n.action("register-resource"), {
                 "resource_id": "grip://loom.local/workspaces/workspace-default/resources/test/vm", "package": package, "state": "running",
+                "mcue_ref": n.mcue("computing/vm"),
             })
             target_fields = {"target": resource["resource"], "instance_name": "vm-test"}
         response = invoke(client, n.name("slaves", "slave-a"), n.action("activate-package"), {
             "package": package, "idempotency_key": "activate-uploaded", **target_fields,
         })
         assert response["state"] == "ready"
-        assert any(r["metadata"]["package"] == package for r in resources(client, "activation"))
+        assert any(r["metadata"]["package"] == package for r in resources(client, "capability/activation"))
 
 
 @pytest.mark.asyncio
@@ -370,7 +371,7 @@ async def test_promotion_derives_reusable_version_without_mutating_candidate():
         assert response.status_code == 200, response.text
         promoted = response.json()
         assert promoted["resource"] != candidate.version_ref
-        assert promoted["resource"] in [r["uri"] for r in resources(client, "capability-package")]
+        assert promoted["resource"] in [r["uri"] for r in resources(client, "capability/package")]
         assert candidate.publication_state == "candidate"
         abandoned = client.post(f"/api/v1/capability-packages/{candidate.version_ref}/abandon")
         assert abandoned.status_code == 200, abandoned.text

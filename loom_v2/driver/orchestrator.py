@@ -111,15 +111,15 @@ class OrchestrationContext:
             raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})
         return message["ref"]
 
-    async def register_resource(self, *, step_id, resource_type, identity, package_ref, managed_by_ref=None):
-        _send({"type": "register_resource", "step_id": step_id, "resource_type": resource_type, "identity": identity, "package_ref": package_ref, "managed_by_ref": managed_by_ref})
+    async def register_resource(self, *, step_id, mcue_ref, identity, package_ref=None, managed_by_ref=None, attributes=None):
+        _send({"type": "register_resource", "step_id": step_id, "mcue_ref": mcue_ref, "identity": identity, "package_ref": package_ref, "managed_by_ref": managed_by_ref, "attributes": attributes})
         message = _receive()
         if message.get("type") != "ref" or not isinstance(message.get("ref"), dict):
             raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})
         return message["ref"]
 
-    async def ensure_activation(self, *, step_id, package_ref, target_resource_ref, instance_name="default", instance_config=None, requires_authentication=False):
-        _send({"type": "ensure_activation", "step_id": step_id, "package_ref": package_ref, "target_resource_ref": target_resource_ref, "instance_name": instance_name, "instance_config": instance_config or {}, "requires_authentication": requires_authentication})
+    async def ensure_activation(self, *, step_id, package_ref, target_resource_ref, instance_name="default", instance_config=None, requires_authentication=False, credential_profile=None):
+        _send({"type": "ensure_activation", "step_id": step_id, "package_ref": package_ref, "target_resource_ref": target_resource_ref, "instance_name": instance_name, "instance_config": instance_config or {}, "credential_profile": credential_profile, "requires_authentication": requires_authentication})
         message = _receive()
         if message.get("type") != "ref" or not isinstance(message.get("ref"), dict):
             raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})

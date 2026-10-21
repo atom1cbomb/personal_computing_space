@@ -25,4 +25,4 @@ async def test_bandgap_harness_prepares_and_submits_current_public_contract():
         state = await client.invoke(client.names.name("runs", queued["run_id"]), client.names.action("read"), {})
         assert queued["execution_request_state"] == "queued"
         assert state["state"] == "committed"
-        assert len(await client.resources(kind="capability-package")) == 3
+        assert len(await client.resources(mcue="capability/package")) == 3

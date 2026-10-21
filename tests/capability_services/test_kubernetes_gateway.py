@@ -1,9 +1,37 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from capability_services.kubernetes_http.server import KubernetesGateway
+
+
+@pytest.mark.parametrize("path", ["/v1/resources/list", "/v1/resources/get"])
+@pytest.mark.parametrize("resource,api_version", [
+    ("vcjobs", "batch.volcano.sh/v1alpha1"),
+    ("jobs", "batch/v1"),
+])
+def test_job_queries_resolve_the_correct_api_group(tmp_path: Path, monkeypatch, path, resource, api_version):
+    gateway = _gateway(tmp_path, "yes")
+    monkeypatch.setattr(gateway, "_require_auth", lambda: None)
+    # Model the cluster's resource discovery: vcjob/vj are short names,
+    # while the plural vcjobs is not a kubectl resource name.
+    Path(gateway.kubectl).write_text(
+        f"#!{sys.executable}\n"
+        "import json,sys\n"
+        "args=sys.argv[1:]\n"
+        "resource=args[args.index('get')+1]\n"
+        "groups={'jobs':'batch/v1','jobs.batch.volcano.sh':'batch.volcano.sh/v1alpha1','vcjob':'batch.volcano.sh/v1alpha1'}\n"
+        "if resource not in groups: sys.exit(1)\n"
+        "print(json.dumps({'apiVersion':groups[resource], 'kind':'JobList'}))\n",
+        encoding="utf-8",
+    )
+
+    result = gateway.handle(path, {"resource": resource, "name": "example"})
+
+    assert result["status"] == "ok"
+    assert result["resource"]["apiVersion"] == api_version
 
 
 def _gateway(

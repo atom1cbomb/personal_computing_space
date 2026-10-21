@@ -580,7 +580,7 @@ def create_app(
                 version_or_digest=version_or_digest,
                 identity_criterion="descriptor_digest",
             )
-            descriptor = await app.state.repo.get_action_descriptor(ref)
+            descriptor = await app.state.repo.read_action_descriptor(ref)
         except (FileNotFoundError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc) or "action_descriptor_not_found") from exc
         return {"resource_ref": ref.model_dump(mode="json"), "descriptor": descriptor}

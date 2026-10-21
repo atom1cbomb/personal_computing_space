@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/volcano/pods-list",
+  "name": "pods_list",
+  "description": "List Pods visible through the Dashboard across all namespaces by default.",
+  "capability_kinds": [
+    "compute.volcano.read"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/schemas/instance-config/sha256/7cc51fea09611068b0b4aa4521153d1464cb0b96e1ac773bc33dd2098290cdea",
+    "identity_criterion": "content_digest"
+  }
+}

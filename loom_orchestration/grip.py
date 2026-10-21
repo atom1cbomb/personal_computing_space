@@ -42,6 +42,7 @@ def uri(value: str) -> str:
 
 
 URI = Annotated[str, AfterValidator(uri)]
+MCUE = Annotated[str, Field(max_length=256, pattern=r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")]
 
 
 def utc(value: str) -> str:
@@ -107,7 +108,7 @@ class Reply(Model):
 
 class Resource(Model):
     uri: URI
-    kind: str = Field(min_length=1)
+    mcue: MCUE
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -183,6 +184,9 @@ class Names:
 
     def schema(self, name: str) -> str:
         return self.name("schemas", name, "v1")
+
+    def mcue(self, label: str, version: str = "v1") -> str:
+        return self.name("mcue-types", *label.split("/"), version)
 
 
 class GripError(RuntimeError):

@@ -229,7 +229,7 @@ async def main() -> None:
         response_max_bytes=int(
             os.getenv(
                 "LOOM_RUNTIME_PLUGIN_RESPONSE_MAX_BYTES",
-                str(4 * 1024 * 1024),
+                str(256 * 1024 * 1024),
             )
         ),
         max_concurrency=int(

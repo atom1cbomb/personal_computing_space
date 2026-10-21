@@ -108,7 +108,7 @@ class DockerContainerHTTPRuntimeV1:
         tmpfs_size: str = "64m",
         startup_timeout: float = 30.0,
         request_timeout: float = 30.0,
-        response_max_bytes: int = 4 * 1024 * 1024,
+        response_max_bytes: int = 256 * 1024 * 1024,
         max_concurrency: int = 16,
         docker_timeout: float = 120.0,
         credential_dir: str | Path | None = None,
@@ -158,25 +158,12 @@ class DockerContainerHTTPRuntimeV1:
 
     @staticmethod
     def _instance_config(activation: dict[str, Any] | None) -> dict[str, Any]:
-        value = (activation or {}).get("instance_config") or {}
-        if not isinstance(value, dict):
+        value = (activation or {}).get("instance_config", {})
+        if not isinstance(value, dict) or "target_resource_ref" in value:
             raise RuntimeError("activation_instance_config_invalid")
-        host = value.get("host")
-        port = value.get("port", 22)
-        user = value.get("user")
-        if (
-            not isinstance(host, str)
-            or not host
-            or len(host) > 253
-            or any(ord(char) < 33 or char in {"/", "\\"} for char in host)
-            or isinstance(port, bool)
-            or not isinstance(port, int)
-            or not 1 <= port <= 65535
-            or not isinstance(user, str)
-            or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", user)
-        ):
-            raise RuntimeError("activation_instance_config_invalid")
-        return {"host": host, "port": port, "user": user}
+        # The descriptor's schema and the service own configuration semantics.
+        # This runtime transports JSON; it must not require SSH-specific fields.
+        return dict(value)
 
     @staticmethod
     def _persistent_state(package: dict[str, Any]) -> bool:
@@ -307,20 +294,17 @@ class DockerContainerHTTPRuntimeV1:
             raise RuntimeError("service_health_endpoint_conflict")
         return image_ref, container_port, health_path, normalized_exports
 
-    @classmethod
-    def _credential_profile(cls, package: dict[str, Any]) -> str | None:
-        body = package.get("body")
-        if not isinstance(body, dict):
-            raise RuntimeError("runtime_plugin_capability_mismatch")
-        profile = body.get("credential_profile")
+    @staticmethod
+    def _credential_profile(activation: dict[str, Any]) -> str | None:
+        profile = activation.get("credential_profile")
         if profile is None:
             return None
         if not isinstance(profile, str) or not PROFILE_RE.fullmatch(profile):
             raise RuntimeError("runtime_plugin_capability_mismatch")
         return profile
 
-    def _credential_mount_args(self, package: dict[str, Any]) -> list[str]:
-        profile = self._credential_profile(package)
+    def _credential_mount_args(self, activation: dict[str, Any]) -> list[str]:
+        profile = self._credential_profile(activation)
         if profile is None:
             return []
         if self.credential_dir is None:
@@ -722,7 +706,7 @@ class DockerContainerHTTPRuntimeV1:
             package, command
         )
         instance_name = self._instance_name(command)
-        credential_mount = self._credential_mount_args(package)
+        credential_mount = self._credential_mount_args(command)
         network_args = self._network_args(package)
         instance_config = command.get("instance_config") or {}
         config_mount: list[str] = []
@@ -943,7 +927,7 @@ class DockerContainerHTTPRuntimeV1:
         host = await self._http_host(container_name, container)
 
         capacity_timeout = (
-            min(self.request_timeout, float(deadline_seconds))
+            float(deadline_seconds)
             if deadline_seconds is not None
             else self.request_timeout
         )
@@ -1171,6 +1155,7 @@ class DockerContainerHTTPRuntimeV1:
                     "instance_name": self._instance_name(activation),
                     "target_resource_ref": activation.get("target_resource_ref"),
                     "instance_config": dict(activation.get("instance_config") or {}),
+                    "credential_profile": activation.get("credential_profile"),
                 }
                 provisioned = await self.provision(package, command)
                 results.append({"activation_key": activation_key, **provisioned})

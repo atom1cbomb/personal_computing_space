@@ -82,6 +82,7 @@ class SlaveService:
                 socket_dir=self.settings.runtime_plugin_socket_dir,
                 startup_timeout=self.settings.runtime_plugin_startup_timeout_seconds,
                 call_timeout=self.settings.runtime_plugin_call_timeout_seconds,
+                response_max_bytes=self.settings.runtime_plugin_response_max_bytes,
             )
         if self.capability_action_timeout_seconds is not None and self.executor_registry is default_registry:
             self.executor_registry = ExecutorRegistry(capability_timeout_seconds=self.capability_action_timeout_seconds)
@@ -136,6 +137,7 @@ class SlaveService:
                         instance_name=str(item.get("instance_name") or "default"),
                         target_resource_ref=(ResourceRef.model_validate(item["target_resource_ref"]) if item.get("target_resource_ref") else None),
                         instance_config=dict(item.get("instance_config") or {}),
+                        credential_profile=item.get("credential_profile"),
                     )
                 except (TypeError, ValueError):
                     continue
@@ -176,6 +178,7 @@ class SlaveService:
             "instance_name": activation.instance_name,
             "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None,
             "instance_config": dict(activation.instance_config),
+            "credential_profile": activation.credential_profile,
             "runtime_handle": dict(runtime_handle or {}),
             "last_idempotency_key": activation.last_idempotency_key,
             "last_error_code": last_error_code,
@@ -229,13 +232,14 @@ class SlaveService:
                         "instance_name": instance_name,
                         "target_resource_ref": row.get("target_resource_ref"),
                         "instance_config": row.get("instance_config") or {},
+                        "credential_profile": row.get("credential_profile"),
                     })
         else:
             for key, activation in self.activations.items():
                 package = self._find_cached_package(activation.package_version_ref, activation.package_digest)
                 if package is None or not self._uses_runtime_plugin(package):
                     continue
-                entries.append({"activation_key": key, "workspace_id": self.workspace_id, "slave_id": self.slave_id, "target_slave": self.slave_id, "package_version_ref": package.version_ref, "package_digest": package.package_digest, "package_type": package.package_type, "execution": package.execution.model_dump(mode="json"), "package_payload": package.model_dump(mode="json"), "desired_state": activation.desired_state, "activation_revision": activation.activation_revision, "runtime_profile": activation.runtime_profile, "instance_name": activation.instance_name, "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None, "instance_config": activation.instance_config})
+                entries.append({"activation_key": key, "workspace_id": self.workspace_id, "slave_id": self.slave_id, "target_slave": self.slave_id, "package_version_ref": package.version_ref, "package_digest": package.package_digest, "package_type": package.package_type, "execution": package.execution.model_dump(mode="json"), "package_payload": package.model_dump(mode="json"), "desired_state": activation.desired_state, "activation_revision": activation.activation_revision, "runtime_profile": activation.runtime_profile, "instance_name": activation.instance_name, "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None, "instance_config": activation.instance_config, "credential_profile": activation.credential_profile})
         try:
             response = await self.runtime_plugin_host.reconcile(entries)
         except RuntimePluginError:
@@ -340,11 +344,14 @@ class SlaveService:
         package_digest: str,
         activation_revision: int,
         idempotency_key: str,
+        credential_profile: str | None,
     ) -> bool:
         if existing is None:
             return False
         if existing.package_digest.lower() != package_digest.lower():
             raise RuntimeError("capability_package_identity_conflict")
+        if existing.credential_profile != credential_profile:
+            raise RuntimeError("activation_instance_binding_conflict")
         if activation_revision < existing.activation_revision:
             raise RuntimeError("stale_activation_revision")
         if activation_revision == existing.activation_revision:
@@ -466,6 +473,12 @@ class SlaveService:
                 # A package coordinate is immutable.  Never start a second
                 # container for the same coordinate under another digest.
                 raise RuntimeError("capability_package_identity_conflict")
+            # Promoted/version aliases can reuse one digest-backed container.
+            # They must not silently reuse another instance's credential mount.
+            if (item.package_digest.lower() == package.package_digest.lower()
+                    and item.instance_name == command.instance_name
+                    and item.credential_profile != command.credential_profile):
+                raise RuntimeError("activation_instance_binding_conflict")
         activation_key = self._activation_key(ref, command.instance_name)
         existing = self.activations.get(activation_key)
         retry = self._lifecycle_retry(
@@ -474,6 +487,7 @@ class SlaveService:
             package_digest=package.package_digest,
             activation_revision=command.activation_revision,
             idempotency_key=command.idempotency_key,
+            credential_profile=command.credential_profile,
         )
         self._accept_activation_revision(activation_key, retry=retry)
         if retry and existing is not None and existing.activation_state == "ready":
@@ -503,6 +517,7 @@ class SlaveService:
             "instance_name": command.instance_name,
             "target_resource_ref": command.target_resource_ref,
             "instance_config": dict(command.instance_config),
+            "credential_profile": command.credential_profile,
         }
         pending = (
             existing.model_copy(update=values)
@@ -715,6 +730,7 @@ class SlaveService:
             package_digest=package.package_digest,
             activation_revision=command.activation_revision,
             idempotency_key=command.idempotency_key,
+            credential_profile=command.credential_profile,
         )
         self._accept_activation_revision(activation_key, retry=retry)
         if retry and existing_activation is not None and existing_activation.activation_state == "ready":
@@ -742,6 +758,7 @@ class SlaveService:
             "instance_name": command.instance_name,
             "target_resource_ref": command.target_resource_ref,
             "instance_config": dict(command.instance_config),
+            "credential_profile": command.credential_profile,
         }
         pending = (
             existing_activation.model_copy(update=pending_values)
@@ -839,6 +856,7 @@ class SlaveService:
             package_digest=package.package_digest,
             activation_revision=command.activation_revision,
             idempotency_key=command.idempotency_key,
+            credential_profile=command.credential_profile,
         )
         self._accept_activation_revision(activation_key, retry=retry)
         evidence_refs = (
@@ -853,6 +871,7 @@ class SlaveService:
             "instance_name": command.instance_name,
             "target_resource_ref": command.target_resource_ref,
             "instance_config": dict(command.instance_config),
+            "credential_profile": command.credential_profile,
         }
         desired = (
             existing.model_copy(update=desired_values)

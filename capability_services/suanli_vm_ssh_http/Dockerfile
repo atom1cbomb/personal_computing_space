@@ -9,8 +9,9 @@ RUN apt-get update \
     && case "$ARCH" in amd64) OPK_ARCH=amd64 ;; arm64) OPK_ARCH=arm64 ;; *) echo "unsupported architecture" >&2; exit 1 ;; esac \
     && curl -fsSL "https://github.com/openpubkey/opkssh/releases/download/v0.14.0/opkssh-linux-${OPK_ARCH}" -o /usr/local/bin/opkssh \
     && chmod 0755 /usr/local/bin/opkssh
-COPY server.py /app/server.py
-COPY opkssh.yml /app/opkssh.yml
+COPY capability_services/suanli_vm_ssh_http/server.py /app/server.py
+COPY capability_services/suanli_vm_ssh_http/opkssh.yml /app/opkssh.yml
+COPY capability_services/ssh_execution.py /app/capability_services/ssh_execution.py
 RUN mkdir -p /var/lib/loom/service && chown -R 65534:65534 /var/lib/loom/service
 USER 65534:65534
 EXPOSE 8080

@@ -20,10 +20,11 @@ class OrchestrationContext(Protocol):
         self,
         *,
         step_id: str,
-        resource_type: str,
+        mcue_ref: str,
         identity: str,
-        package_ref: ResourceRef,
+        package_ref: ResourceRef | None = None,
         managed_by_ref: ResourceRef | None = None,
+        attributes: dict[str, Any] | None = None,
     ) -> ResourceRef: ...
 
     async def ensure_activation(
@@ -34,6 +35,7 @@ class OrchestrationContext(Protocol):
         target_resource_ref: ResourceRef,
         instance_name: str,
         instance_config: dict[str, Any],
+        credential_profile: str | None = None,
         requires_authentication: bool,
     ) -> ResourceRef: ...
 

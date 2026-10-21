@@ -6,9 +6,11 @@ request and never receives prompts, messages, or source uploads.
 ## Discovery
 
 1. Check `GET /healthz` and `GET /api/v1/runtime`.
-2. Use `client.resources(kind="slave")`, filter `metadata.available`, then
-   `client.describe(uri)` to obtain offers. Use the operator's GRIP authority,
-   workspace and token configuration (see [sdk.md](sdk.md)).
+2. Use `client.resources(mcue="computing/slave")` and inspect descriptions for `run-package` /
+   `activate-package` offers. Filter `metadata.available` and obtain the exact
+   callable offers with `client.describe(uri)`. Use the operator's GRIP authority,
+   workspace and token configuration (see [sdk.md](sdk.md)). Resource typing and
+   MCUE filtering are described in [mcue.md](mcue.md).
 3. Discover package and resource URIs through `client.resources`. Inspect action
    descriptions for verified descriptors and schema URIs. For an existing domain
    resource, DESCRIBE lists explicitly bound ready activations. Select the exact
@@ -17,6 +19,10 @@ request and never receives prompts, messages, or source uploads.
 For a single action, invoke the Slave's `run-package` action with the package
 URI, exported action URI, arguments and stable idempotency key. Long-lived services
 use `activate-package` and then invoke the ready activation with its revision.
+Select its credentials with top-level `credential_profile`, alongside
+`instance_config`, using a name supplied by the Slave operator. Different named
+instances can use different profiles. The selection is not in the package or
+DESCRIBE; confirm the deployed input schema supports it (see [sdk.md](sdk.md)).
 The returned `run` URI identifies a Run resource with `read` and `cancel` actions.
 
 ## Build and Submit
@@ -65,7 +71,7 @@ The relevant states are:
 
 - `queued`, `committed`, `running`, `cleaning_up`: keep polling;
 - `awaiting_auth`: match `waiting`'s package digest, Slave, instance and revision
-  to an activation from `client.resources(kind="activation")`. DESCRIBE it and
+  to an activation returned by `client.resources(mcue="capability/activation")`. DESCRIBE it and
   invoke its `auth-start` offer with `expected_revision`. Start once and continue
   polling the same Run. Do not resubmit for authentication recovery;
 - `completed`: verify outcome, content refs, dynamic nodes, and evidence;

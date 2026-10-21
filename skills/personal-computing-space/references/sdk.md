@@ -29,16 +29,17 @@ to this project's release.
 
 Use GRIP for resource access. Configure the Observer URL, GRIP authority and
 workspace token supplied by the operator; credentials belong in request auth.
-`LoomClient.resources(kind=...)` lists slaves, capability-package definitions,
+`LoomClient.resources()` lists slaves, capability-package definitions,
 activations, registered resources and runs in one directory. `describe(uri)`
 returns offers with complete action and Schema URIs. `invoke(uri, action, input)`
 discovers a trusted binding and validates the input/output contracts.
+The MCUE contract uses `resources(mcue=...)` and `resource.mcue`;
+see [mcue.md](mcue.md) for definitions, attribute updates, and release requirements.
 
 ```python
 async with LoomClient(observer_url, token=grip_token,
                       grip_authority=grip_authority) as client:
-    slaves = await client.resources(kind="slave")
-    packages = await client.resources(kind="capability-package")
+    resources = await client.resources(mcue="computing/vm")
     description = await client.describe(selected_target_uri)
     result = await client.invoke(selected_target_uri, selected_action_uri, action_input)
 ```
@@ -52,6 +53,24 @@ An activated instance exports business actions with input
 `{arguments, expected_revision, idempotency_key}` and the same Run receipt.
 Use `activate-package` on a Slave for named service instances, then `auth-start`
 when offered by a pending-auth instance. This does not create a second run.
+
+On the activation-credentials server release, `activate-package` takes optional
+`credential_profile` alongside `instance_name`, `instance_config`, `target` and
+`idempotency_key`. Pass an operator-supplied profile name, not a file path or
+secret. Each named instance can select a different profile from the Slave's
+configured credential directory. New instances with no selection mount no
+credentials; omission/null on an existing instance preserves its binding.
+Retries and restarts preserve that selection. Switching profiles requires a
+new instance name. The profile is private activation configuration and is not
+returned by resource DESCRIBE or copied to MCUE attributes. New publications
+reject `body.credential_profile`; never fall back to embedding it in a package.
+
+Inside a program, use `await ctx.ensure_activation(...,
+credential_profile="operator-provided-profile")`. The choice participates in
+the step's idempotency check. This argument requires SDK 0.6.0 and the matching
+Observer, Driver, Slave and runtime release; installing only the wheel does
+not upgrade the deployment. Check the deployed `activate-package` input schema
+before use. Browser-authenticated Suanli SSH instances normally omit the field.
 
 Activation returns its resource URI automatically. DESCRIBE includes all declared
 business actions in `resource.metadata.actions`: names, descriptions, descriptor
@@ -81,7 +100,8 @@ Multiple exports belong to a supporting service executor, not json-stdio.
 Metadata paths must be declared in real input/output schemas; an empty
 `io.v1` contract cannot validate a resource identity or readiness mapping.
 The `io.v1` schema subset is `type`, `required`, `properties`, `items`, `enum`,
-`const`, `minimum`, `maximum`; other keywords are rejected on schema upload.
+`const`, `minimum`, `maximum`, `minLength`, `maxLength`; other keywords are
+rejected on schema upload. MCUE attribute schemas have their own contract.
 
 - `identity_path` on an effect is relative to the complete create result.
 - Readiness `result_path` selects status items; its `identity_path` and condition
@@ -120,7 +140,9 @@ paths and incompatible mapping types rather than choosing a relationship.
 
 ## Durable Cleanup
 
-Inside an orchestration program, call `ctx.register_resource` with a published workspace package, then `defer_cleanup`
+Inside an orchestration program, call `ctx.register_resource` with `mcue_ref`,
+`identity`, optional public `attributes` and an optional published workspace
+`package_ref`, then `defer_cleanup`
 with a distinct stable step id. Registration reserves one node from `max_nodes`;
 budget for both normal nodes and cleanup. `resource_budget.cleanup_timeout_seconds`
 is a separate terminal cleanup deadline (default 60 seconds, allowed 1–300).
@@ -144,6 +166,9 @@ Access configuration must satisfy the descriptor's `instance_config_schema_ref`.
 Only non-sensitive connection fields belong there. `wait_activation` accepts
 `ready`; `authenticated` additionally requires confirmed authentication status.
 These guarantees require the matching server release, not just an updated wheel.
+Configuration and public attributes are separate: the MCUE schema determines
+which descriptive fields may be published, and a description update does not
+change the activation's actual connection settings.
 
 ## Publish a service artifact directory
 
@@ -153,8 +178,11 @@ IoContracts and descriptors in dependency order, then returns the published GRIP
 package URI. Access packages must be published first. The helper uses actual
 Observer-returned references, never placeholder digests. Publication does not
 activate or invoke the package. Outside a program, domain resource registration
-is the workspace's GRIP `register-resource` action with `{resource_id, package,
-managed_by?, state?}`.
+uses the workspace's GRIP `register-resource` action. Read its offered input
+schema for the deployed fields. Registration requires `resource_id` and
+`mcue_ref`, accepts initial `attributes`, and has optional `package` and
+`managed_by`. Update existing attributes with `update-attributes` and an
+observed `expected_attributes_revision`.
 
 
 Resource names are GRIP URIs throughout, including uploaded content and package internals. Use `upload_content(..., name="cloud/schemas/instances-output")` for a readable immutable content name; use `read_json(ref)` to read it through GRIP. Content names end in `/sha256/<digest>` but always include a readable purpose before that suffix. Use the package URI returned by Observer in `resource`; the immutable digest is an explicit contract field. Pass the returned URI unchanged: do not wrap it under another `resources/` path. `ServicePackage.publish` relocates template references to the client's configured authority and workspace.

@@ -907,6 +907,9 @@ class DriverService:
                 compute_binding=binding,
                 idempotency_key=desired.last_idempotency_key,
                 activation_revision=desired.activation_revision,
+                credential_profile=desired.credential_profile,
+                target_resource_ref=desired.target_resource_ref,
+                instance_config=dict(desired.instance_config),
                 instance_name=binding.instance_name,
             )
             report = await worker.provision(
@@ -1117,6 +1120,9 @@ class DriverService:
                         compute_binding=binding,
                         idempotency_key=desired.last_idempotency_key,
                         activation_revision=desired.activation_revision,
+                        credential_profile=desired.credential_profile,
+                        target_resource_ref=desired.target_resource_ref,
+                        instance_config=dict(desired.instance_config),
                         instance_name=binding.instance_name,
                     )
                     report = await worker.provision(command=command, package=package, driver_id=getattr(self.control_client, "driver_id", None), driver_epoch=getattr(self.control_client, "driver_epoch", None))
@@ -1161,6 +1167,9 @@ class DriverService:
                         compute_binding=binding,
                         idempotency_key=desired.last_idempotency_key,
                         activation_revision=desired.activation_revision,
+                        credential_profile=desired.credential_profile,
+                        target_resource_ref=desired.target_resource_ref,
+                        instance_config=dict(desired.instance_config),
                         instance_name=binding.instance_name,
                     )
                     report = await slave.provision(command, package)

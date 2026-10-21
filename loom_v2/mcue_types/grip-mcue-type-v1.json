@@ -1,0 +1,10 @@
+{
+  "mcue": "grip/mcue-type",
+  "version": "v1",
+  "description": "Versioned MCUE definition",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

@@ -6,7 +6,7 @@
   "resource_effects": [
     {
       "effect": "create",
-      "resource_type": "compute.vm",
+      "mcue_ref": "grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1",
       "identity_path": "result.Instances[].InstanceId",
       "readiness": {
         "result_path": "result.Instances[]",
@@ -42,7 +42,7 @@
         {
           "capability_kind": "compute.vm.remote_shell",
           "package_ref": {
-            "resource_id": "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v2"
+            "resource_id": "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"
           },
           "target_binding": "target_resource_ref",
           "instance_config_mapping": {

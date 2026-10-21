@@ -30,18 +30,12 @@ def test_gateway_never_accepts_request_target(tmp_path: Path, monkeypatch):
     gateway = _gateway(tmp_path)
     captured: list[list[str]] = []
 
-    class Proc:
-        returncode = 0
-
-        def communicate(self, timeout=None):
-            return b"ok", b""
-
-    def fake_popen(args, **_kwargs):
-        captured.append(args)
-        return Proc()
+    def fake_execute(args, command, timeout):
+        captured.append([*args, command])
+        return {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False, "truncated": False}
 
     import capability_services.vm_ssh_http.server as module
-    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(module, "execute_ssh", fake_execute)
 
     result = gateway.handle("/v1/exec", {"command": "id", "host": "attacker.invalid", "user": "root"})
     assert result["exit_code"] == 0

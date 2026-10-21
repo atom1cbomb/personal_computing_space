@@ -40,13 +40,13 @@ async def test_interface_package_resource_registration_and_no_execution():
         package = client.post("/api/v1/capability-packages", json=manifest).json()
         n = client.app.state.grip.names
         uri = package["resource"]
-        value = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/suanli/vm/i-123", "package": uri, "state": "running"}
+        value = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/suanli/vm/i-123", "mcue_ref": n.mcue("computing/vm"), "package": uri, "state": "running"}
         created = invoke(client, n.root, n.action("register-resource"), value)
         assert invoke(client, n.root, n.action("register-resource"), value) == created
         description = exchange(client, created["resource"])["body"]
         assert description["resource"]["metadata"]["package"] == uri
-        assert description["offers"] == []
-        assert resources(client, "resource")[0]["uri"] == created["resource"]
+        assert [o["action"]["uri"] for o in description["offers"]] == [n.action("update-attributes")]
+        assert resources(client, "computing/vm")[0]["uri"] == created["resource"]
         result = exchange(client, n.name("slaves", "slave-a"), action=n.action("activate-package"), input={"package": uri, "idempotency_key": "interface"})
         assert result["error_code"] == "invalid_input"
 
@@ -61,9 +61,9 @@ async def test_resource_manager_and_immutable_binding_through_grip():
         package = client.post("/api/v1/capability-packages", json=manifest).json()["resource"]
         other = client.post("/api/v1/capability-packages", json=other_manifest).json()["resource"]
         n = client.app.state.grip.names
-        child = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/child", "package": package, "managed_by": n.name("resources", "manager")}
+        child = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/child", "mcue_ref": n.mcue("computing/vm"), "package": package, "managed_by": n.name("resources", "manager")}
         assert exchange(client, n.root, action=n.action("register-resource"), input=child)["error_code"] == "not_found"
-        manager = invoke(client, n.root, n.action("register-resource"), {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/manager", "package": package})
+        manager = invoke(client, n.root, n.action("register-resource"), {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/manager", "mcue_ref": n.mcue("computing/vm"), "package": package})
         assert manager["resource"] == child["managed_by"]
         created = invoke(client, n.root, n.action("register-resource"), child)
         invoke(client, n.root, n.action("register-resource"), {**child, "state": "ready"})

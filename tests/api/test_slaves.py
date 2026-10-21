@@ -42,7 +42,7 @@ def register(client, slave_id="slave-a", instance="one", workspace="my-workspace
 
 
 def test_grip_slaves_empty_and_workspace_bound(client):
-    assert resources(client, "slave") == []
+    assert resources(client, "computing/slave") == []
     from loom_orchestration import Names
     result = exchange(client, Names(workspace="other").root)
     assert result["error_code"] == "not_found"
@@ -55,7 +55,7 @@ def test_public_slaves_scoped_deduplicated_and_safe(client):
     register(client, "foreign-slave", workspace="other")
     register(client, "driver", role="driver")
 
-    result = resources(client, "slave")
+    result = resources(client, "computing/slave")
     slaves = [r["metadata"] for r in result]
     assert [slave["slave_id"] for slave in slaves] == ["slave-a", "slave-b"]
     for slave in slaves:
@@ -67,7 +67,7 @@ def test_public_slaves_scoped_deduplicated_and_safe(client):
         assert slave["runtime_plugin_descriptors"][0]["plugin_id"] == "http"
     for private in ("lease_id", "lease_id_hash", "endpoint_url", "instance_id", "private_token", "do-not-expose", "foreign-slave"):
         assert private not in str(result)
-    assert all(r["metadata"]["available"] for r in resources(client, "slave"))
+    assert all(r["metadata"]["available"] for r in resources(client, "computing/slave"))
     assert client.get("/internal/v1/agents/slaves").status_code == 401
 
 
@@ -83,11 +83,11 @@ def test_public_slaves_released_and_expired_are_not_available(client):
     register(client, "slave-b")
     with patch("loom_v2.observer.repository.datetime") as clock:
         clock.now.return_value = datetime.now(timezone.utc) + timedelta(minutes=5)
-        slaves = [r["metadata"] for r in resources(client, "slave")]
+        slaves = [r["metadata"] for r in resources(client, "computing/slave")]
         assert sorted((s["slave_id"], s["lease_state"], s["available"]) for s in slaves) == [
             ("slave-a", "released", False), ("slave-b", "expired", False),
         ]
-        assert not any(r["metadata"]["available"] for r in resources(client, "slave"))
+        assert not any(r["metadata"]["available"] for r in resources(client, "computing/slave"))
 
 
 def test_grip_is_the_only_public_resource_access_route(client):
@@ -101,7 +101,7 @@ def test_grip_discovery_does_not_mutate_dispatch_cache(client):
     register(client)
     repo = client.app.state.repo
     repo.slave_capabilities = {"slave-a": {"actions": {"foreign-run-action"}}}
-    result = resources(client, "slave")
+    result = resources(client, "computing/slave")
     assert "foreign-run-action" not in str(result)
     assert repo.slave_capabilities == {"slave-a": {"actions": {"foreign-run-action"}}}
 
@@ -114,7 +114,7 @@ def test_public_slaves_uses_latest_offline_instance(client):
         register(client, instance="newer")
     with patch("loom_v2.observer.repository.datetime") as clock:
         clock.now.return_value = future + timedelta(minutes=5)
-        slaves = [r["metadata"] for r in resources(client, "slave")]
+        slaves = [r["metadata"] for r in resources(client, "computing/slave")]
     assert len(slaves) == 1
     assert slaves[0]["lease_state"] == "expired"
     seen = datetime.fromisoformat(slaves[0]["last_seen_at"])

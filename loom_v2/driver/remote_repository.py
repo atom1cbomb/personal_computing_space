@@ -293,6 +293,7 @@ class RemoteObserverRepository:
         instance_name: str = "default",
         target_resource_ref: ResourceRef | None = None,
         instance_config: dict[str, Any] | None = None,
+        credential_profile: str | None = None,
     ) -> CapabilityPackageActivation:
         ref = (
             package_ref.model_dump(mode="json")
@@ -313,6 +314,7 @@ class RemoteObserverRepository:
                 "instance_name": instance_name,
                 "target_resource_ref": target_resource_ref.model_dump(mode="json") if target_resource_ref else None,
                 "instance_config": instance_config,
+                "credential_profile": credential_profile,
             },
             request_id=(
                 f"capability-desire:{target_slave}:{desired_state}:"

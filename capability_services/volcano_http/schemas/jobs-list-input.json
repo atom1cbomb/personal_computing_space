@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63
+    },
+    "status": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "search": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "queue": {
+      "type": "string",
+      "maxLength": 256
+    }
+  }
+}

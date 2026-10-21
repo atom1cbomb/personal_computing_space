@@ -138,6 +138,7 @@ async def validate_resource_dependencies(repository: Any, package: Any) -> None:
         _, output_schema = await schemas(export)
         for raw in descriptor["resource_effects"]:
             effect = ResourceEffect.model_validate(raw)
+            await repository.get_mcue_definition(package.workspace_id or repository.settings.workspace_id, effect.mcue_ref)
             identity = _at(output_schema, effect.identity_path)
             if _types(identity) != {"string"}:
                 raise ValueError("resource_effect_identity_type_invalid")

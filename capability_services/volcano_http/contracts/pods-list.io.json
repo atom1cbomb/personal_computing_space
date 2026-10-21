@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/schemas/pods-list-input/sha256/0dd857de1934a7c9d26407770c1ac1830a79244d8d51fdd3aa407b97b5098efe",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/schemas/pods-list-output/sha256/b00e6a1f1999fa164687364ebd53d5639700a1041b6162cf8019274b90c38fe7",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

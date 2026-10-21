@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "vm-ssh-http",
-  "package_version": "v2",
+  "package_version": "v4",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -10,7 +10,6 @@
     "image_ref": "registry.example/loom/vm-ssh-gateway@sha256:<replace-after-build>",
     "container_port": 8080,
     "health_path": "/healthz",
-    "credential_profile": "vm-ssh-default",
     "network_profile": "egress",
     "persistent_state": true,
     "authentication": {
@@ -22,11 +21,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/exec",
-        "version_or_digest": "646c05fbb23325e7b48df8cfd2c38917237467a19a24cb5b0d9200e0b1574afe",
+        "version_or_digest": "e39b5790b111c040cc7444bd905e2ee54cc573cff0b11d76928c3b19d6a20103",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/contracts/exec/sha256/ff5733085e5544d49034fa2e61ba33bc84e7a2631d51f89cf06c0b7039faf9be",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/contracts/exec/sha256/1ed0ba4aa817863cf0b48ce489835b0a36efe3671c88385fc2438258cd20adfd",
         "identity_criterion": "content_digest"
       },
       "effect_class": "RemoteExecution",

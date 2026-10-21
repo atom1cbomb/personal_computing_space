@@ -56,14 +56,17 @@ async def test_service_publication_rewrites_every_artifact_to_deployment_namespa
     options = dict(token="test-token", allow_insecure_grip=True, grip_authority=settings.grip_authority, workspace_id=settings.workspace_id)
     async with LoomClient("http://observer", transport=httpx.ASGITransport(app=app), **options) as client:
         ssh = await ServicePackage(root / "suanli_vm_ssh_http").publish(client, image_ref="example/ssh@sha256:" + "a" * 64)
-        package_uri = await ServicePackage(root / "suanlicloud_http").publish(client, image_ref="example/cloud@sha256:" + "b" * 64, dependencies={Names().name("packages", "suanli-vm-ssh-http", "v2"): ssh})
-        assert package_uri == client.names.name("packages", "suanlicloud-http", "v1")
+        package_uri = await ServicePackage(root / "suanlicloud_http").publish(client, image_ref="example/cloud@sha256:" + "b" * 64, dependencies={Names().name("packages", "suanli-vm-ssh-http", "v3"): ssh})
+        assert package_uri == client.names.name("packages", "suanlicloud-http", "v4")
         package = await client.invoke(package_uri, client.names.action("read"), {})
         assert package["resource"] == package_uri
         descriptor = next(e for e in package["action_exports"] if "/descriptors/instances-run/" in e["action_descriptor_ref"]["resource_id"])
         value = await client.read_json(SdkRef.model_validate(descriptor["action_descriptor_ref"]))
         assert value["resource_id"] == client.names.name("actions", "suanlicloud", "instances-run")
         assert value["resource_effects"][0]["access_requirements"][0]["package_ref"]["resource_id"] == ssh
+        assert value["resource_effects"][0]["mcue_ref"] == client.names.mcue("computing/vm")
+        definition = await client.invoke(value["resource_effects"][0]["mcue_ref"], client.names.action("read"), {})
+        assert definition["mcue"] == "computing/vm"
         for export in package["action_exports"]:
             contract_ref = SdkRef.model_validate(export["io_contract_ref"])
             contract = await client.read_json(contract_ref)
@@ -73,7 +76,7 @@ async def test_service_publication_rewrites_every_artifact_to_deployment_namespa
                 assert (await client.read_json(ref))["type"] == "object"
                 assert (await client.describe(ref.resource_id))["resource"]["uri"] == ref.resource_id
         exported = (await client.describe(package_uri))["resource"]["metadata"]["actions"]
-        assert any("/suanlicloud-http/v1/instances-list/sha256/" in e["uri"] for e in exported)
+        assert any("/suanlicloud-http/v4/instances-list/sha256/" in e["uri"] for e in exported)
         assert all("%3A" not in e["uri"] for e in exported)
         ref = await client.upload_content([1, 2, 3], name="reports/sample-values")
         assert await client.read_json(ref) == [1, 2, 3]
@@ -105,7 +108,7 @@ async def test_publication_returns_authoritative_name_for_discovery_and_reads(au
             assert (await client.register_package(manifest))["resource"] == target
             assert (await client.describe(target))["resource"]["uri"] == target
             assert (await client.invoke(target, names.action("read"), {}))["resource"] == target
-            assert (await client.resources(kind="capability-package"))[0]["uri"] == target
+            assert (await client.resources(mcue="capability/package"))[0]["uri"] == target
             assert (await client.packages())[0]["resource"] == target
             detail = await http.get(f"/api/v1/capability-packages/{target}")
             assert detail.status_code == 200, detail.text
@@ -123,7 +126,7 @@ async def test_service_publisher_uses_returned_name_without_reconstructing_it(mo
                           transport=httpx.ASGITransport(app=create_app(settings=settings))) as client:
         async def register_package(manifest):
             assert manifest["package_id"] == "vm-ssh-http"
-            return {"resource": assigned, "package_id": "vm-ssh-http", "package_version": "v2"}
+            return {"resource": assigned, "package_id": "vm-ssh-http", "package_version": "v4"}
 
         monkeypatch.setattr(client, "register_package", register_package)
         published = await ServicePackage(root / "vm_ssh_http").publish(client, image_ref="example/ssh@sha256:" + "a" * 64)

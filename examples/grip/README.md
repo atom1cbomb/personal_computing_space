@@ -10,24 +10,29 @@
 python examples/grip/invoke.py
 ```
 
-创建 `list.json`，内容为 `{"kind":"slave"}`，查询执行资源：
+创建 `list.json`，内容为 `{"mcue":"computing/slave"}`，查询执行资源：
 
 ```sh
 python examples/grip/invoke.py --action list-resources --input list.json
 ```
 
-将 kind 改为 `capability-package`、`activation`、`resource` 或 `run` 可查相应资源。
+将 mcue 改为 `capability/package`、`capability/activation`、`computing/vm` 或 `execution/run` 可查相应资源。
+使用 `grip/mcue-type` 查询类型定义，再对返回的定义 URI 调用 read 取得属性 Schema。
 服务包发布方法见 [服务包指南](../../capability_services/README.md)。
 复制返回的 Slave URI 和包 URI，创建 `activate.json`：
 
 ```json
-{"package":"<package URI>","instance_name":"example","instance_config":{},"idempotency_key":"example-activate-1"}
+{"package":"<package URI>","instance_name":"example","instance_config":{},"credential_profile":"<operator 配置的 profile 名称>","idempotency_key":"example-activate-1"}
 ```
 
 ```sh
 python examples/grip/invoke.py --target "$SLAVE_URI" --action activate-package --input activate.json
 python examples/grip/invoke.py --target "$ACTIVATION_URI"
 ```
+
+`credential_profile` 属于激活实例，与 `instance_config` 并列；不需要挂载凭据的实例省略该字段。
+请先确认 Slave operator 已配置对应目录。不同实例可选择不同 profile；同一实例的重试和重启
+保留原选择，切换 profile 使用新实例名。凭据文件不进入请求或包 manifest。
 
 激活结果的 `resource` 是实例 URI。SSH 实例配置改为实际 `{host,port,user}`；若返回
 `pending_auth`，调用实例 `auth-start`，输入文件内容为 `{"expected_revision":1}`（使用真实 revision）。
