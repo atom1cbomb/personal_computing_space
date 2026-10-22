@@ -1,0 +1,18 @@
+{
+  "mcue": "computing/grafana",
+  "version": "v1",
+  "description": "Grafana monitoring and its associated Kubernetes and Volcano resources",
+  "attributes_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["dashboard_url", "kubernetes_ref"],
+    "properties": {
+      "display_name": {"type": "string", "minLength": 1, "maxLength": 256},
+      "description": {"type": "string", "maxLength": 4096},
+      "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+      "dashboard_url": {"type": "string", "pattern": "^https://[^/?#@\\s]+/?$"},
+      "kubernetes_ref": {"type": "string", "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"},
+      "volcano_ref": {"type": "string", "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"}
+    }
+  }
+}

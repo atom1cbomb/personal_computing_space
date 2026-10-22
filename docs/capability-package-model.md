@@ -143,11 +143,7 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
     "start_path": "/v1/auth/start",
     "status_path": "/v1/auth/status",
     "browser_path": "/v1/auth/browser",
-    "client": {
-      "kind": "local-browser-bridge",
-      "protocol_version": "1",
-      "entrypoint": "client/loom_vm_auth.py"
-    }
+    "interaction": {"mode": "redirect"}
   }
 }
 ```
@@ -172,12 +168,20 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
 `authentication` 是可选的通用外部服务认证协议。声明后，runtime 在容器健康后
 调用 `start_path`；返回 `auth_required` 时激活状态为 `pending_auth`，健康报告
 携带设备登录信息。后台健康检查调用 `status_path`，仅返回 `authenticated` 后
-才将激活标记为 `ready`。两个路径均为无参数 `POST`，不能与健康或业务路径冲突。
+才将激活标记为 `ready`。两个路径均为 JSON `POST`；激活探测、状态查询及非浏览器
+认证启动发送 `{}`，显式浏览器认证启动则发送 Observer 生成的会话上下文。
+认证路径不能与健康或业务路径冲突。实现约定见
+[能力包认证接入指南](../skills/personal-computing-space/references/authentication-authoring.md)。
 
-需要浏览器往返的包必须声明 `browser_path` 和 `client`。`client` 指向随能力包交付、
-运行在用户电脑上的本地助手；助手只转发固定的登录入口与回调，不属于 Slave 容器，
-也不要求用户拥有 Observer 主机权限。Observer 为每次激活资源的 GRIP `auth-start` 发放绑定 package
-digest、实例和 activation revision 的短期 bridge token。
+`authentication.interaction` 声明 `redirect`、`browser-cookie`、`device-code` 或 `credential-profile`。
+前两者同时声明 `browser_path`，`browser-cookie` 还声明 `cookie_name`。
+统一 SDK 客户端 `loom-auth` 根据声明完成认证，不执行包提供的本地 Python 文件。
+Observer 的 `auth-start` 统一返回 `resource`、`revision` 和 `authentication`；
+DESCRIBE 暴露脱敏的 `metadata.authentication`，登录凭据只通过私有认证通道传递。
+首次登录和重新认证使用同一个入口，见 [统一认证](authentication.md)。
+
+历史不可变包中的旧 `client` 字段仅用于读取和摘要验证，新发布的包必须使用
+`interaction`。历史包的业务运行继续可用；统一登录需要发布新版包。
 
 每个 export 的 runtime binding 为：
 
@@ -189,7 +193,7 @@ Schema 拒绝 tag image、非法端口、非 origin-form path 和未知字段。
 
 服务线协议固定为：
 
-- `GET <health_path>` 的任意 2xx 表示 ready；
+- `GET <health_path>` 的任意 2xx 表示网关健康；声明认证时还需认证成功才能 ready；
 - `POST <runtime_binding.path>` 发送和接收 JSON document；
 - 不跟随重定向；
 - timeout、连接错误、5xx、非法 JSON 和超限响应不在同一 Attempt 内自动重放。

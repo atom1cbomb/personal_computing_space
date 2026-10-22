@@ -18,9 +18,9 @@ Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `o
 
 ```text
 grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-list
-grip://loom.local/workspaces/workspace-default/packages/suanlicloud-http/v4
+grip://loom.local/workspaces/workspace-default/packages/suanlicloud-http/v5
 grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/instances-list-output/sha256/<摘要>
-grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v4/slave-a/default
+grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v5/slave-a/default
 ```
 
 同一个 URI 在包内引用、SDK 和资源目录中保持一致，不再将资源地址编码后嵌入另一层地址。内容摘要仍用于校验与存储去重；完整名称绑定会持久化，不能只换一个名称就读取同一摘要。包版本不可变，包摘要保留在契约中；激活实例的变更通过 revision 管理。
@@ -237,7 +237,7 @@ grip/action、grip/schema、data/content 和 grip/mcue-type；平台系统字段
 
 已有部署使用 SDK 0.5 和对应服务端时，需要先执行[MCUE 迁移](mcue-upgrade.md)。
 
-六个服务包都有完整可上传产物，统一使用 `ServicePackage.publish` 或
+七个服务包都有完整可上传产物，统一使用 `ServicePackage.publish` 或
 `scripts/publish_service_package.py` 发布；参见 [服务包指南](../capability_services/README.md)
 和 [可运行示例](../examples/grip/README.md)。
 
@@ -251,3 +251,5 @@ REST 的内容上传、包制作、完整计划提交与管理 UI 仍承担制�
 
 设计和验证范围见 [GRIP spec](superpowers/specs/2026-10-19-grip-resource-invocation-design.md)
 及 [action 与实例描述 spec](superpowers/specs/2026-10-20-grip-actions-and-activation-description-design.md)。
+
+统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](authentication.md)。

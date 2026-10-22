@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/metrics-query",
+  "name": "metrics_query",
+  "description": "Execute an instant PromQL query through a Grafana Prometheus data source. Preserve warnings and sample timestamps.",
+  "capability_kinds": [
+    "compute.grafana.read"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/d859994489ad25ca3aafd48442a4b3babf4aed9a745c3b40ab56eb05c3d3e3a9",
+    "identity_criterion": "content_digest"
+  }
+}

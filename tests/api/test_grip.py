@@ -270,12 +270,14 @@ async def test_pending_auth_instance_offers_auth_action_and_forwards_revision(se
         "execution": {"kind": "container:http", "version": "1"},
         "action_exports": [{**raw["action_exports"][0], "runtime_binding": {"path": "/call"}}],
         "body": {"image_ref": "example/service@sha256:" + "a" * 64, "container_port": 8080,
-                 "health_path": "/healthz", "authentication": {"start_path": "/auth/start", "status_path": "/auth/status"}},
+                 "health_path": "/healthz", "authentication": {"start_path": "/auth/start", "status_path": "/auth/status", "interaction": {"mode": "device-code"}}},
     })
     activation = await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="auth-prepare", instance_name="login")
     def report(state, report_id):
         return CapabilityHealthReport(report_id=report_id, package_version_ref=package.version_ref, package_digest=package.package_digest,
-                                      target_slave="slave-a", instance_name="login", activation_state=state, activation_revision=activation.activation_revision)
+                                      target_slave="slave-a", instance_name="login", activation_state=state, activation_revision=activation.activation_revision,
+                                      details={"authentication": {"status": {"ready":"authenticated", "pending_auth":"auth_required", "failed":"auth_failed"}[state]},
+                                               "runtime_profile": {"authentication": {"status": {"ready":"authenticated", "pending_auth":"auth_required", "failed":"auth_failed"}[state]}}})
     await repo.record_capability_health(report("pending_auth", "pending-auth"))
     target = app.state.grip.activation_uri(package, activation)
     description = await client.describe(target)
@@ -285,13 +287,15 @@ async def test_pending_auth_instance_offers_auth_action_and_forwards_revision(se
     declared, = description["resource"]["metadata"]["actions"]
     assert declared["available"] is False
     assert declared["unavailable_reason"] == "activation_pending_auth"
+    attempts = []
     async def auth_start(**kwargs):
         assert kwargs["activation_revision"] == activation.activation_revision
         assert kwargs["instance_name"] == "login"
-        return report("ready", "authenticated")
+        attempts.append(kwargs)
+        return report("ready", "authenticated-" + str(len(attempts)))
     app.state.workers["slave-a"] = SimpleNamespace(auth_start=auth_start)
     result = await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activation.activation_revision})
-    assert result["health_reports"][0]["activation_state"] == "ready"
+    assert result["authentication"]["status"] == "authenticated"
     assert any("/exports/" in offer["action"]["uri"] for offer in (await client.describe(target))["offers"])
     ready, = (await client.describe(target))["resource"]["metadata"]["actions"]
     assert ready == {**declared, "available": True, "unavailable_reason": None}
@@ -299,6 +303,14 @@ async def test_pending_auth_instance_offers_auth_action_and_forwards_revision(se
     failed = await client.describe(target)
     assert failed["resource"]["metadata"]["actions"] == [{**declared, "unavailable_reason": "activation_failed"}]
     assert all("/exports/" not in offer["action"]["uri"] for offer in failed["offers"])
+    with pytest.raises(ValueError, match="activation_state_transition_invalid"):
+        await repo.record_capability_health(report("ready", "unsolicited-recovery"))
+    retried = await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activation.activation_revision})
+    assert retried == {"resource": target, "revision": activation.activation_revision,
+                       "authentication": {"method": "device-code", "status": "authenticated"}}
+    recovered = (await client.describe(target))["resource"]["metadata"]
+    assert recovered["state"] == "ready"
+    assert recovered["authentication"] == retried["authentication"]
 
 
 async def test_browser_auth_cannot_follow_a_concurrent_activation_revision(setup, monkeypatch):
@@ -312,7 +324,7 @@ async def test_browser_auth_cannot_follow_a_concurrent_activation_revision(setup
         "body": {"image_ref": "example/service@sha256:" + "a" * 64, "container_port": 8080,
                  "health_path": "/healthz", "authentication": {
                      "start_path": "/auth/start", "status_path": "/auth/status", "browser_path": "/auth/browser",
-                     "client": {"kind": "local-browser-bridge", "protocol_version": "1", "entrypoint": "client/auth.py"}}},
+                     "interaction": {"mode": "redirect"}}},
     })
     activation = await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="browser-start", instance_name="browser")
     await repo.record_capability_health(CapabilityHealthReport(

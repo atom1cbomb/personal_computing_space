@@ -30,6 +30,7 @@ from loom_v2.contracts.errors import DomainError
 from loom_v2.contracts.types import CapabilityPackageVersion, ClosureContract, ResourceRef, TaskClosure
 from loom_v2.observer.repository import RunRecord
 from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
+from loom_v2.observer.authentication import authentication_view
 from loom_v2.digest import digest_json
 
 log = logging.getLogger(__name__)
@@ -269,8 +270,11 @@ class GripService:
                             "actions": [{**a, "available": ready, "unavailable_reason": unavailable_reason}
                                         for a in declarations]}
                 authentication = (package.body or {}).get("authentication")
+                if authentication:
+                    metadata["authentication"] = authentication_view(
+                        package, activation.runtime_profile.get("authentication") or {})
                 add(activation_uri, "capability/activation", metadata,
-                    [builtin["stop"], *([builtin["auth-start"]] if authentication and activation.desired_state == "running" else []), *(exports if ready else [])], (package, activation))
+                    [builtin["stop"], *([builtin["auth-start"]] if authentication and authentication.get("interaction") and activation.desired_state == "running" else []), *(exports if ready else [])], (package, activation))
                 if target and ready:
                     bound.setdefault(target, []).append((package, activation, exports))
 
@@ -474,8 +478,11 @@ class GripService:
             raise GripError("invalid_input")
         if request.action == n.action("auth-start"):
             authentication = (package.body or {}).get("authentication") or {}
+            if not authentication.get("interaction"):
+                raise GripError("unsupported_action")
             if authentication.get("browser_path"):
-                return await self.app.state.browser_auth.start(http, package, [activation.target_slave], activation.instance_name, expected_revision=data["expected_revision"])
+                auth = await self.app.state.browser_auth.start(http, package, [activation.target_slave], activation.instance_name, expected_revision=data["expected_revision"])
+                return {"resource": request.target, "revision": activation.activation_revision, "authentication": auth}
             reports = await execute_auth_targets(
                 self.repo, package, [activation.target_slave], workspace_id=self.settings.workspace_id,
                 workers=self.app.state.workers, slaves=self.app.state.slaves,
@@ -483,7 +490,11 @@ class GripService:
                 slave_gateway=None if self.app.state.embedded else self.app.state.slave_gateway,
                 activation_revision=activation.activation_revision,
             )
-            return {"health_reports": reports}
+            report, = reports
+            if report.get("error"):
+                raise GripError("execution_failed")
+            auth = authentication_view(package, report.get("details", {}).get("authentication") or {})
+            return {"resource": request.target, "revision": activation.activation_revision, "authentication": auth}
         if request.action == n.action("stop"):
             await self._activate(package, activation.target_slave, "stopped", data["idempotency_key"],
                                  activation.instance_name, activation.target_resource_ref, activation.instance_config,

@@ -1,7 +1,36 @@
 import json
+import subprocess
+import time
+from types import SimpleNamespace
 from pathlib import Path
 
 from capability_services.suanli_vm_ssh_http.server import VmSshGateway
+import pytest
+
+
+@pytest.mark.parametrize("code,stderr,expected", [(0, b"", "authenticated"),
+    (255, b"Permission denied (publickey).", "auth_required"),
+    (255, b"Connection timed out", "auth_failed"), (255, b"REMOTE HOST IDENTIFICATION HAS CHANGED", "auth_failed")])
+def test_ssh_authentication_expiry_is_distinct_from_connection_failure(tmp_path, monkeypatch, code, stderr, expected):
+    gateway = VmSshGateway(state_root=tmp_path)
+    monkeypatch.setattr(gateway, "_credentials_present", lambda: True)
+    monkeypatch.setattr(gateway, "_ssh_args", lambda: ["ssh"])
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=code, stderr=stderr))
+    assert gateway.auth_status() == {"status": expected}
+
+
+def test_expired_ssh_login_can_restart_on_the_same_gateway(tmp_path):
+    gateway = VmSshGateway(state_root=tmp_path)
+    context = {"session_id": "a" * 43, "callback_uri": "http://localhost:3000/login-callback", "expires_at": time.time() + 200}
+    try:
+        gateway.auth_start(context)
+        gateway._expire(context["session_id"])
+        assert gateway.auth_status() == {"status": "auth_required"}
+        gateway.auth_start({**context, "session_id": "b" * 43})
+        assert gateway._browser_session["session_id"] == "b" * 43
+        assert gateway.auth_status()["status"] == "auth_required"
+    finally:
+        gateway.close()
 
 
 def test_vm_gateway_uses_activation_target_and_tofu_options(tmp_path: Path) -> None:

@@ -1,5 +1,7 @@
 # 外部服务浏览器登录与远程回调代理
 
+认证客户端与重试行为已由 [统一认证设计](2026-10-21-unified-authentication-design.md) 更新；下文保留原设计依据。
+
 状态：本地浏览器助手桥接已实现；真实 OIDC/Docker E2E 仍需按部署环境验收。遵循
 [设计规范](../spec-design-guidance.md)。
 

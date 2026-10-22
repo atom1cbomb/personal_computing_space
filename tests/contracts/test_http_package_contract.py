@@ -95,6 +95,37 @@ def test_http_contract_round_trips_full_manifest() -> None:
     assert restored == package
 
 
+@pytest.mark.parametrize("interaction,browser,valid", [
+    ({"mode": "redirect"}, True, True), ({"mode": "redirect"}, False, False),
+    ({"mode": "device-code"}, False, True), ({"mode": "device-code"}, True, False),
+    ({"mode": "credential-profile"}, False, True),
+    ({"mode": "browser-cookie", "cookie_name": "grafana_session"}, True, True),
+    ({"mode": "browser-cookie"}, True, False),
+    ({"mode": "browser-cookie", "cookie_name": "bad;cookie"}, True, False),
+    ({"mode": "custom-script", "entrypoint": "code.py"}, True, False),
+])
+def test_authentication_interaction_contract(interaction, browser, valid):
+    payload = http_package_payload()
+    auth = {"start_path": "/auth/start", "status_path": "/auth/status", "interaction": interaction}
+    if browser:
+        auth["browser_path"] = "/auth/browser"
+    payload["body"]["authentication"] = auth
+    if valid:
+        CapabilityPackageVersion.model_validate(payload)
+    else:
+        with pytest.raises(ValueError, match="package_contract_invalid"):
+            CapabilityPackageVersion.model_validate(payload)
+
+
+def test_historical_browser_client_is_readable_without_rewriting_the_package():
+    payload = http_package_payload()
+    payload["body"]["authentication"] = {"start_path": "/auth/start", "status_path": "/auth/status",
+        "browser_path": "/auth/browser", "client": {"kind": "local-browser-bridge", "protocol_version": "1",
+                                                     "entrypoint": "client/auth.py"}}
+    package = CapabilityPackageVersion.model_validate(payload)
+    assert package.body == payload["body"]
+
+
 def test_historical_http_package_credential_profile_remains_readable() -> None:
     payload = http_package_payload()
     payload["body"]["credential_profile"] = "k8s-prod_1"

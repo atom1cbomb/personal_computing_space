@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "dashboard": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "status",
+    "dashboard"
+  ]
+}

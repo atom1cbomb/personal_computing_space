@@ -198,9 +198,73 @@ def volcano_definitions() -> dict[str, dict[str, Any]]:
     return result
 
 
+def grafana_definitions() -> dict[str, dict[str, Any]]:
+    text = {"type": "string", "minLength": 1, "maxLength": 32768}
+    identity = {"type": "string", "minLength": 1, "maxLength": 128}
+    at = {"type": ["string", "number"]}
+    boolean = {"type": "boolean"}
+    strings = array(string())
+    gpu_metric = obj(["name", "node_label", "index_label", "unit"],
+                     name=string(), node_label=string(), index_label=string(), uuid_label=string(),
+                     unit=string(enum=["percent", "ratio"]))
+    query_output = obj(
+        ["status", "complete", "datasource_uid", "queried_at", "query", "parameters",
+         "result_type", "result", "warnings", "infos"],
+        status=string(const="ok"), complete=boolean, datasource_uid=identity,
+        queried_at=string(), query=text, parameters=obj(),
+        result_type=string(enum=["vector", "matrix", "scalar", "string"]),
+        result={"type": "array", "items": {}}, warnings=strings, infos=strings,
+    )
+    sample = obj(
+        ["hostname", "gpu_index", "gpu_uuid", "utilization_percent", "sampled_at", "labels"],
+        hostname=string(), gpu_index={"type": "integer", "minimum": 0},
+        gpu_uuid={"type": ["string", "null"]},
+        utilization_percent={"type": "number", "minimum": 0, "maximum": 100},
+        sampled_at=string(), labels=obj(),
+    )
+    return {
+        "datasources-list": {
+            "input": obj(),
+            "output": obj(["status", "items", "complete"], status=string(const="ok"),
+                          items=array(obj(["uid", "name", "type", "is_default"], uid=identity,
+                                          name=string(), type=string(), is_default=boolean)), complete={"const": True}),
+        },
+        "dashboards-list": {
+            "input": obj(search={"type": "string", "maxLength": 256}),
+            "output": obj(["status", "items", "total_count", "complete"], status=string(const="ok"),
+                          items=array(obj(["uid", "title"], uid=identity, title=string())),
+                          total_count={"type": "integer", "minimum": 0}, complete={"const": True}),
+        },
+        "dashboard-get": {
+            "input": obj(["uid"], uid=identity),
+            "output": obj(["status", "dashboard"], status=string(const="ok"), dashboard=obj()),
+        },
+        "metrics-query": {
+            "input": obj(["query"], query=text, datasource_uid=identity, time=at),
+            "output": query_output,
+        },
+        "metrics-query-range": {
+            "input": obj(["query", "start", "end", "step"], query=text, start=at, end=at,
+                         step={"type": "integer", "minimum": 1}, datasource_uid=identity),
+            "output": query_output,
+        },
+        "gpu-utilization": {
+            "input": obj(["hostname"], hostname={"type": "string", "minLength": 1, "maxLength": 253},
+                         gpu_index={"type": "integer", "minimum": 0}, time=at,
+                         datasource_uid=identity, gpu_metric=gpu_metric),
+            "output": obj(["status", "complete", "hostname", "unit", "metric", "datasource_uid",
+                           "queried_at", "query_time", "samples", "warnings", "infos"],
+                          status=string(enum=["ok", "no_data"]), complete=boolean, hostname=string(),
+                          unit=string(const="percent"), metric=string(), datasource_uid=identity,
+                          queried_at=string(), query_time=string(), samples=array(sample), warnings=strings, infos=strings),
+        },
+    }
+
+
 DEFINITIONS = {
     "kubernetes_http": k8s_definitions,
     "volcano_http": volcano_definitions,
+    "grafana_http": grafana_definitions,
     "outline_http": outline_definitions,
     "suanlicloud_http": suanli_definitions,
     "vm_ssh_http": None,

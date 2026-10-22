@@ -19,4 +19,5 @@ def test_server_wheel_contains_runtime_assets(tmp_path):
     assert "migrations/alembic/versions/007_activation_credentials.py" in names
     assert "loom_v2/mcue_types/computing-vm-v1.json" in names
     assert "loom_v2/mcue_types/computing-volcano-v1.json" in names
+    assert "loom_v2/mcue_types/computing-grafana-v1.json" in names
     assert "loom_orchestration/mcue.py" in names

@@ -46,3 +46,11 @@ The IoContracts keep `success_semantics` null because the gateway treats a
 successful Outline JSON response matching the output schema as sufficient.
 Stronger document-level criteria require a deterministic validator rather than
 an unexecuted descriptive field.
+
+## Authentication lifecycle
+
+The package declares `interaction.mode=credential-profile`. The
+[unified authentication client](../../docs/authentication.md) verifies the
+activation's configured credentials. When they are missing or invalid, update
+the operator-managed profile and verify again on the same activation; this
+method does not launch a browser login.

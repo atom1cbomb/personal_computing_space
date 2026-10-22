@@ -358,7 +358,7 @@ class DockerContainerHTTPRuntimeV1:
         if (
             not isinstance(authentication, dict)
             or not {"start_path", "status_path"}.issubset(authentication)
-            or set(authentication) - {"start_path", "status_path", "browser_path", "client"}
+            or set(authentication) - {"start_path", "status_path", "browser_path", "interaction", "client"}
         ):
             raise RuntimeError("runtime_plugin_capability_mismatch")
         start_path = authentication.get("start_path")
@@ -381,15 +381,10 @@ class DockerContainerHTTPRuntimeV1:
             if not isinstance(browser_path, str) or not browser_path.startswith("/") or "?" in browser_path or "#" in browser_path or browser_path in {start_path, status_path}:
                 raise RuntimeError("runtime_plugin_capability_mismatch")
             value["browser_path"] = browser_path
-        client = authentication.get("client")
-        if client is not None:
-            if (not isinstance(client, dict)
-                    or client.get("kind") != "local-browser-bridge"
-                    or client.get("protocol_version") != "1"
-                    or not isinstance(client.get("entrypoint"), str)
-                    or not client["entrypoint"]):
-                raise RuntimeError("runtime_plugin_capability_mismatch")
-            value["client"] = client
+        # Interaction is validated by Slave Core. Historical client declarations
+        # are inert: the runtime never executes user-side authentication code.
+        if "interaction" in authentication:
+            value["interaction"] = authentication["interaction"]
         return value
 
     async def auth_browser(
@@ -850,10 +845,10 @@ class DockerContainerHTTPRuntimeV1:
                         }
                     if auth["status"] != "authenticated":
                         return {
-                            "activation_state": "failed",
+                            "activation_state": "degraded",
                             "runtime_plugin_id": "container-http-v1",
-                            "runtime_profile": {"container_name": container_name},
-                            "details": {"code": "service_auth_probe_failed"},
+                            "runtime_profile": {"container_name": container_name, "authentication": auth},
+                            "details": {"code": "service_auth_probe_failed", "authentication": auth},
                             "idempotent": idempotent,
                         }
                 return {
@@ -862,6 +857,7 @@ class DockerContainerHTTPRuntimeV1:
                     "runtime_profile": {
                         "container_name": container_name,
                         "container_port": container_port,
+                        **({"authentication": auth} if authentication is not None else {}),
                     },
                     "evidence_refs": [
                         f"container:{container_name}",

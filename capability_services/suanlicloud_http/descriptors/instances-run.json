@@ -42,7 +42,7 @@
         {
           "capability_kind": "compute.vm.remote_shell",
           "package_ref": {
-            "resource_id": "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"
+            "resource_id": "grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4"
           },
           "target_binding": "target_resource_ref",
           "instance_config_mapping": {

@@ -48,7 +48,7 @@ async def test_all_resource_descriptions_use_resolvable_mcue(mcue_client):
         definition = await client.invoke(resource["metadata"]["mcue_ref"], client.names.action("read"), {})
         assert definition["mcue"] == resource["mcue"]
     assert [r["uri"] for r in await client.resources(mcue="computing/vm")] == [target]
-    assert len(await client.resources(mcue="grip/mcue-type")) == 11
+    assert len(await client.resources(mcue="grip/mcue-type")) == 12
     content = await client.upload_content({"answer": 42}, media_type="application/json")
     description = await client.describe(content.resource_id)
     assert description["resource"]["mcue"] == "data/content"

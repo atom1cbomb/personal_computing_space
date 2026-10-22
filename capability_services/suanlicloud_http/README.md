@@ -56,11 +56,11 @@ published as package `suanlicloud-http/v2` and activated on production
 verified against production for all six read-only actions. This historical
 evidence does not verify the new GRIP publication or invocation paths.
 
-The current publication template is `suanlicloud-http/v4`. Its `instances-run`
+The current publication template is `suanlicloud-http/v5`. Its `instances-run`
 resource effect declares `mcue_ref` for `computing/vm/v1`; `ServicePackage.publish`
 resolves that definition in the target workspace. Register returned VM identities
 with this definition, then use the declared SSH access package and cleanup action.
-The descriptor requires the MCUE Observer/SDK release. The v4 template also
+The descriptor requires the MCUE Observer/SDK release. The v5 template also
 requires activation credential selection: pass
 `"credential_profile": "suanlicloud-prod"` in the GRIP `activate-package` input.
 There is no profile selection in the package manifest. Different named
@@ -94,5 +94,5 @@ through the Observer content data plane and use the returned descriptor refs in
 the package manifest; the Observer exposes verified descriptor payloads to
 external agents through capability-package discovery.
 
-Publish `suanli-vm-ssh-http/v3` first, then pass its returned GRIP URI through
+Publish `suanli-vm-ssh-http/v4` first, then pass its returned GRIP URI through
 the publisher dependency map as described in the shared guide.

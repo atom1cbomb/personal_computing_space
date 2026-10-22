@@ -223,7 +223,20 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                         "start_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
                         "status_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
                         "browser_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                        "interaction": {
+                            "oneOf": [
+                                {"type": "object", "required": ["mode"],
+                                 "properties": {"mode": {"enum": ["redirect", "device-code", "credential-profile"]}},
+                                 "additionalProperties": False},
+                                {"type": "object", "required": ["mode", "cookie_name"],
+                                 "properties": {"mode": {"const": "browser-cookie"},
+                                                "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+                                 "additionalProperties": False},
+                            ]
+                        },
                         "client": {
+                            "description": "Historical immutable packages only; new clients use interaction.",
+                            "deprecated": True,
                             "type": "object",
                             "required": ["kind", "protocol_version", "entrypoint"],
                             "properties": {
@@ -234,6 +247,15 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                             "additionalProperties": False,
                         },
                     },
+                "allOf": [{
+                    "if": {"required": ["interaction"], "properties": {"interaction": {
+                        "properties": {"mode": {"enum": ["redirect", "browser-cookie"]}}}}},
+                    "then": {"required": ["browser_path"]},
+                }, {
+                    "if": {"required": ["interaction"], "properties": {"interaction": {
+                        "properties": {"mode": {"enum": ["device-code", "credential-profile"]}}}}},
+                    "then": {"not": {"required": ["browser_path"]}},
+                }],
                 "additionalProperties": False,
             },
         },

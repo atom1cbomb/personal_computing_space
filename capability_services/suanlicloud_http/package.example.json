@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanlicloud-http",
-  "package_version": "v4",
+  "package_version": "v5",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -13,7 +13,10 @@
     "network_profile": "egress",
     "authentication": {
       "start_path": "/v1/auth/start",
-      "status_path": "/v1/auth/status"
+      "status_path": "/v1/auth/status",
+      "interaction": {
+        "mode": "credential-profile"
+      }
     }
   },
   "action_exports": [
@@ -134,7 +137,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-run",
-        "version_or_digest": "07b680a2908cbb397abb4e191cb7ba22a9470c4ec9ea37fbb624a5e6de02c5c6",
+        "version_or_digest": "54a284abcd126e34965f385ef901623aa31ca945d4de7c3be1e465b1345d5dc0",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {

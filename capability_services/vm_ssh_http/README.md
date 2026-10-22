@@ -34,3 +34,11 @@ The descriptor carries `schemas/instance-config.json`. Publication includes
 `validators/exec-success.py`: successful execution requires exit code zero and
 no timeout. The activation offers GRIP `auth-start` for the configured SSH key
 profile; it does not perform an interactive browser login.
+
+## Authentication lifecycle
+
+The package declares `interaction.mode=credential-profile`. The
+[unified authentication client](../../docs/authentication.md) verifies the
+activation's configured credentials. When they are missing or invalid, update
+the operator-managed profile and verify again on the same activation; this
+method does not launch a browser login.

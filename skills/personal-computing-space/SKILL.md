@@ -1,6 +1,6 @@
 ---
 name: personal-computing-space
-description: Use when a coding agent needs to discover or describe Loom resources, update their public attributes, or submit, monitor, continue, resolve, or cancel a distributed task through a deployed Personal Computing Space (Loom) Observer.
+description: Use when a coding agent needs to discover or describe Loom resources, update their public attributes, author or publish Loom capability packages including authentication, or submit and manage distributed tasks through a deployed Personal Computing Space (Loom) Observer.
 ---
 
 # Personal Computing Space
@@ -138,12 +138,25 @@ Read [references/observer-workflow.md](references/observer-workflow.md) before
 calling the Observer. It contains request shapes, polling rules, decision
 handling, result retrieval, and a distributed-task prompt template.
 
+## Authentication and reauthentication
+
+When creating or updating an authenticated `service + container:http/1` package,
+read [references/authentication-authoring.md](references/authentication-authoring.md).
+It defines the manifest, private gateway hooks, system responsibilities,
+credential isolation, expiry recovery and validation workflow. Reuse the SDK
+portal; implement provider-specific authentication in the service gateway.
+
+For browser/device login, use the SDK's single `loom-auth` portal for all selected
+activation URIs. Read [references/authentication.md](references/authentication.md)
+for installation, instance selection, status, expiry and retry. The portal starts
+`auth-start` using the latest DESCRIBE revision and verifies ready before showing
+success. Expiry does not require a new resource, activation or business Run.
+
 ## Kubernetes capability package
 
 Use the package's fixed business actions from GRIP DESCRIBE. Activate the
-package on a chosen Slave. On `pending_auth`, invoke that activation's
-`auth-start` action with its `expected_revision`; show the returned public login
-instructions and poll the same activation until ready. Never ask for a token or
+package on a chosen Slave. On `pending_auth`, use the unified login portal for that activation and poll
+the same activation until ready. Never ask for a token or
 kubeconfig in a task message.
 
 Invoke the discovered jobs-submit action only with a VolcanoJob manifest
@@ -158,3 +171,10 @@ include `dashboard_url` and `kubernetes_ref`, which identifies the associated
 Kubernetes resource. Read [references/volcano.md](references/volcano.md) before
 querying or connecting a Dashboard. Use its ready activation and exact discovered
 action URI; Dashboard addresses differ across clusters.
+
+## Grafana monitoring
+
+For actual GPU utilization, host GPU numeric indexes and historical monitoring,
+discover `mcue="computing/grafana"` and match its explicit `kubernetes_ref` or
+`volcano_ref`. Read [references/grafana.md](references/grafana.md) before querying
+or connecting it. Volcano allocation counts do not provide actual utilization.

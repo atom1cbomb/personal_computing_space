@@ -454,6 +454,9 @@ class ObserverRepository:
     async def _validate_package_exports(self, package: CapabilityPackageVersion, *, publication: bool = False) -> None:
         if publication and "credential_profile" in (package.body or {}):
             raise ValueError("credential_profile_requires_activation")
+        authentication = (package.body or {}).get("authentication")
+        if publication and authentication and ("interaction" not in authentication or "client" in authentication):
+            raise ValueError("authentication_interaction_required")
         for action_export in package.action_exports:
             await self._validate_action_descriptor_ref(action_export.action_descriptor_ref)
             try:
@@ -3559,7 +3562,8 @@ class ObserverRepository:
             return activation
 
     async def record_capability_health(
-        self, report: CapabilityHealthReport, *, run_id: str | None = None
+        self, report: CapabilityHealthReport, *, run_id: str | None = None,
+        authentication_restart: bool = False,
     ) -> CapabilityPackageActivation:
         if not isinstance(report, CapabilityHealthReport):
             report = CapabilityHealthReport.model_validate(report)
@@ -3578,10 +3582,12 @@ class ObserverRepository:
         lock_key = (workspace, package.version_ref, "*", "*") if package.workspace_id else (workspace, package.version_ref, report.target_slave, report.instance_name)
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
-            return await self._record_capability_health_locked(report, run_id=run_id)
+            return await self._record_capability_health_locked(
+                report, run_id=run_id, authentication_restart=authentication_restart)
 
     async def _record_capability_health_locked(
-        self, report: CapabilityHealthReport, *, run_id: str | None = None
+        self, report: CapabilityHealthReport, *, run_id: str | None = None,
+        authentication_restart: bool = False,
     ) -> CapabilityPackageActivation:
         """Accept an actual-state report only for the current desired revision."""
         if not isinstance(report, CapabilityHealthReport):
@@ -3652,6 +3658,13 @@ class ObserverRepository:
             "stopped": {"stopped"},
             "lost": {"pending_auth", "ready", "degraded", "failed", "stopped"},
         }
+        if authentication_restart:
+            auth = (report.details or {}).get("authentication", {})
+            expected_state = {"authenticated": "ready", "auth_required": "pending_auth", "auth_failed": "degraded"}.get(auth.get("status"))
+            if (current.desired_state != "running" or not (package.body or {}).get("authentication")
+                    or report.activation_state != expected_state):
+                raise ValueError("authentication_restart_report_invalid")
+            allowed_transitions["failed"] = {"pending_auth", "ready", "degraded"}
         if report.activation_state not in allowed_transitions[current.activation_state]:
             raise ValueError("activation_state_transition_invalid")
         runtime_profile = (

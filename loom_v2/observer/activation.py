@@ -202,7 +202,7 @@ async def execute_auth_targets(
                 )
             else:
                 raise RuntimeError("slave_not_found")
-            await repository.record_capability_health(report)
+            await repository.record_capability_health(report, authentication_restart=True)
             reports.append(report.model_dump(mode="json"))
         except (RuntimeError, ValueError) as exc:
             reports.append({"target_slave": target, "activation_state": "failed", "error": str(exc)})

@@ -52,6 +52,11 @@ are `dashboard_url` (HTTPS origin, including the port) and `kubernetes_ref`
 (associated Kubernetes GRIP URI); display_name, description and labels are
 optional. See [volcano.md](volcano.md) for discovery and workload/GPU queries.
 
+`computing/grafana/v1` describes a Grafana monitoring endpoint. Required public
+fields are `dashboard_url` and `kubernetes_ref`; `volcano_ref` is an optional
+explicit link to the related Volcano resource. See [grafana.md](grafana.md) for
+metric discovery, credentials and actual GPU utilization.
+
 MCUE decides whether host, user, port, or runtime information may be public.
 There is no platform-wide blacklist for those field names. A definition that
 declares such fields permits their explicit descriptive values; a closed schema

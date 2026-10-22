@@ -15,6 +15,7 @@ import subprocess
 import signal
 import threading
 import contextlib
+import time
 from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,6 +25,7 @@ from typing import Any
 MAX_BODY = 2 * 1024 * 1024
 MAX_OUTPUT = 4 * 1024 * 1024
 COMMAND_TIMEOUT = float(os.getenv("K8S_GATEWAY_COMMAND_TIMEOUT", "30"))
+AUTH_CHECK_INTERVAL = 30.0
 NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 LOGIN_PROMPT_RE = re.compile(
     r"^(?:Please visit the following URL in your browser manually:\s*|Open\s+)"
@@ -58,6 +60,9 @@ class KubernetesGateway:
         self._auth_process: subprocess.Popen[bytes] | None = None
         self._auth_stdout = bytearray()
         self._auth_stderr = bytearray()
+        self._auth_readers: list[threading.Thread] = []
+        self._auth_completed_at: float | None = None
+        self._revalidation_deadline: float | None = None
         self.policy = self._load_policy()
 
     def _load_policy(self) -> dict[str, str]:
@@ -156,6 +161,16 @@ class KubernetesGateway:
 
     def _probe(self) -> dict[str, Any]:
         with self._auth_lock:
+            # kubelogin refreshes its credentials on a fresh kubectl invocation.
+            # A completed successful process is not permanent authentication.
+            if (self._auth_process is not None and self._auth_process.poll() == 0
+                    and bytes(self._auth_stdout).strip().lower() in {b"yes", b"true"}
+                    and self._auth_completed_at is not None
+                    and time.monotonic() - self._auth_completed_at >= AUTH_CHECK_INTERVAL):
+                self._start_auth_process_locked()
+                # Keep the last verified success while a bounded refresh is in
+                # flight. A new device challenge or failure takes precedence.
+                self._revalidation_deadline = time.monotonic() + self.timeout
             started = self._auth_process is None
             if self._auth_process is None:
                 self._start_auth_process_locked()
@@ -175,8 +190,13 @@ class KubernetesGateway:
             return
         if old is not None:
             self._kill_group(old)
-        self._auth_stdout.clear()
-        self._auth_stderr.clear()
+            old.wait(timeout=2)
+        # Old reader threads retain their old buffers and cannot contaminate
+        # another attempt's challenge or authorization result.
+        self._auth_stdout, self._auth_stderr = bytearray(), bytearray()
+        self._auth_readers = []
+        self._auth_completed_at = None
+        self._revalidation_deadline = None
         try:
             process = subprocess.Popen(
                 [*self._base_args(), "auth", "can-i", "get", "pods"],
@@ -198,11 +218,13 @@ class KubernetesGateway:
             (process.stderr, self._auth_stderr),
         ):
             if stream is not None:
-                threading.Thread(
+                reader = threading.Thread(
                     target=self._read_auth_stream,
                     args=(stream, target),
                     daemon=True,
-                ).start()
+                )
+                self._auth_readers.append(reader)
+                reader.start()
 
     @staticmethod
     def _read_auth_stream(stream: Any, target: bytearray) -> None:
@@ -218,23 +240,38 @@ class KubernetesGateway:
         process = self._auth_process
         if process is None:
             return {"status": "auth_failed", "retryable": True}
+        if process.poll() is not None:
+            for reader in self._auth_readers:
+                reader.join(timeout=0.1)
+            if self._auth_completed_at is None:
+                self._auth_completed_at = time.monotonic()
         stdout = bytes(self._auth_stdout).decode("utf-8", errors="replace")
         stderr = bytes(self._auth_stderr).decode("utf-8", errors="replace")
         if process.poll() is None:
             challenge = self._challenge(stdout, stderr)
-            return challenge or {"status": "auth_required", "poll_after_seconds": 5}
+            if challenge:
+                self._revalidation_deadline = None
+                return challenge
+            if self._revalidation_deadline is not None:
+                if time.monotonic() < self._revalidation_deadline:
+                    return {"status": "authenticated"}
+                return {"status": "auth_failed", "retryable": True}
+            return {"status": "auth_required", "poll_after_seconds": 5}
+        self._revalidation_deadline = None
         if process.returncode == 0 and stdout.strip().lower() in {"yes", "true"}:
             return {"status": "authenticated"}
         challenge = self._challenge(stdout, stderr)
         if challenge:
-            return challenge
+            # The process no longer polls the authorization server. The printed
+            # device URL/code belongs to a dead attempt and must not be reused.
+            return {"status": "auth_required", "poll_after_seconds": 5}
         return {"status": "auth_failed", "retryable": False}
 
     def _auth_start(self) -> dict[str, Any]:
         with self._auth_lock:
             if self._auth_process is not None and self._auth_process.poll() is None:
                 self._kill_group(self._auth_process)
-                self._auth_process = None
+                self._auth_process.wait(timeout=2)
             self._start_auth_process_locked()
             # Give a device-code plugin a short opportunity to print its
             # challenge, while keeping the HTTP request bounded.

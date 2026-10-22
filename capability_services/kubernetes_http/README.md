@@ -71,3 +71,10 @@ response that matches the action output schema is the gateway's success
 criterion. A future domain-specific criterion must add a deterministic
 `success_validator_ref`; adding opaque semantics alone would require
 attestation.
+
+## 统一登录与重新认证
+
+`kubernetes-http/v6` 声明 `interaction.mode=device-code`，使用
+[统一 SDK 登录入口](../../docs/authentication.md)。客户端自动发起认证并展示设备码，
+后台仍由 kubeconfig 的 kubelogin 插件授权和刷新凭据。成功结果每 30 秒重新探测，
+不会永久复用旧探测结果。已退出的登录进程不再提供旧链接；原入口可重新认证。

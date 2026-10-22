@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from loom_v2.contracts.browser_auth import BrowserAuthMessage
 from loom_v2.contracts.types import CapabilityHealthReport, ResourceRef
+from loom_v2.observer.authentication import authentication_view
 
 
 class BrowserAuth:
@@ -53,7 +54,7 @@ class BrowserAuth:
             else:
                 raise RuntimeError("slave_not_found")
             if action == "start":
-                await self.app.state.repo.record_capability_health(result)
+                await self.app.state.repo.record_capability_health(result, authentication_restart=True)
                 return {"health_reports": [result.model_dump(mode="json")]}
             return result
         drivers = await self.app.state.repo.list_agents(self.settings.workspace_id, role="driver")
@@ -75,7 +76,8 @@ class BrowserAuth:
             report = value.get("health_report")
             if not isinstance(report, dict):
                 raise RuntimeError("browser_auth_start_failed")
-            await self.app.state.repo.record_capability_health(CapabilityHealthReport.model_validate(report))
+            await self.app.state.repo.record_capability_health(
+                CapabilityHealthReport.model_validate(report), authentication_restart=True)
             return {"health_reports": [report]}
         return await self.app.state.slave_gateway.forward(
             session["target_slave"], "/worker/v1/capability/auth/browser", {
@@ -100,8 +102,8 @@ class BrowserAuth:
         if activation.activation_revision != expected_revision:
             raise ValueError("capability_activation_revision_stale")
         authentication = package.body.get("authentication") if isinstance(package.body, dict) else None
-        if not isinstance(authentication, dict) or not isinstance(authentication.get("client"), dict):
-            raise HTTPException(409, "browser_auth_client_not_declared")
+        if not isinstance(authentication, dict) or (authentication.get("interaction") or {}).get("mode") not in {"redirect", "browser-cookie"}:
+            raise HTTPException(409, "browser_auth_interaction_not_declared")
         session = dict(package_ref=package.version_ref, package_digest=package.package_digest,
                        target_slave=targets[0], instance_name=instance_name,
                        activation_revision=activation.activation_revision,
@@ -125,14 +127,13 @@ class BrowserAuth:
             except (ValueError, RuntimeError, KeyError) as exc:
                 raise HTTPException(409, "browser_auth_start_failed") from exc
             self.sessions[session_id] = session
-        uri = "http://localhost:3000/login?session_id=" + session_id
+        uri = "http://localhost:3000/"
         base_url = (self.settings.public_base_url or str(request.base_url)).rstrip("/")
-        client = {**authentication["client"], "bridge_url": base_url + self.bridge_path,
+        client = {"bridge_url": base_url + self.bridge_path,
                   "session_id": session_id, "session_token": session["bridge_token"]}
-        return {"package": package.model_dump(mode="json"), **result, "browser_auth": [
-            {"target_slave": targets[0], "instance_name": instance_name, "verification_uri": uri,
-             "qr_payload": uri, "status": "auth_required", "expires_at": session["expires_at"],
-             "client": client}]}
+        return {**authentication_view(package, {"verification_uri": uri,
+                "status": "auth_required", "expires_at": session["expires_at"], "poll_after_seconds": 2}),
+                "client": client}
 
     async def _open_session(self, session_id: str) -> tuple[str, str]:
         async with self.lock:

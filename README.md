@@ -85,11 +85,15 @@ Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` UR
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
 `metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。六个内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。七个内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
 
 Volcano 面板使用独立的 `volcano-http` 服务包，支持队列、PodGroup 和 GPU 分配查询。
 `computing/volcano` 资源的 MCUE 属性公开面板地址与对应 Kubernetes 的 GRIP 引用；
 不同面板使用同一包的不同激活实例，见 [Volcano 接入说明](capability_services/volcano_http/README.md)。
+
+Grafana 监控使用独立的 `grafana-http` 服务包，查询仪表盘、Prometheus 指标和按节点/
+GPU 数字编号区分的实际利用率。`computing/grafana` 关联对应 Kubernetes 与 Volcano，
+凭据由各激活实例独立选择，见 [Grafana 接入说明](capability_services/grafana_http/README.md)。
 
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
 同包不同实例可以使用不同账号或集群。现有部署需协调升级 Observer、Driver、Slave、runtime
@@ -263,3 +267,5 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
 - `deploy/`、`scripts/`、`tests/`：部署配置、运维脚本与验证。
 
 进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。
+
+统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](docs/authentication.md)。

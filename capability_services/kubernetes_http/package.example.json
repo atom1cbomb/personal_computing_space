@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "kubernetes-http",
-  "package_version": "v4",
+  "package_version": "v6",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -13,7 +13,10 @@
     "network_profile": "egress",
     "authentication": {
       "start_path": "/v1/auth/start",
-      "status_path": "/v1/auth/status"
+      "status_path": "/v1/auth/status",
+      "interaction": {
+        "mode": "device-code"
+      }
     }
   },
   "action_exports": [

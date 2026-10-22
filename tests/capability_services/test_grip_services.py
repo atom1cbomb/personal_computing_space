@@ -24,7 +24,7 @@ from loom_v2.testing.observer import create_embedded_app, seed_embedded_slaves
 from runtime_plugins.container_http_v1.runtime import DockerCommandResult, DockerContainerHTTPRuntimeV1, RUNTIME_DESCRIPTOR
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGES = ("kubernetes_http", "volcano_http", "outline_http", "suanlicloud_http", "vm_ssh_http", "suanli_vm_ssh_http")
+PACKAGES = ("kubernetes_http", "volcano_http", "grafana_http", "outline_http", "suanlicloud_http", "vm_ssh_http", "suanli_vm_ssh_http")
 IMAGE = "registry.example/loom/test@sha256:" + "a" * 64
 
 
@@ -102,6 +102,9 @@ class RuntimeAdapter:
     async def auth_start(self, package, activation):
         return await self.runtime.auth_start(package.model_dump(mode="json"), activation)
 
+    async def auth_browser(self, package, activation, payload):
+        return await self.runtime.auth_browser(package.model_dump(mode="json"), activation, payload)
+
     async def inspect(self, activation):
         return await self.runtime.inspect(activation)
 
@@ -144,6 +147,30 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
                 item.update(spec={"nodeName": "node-a", "containers": [{"resources": {"limits": {"nvidia.com/gpu": "2"}}}]}, status={"phase": "Running"})
             return httpx.Response(200, json={"items": [item], "totalCount": 1})
         gateway = module.VolcanoGateway(instance_path=instance, transport=httpx.MockTransport(provider))
+    elif directory == "grafana_http":
+        instance.write_text(json.dumps({"api_origin": "https://grafana-internal.example", "gpu_metric": {
+            "name": "DCGM_FI_DEV_GPU_UTIL", "node_label": "Hostname", "index_label": "gpu", "unit": "percent"}}))
+        (credentials / "grafana_token").write_text("fixture-secret")
+        def provider(request):
+            external["calls"].append((str(request.url), request.method))
+            assert request.headers["Authorization"] == "Bearer fixture-secret"
+            if external["failed"]:
+                return httpx.Response(503)
+            if external["invalid"]:
+                return httpx.Response(200, json={"invalid": True})
+            if request.url.path == "/api/datasources":
+                return httpx.Response(200, json=[{"uid": "prom", "name": "Prometheus", "type": "prometheus", "isDefault": True}])
+            if request.url.path == "/api/search":
+                return httpx.Response(200, json=[{"uid": "gpu", "title": "GPU"}])
+            if request.url.path == "/api/dashboards/uid/gpu":
+                return httpx.Response(200, json={"dashboard": {"uid": "gpu", "title": "GPU", "panels": []}})
+            range_query = request.url.path.endswith("/query_range")
+            data = {"metric": {"Hostname": "node-a", "gpu": "0", "UUID": "GPU-fixture"},
+                    "values" if range_query else "value": [[10, "42"], [20, "50"]] if range_query else [10, "42"]}
+            return httpx.Response(200, json={"status": "success", "data": {
+                "resultType": "matrix" if range_query else "vector", "result": [data]}})
+        gateway = module.GrafanaGateway(instance_path=instance, credential_root=credentials,
+                                       state_root=state, transport=httpx.MockTransport(provider))
     elif directory in {"vm_ssh_http", "suanli_vm_ssh_http"}:
         command = tmp_path / "ssh"
         command.write_text('#!/bin/sh\nexec /bin/sh\n')
@@ -193,7 +220,7 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
 
 
 def arguments(directory, action_name):
-    common = {"name": "fixture-job", "pod_name": "fixture-pod", "resource": "pods", "id": "fixture-id", "documentId": "fixture-document", "collectionId": "fixture-collection", "title": "Fixture", "query": "fixture", "command": "id", "RegionId": "region-test", "ZoneId": "zone-test", "InstanceIds": ["vm-test"], "Filters": [], "IncludeAllInstances": True}
+    common = {"name": "fixture-job", "pod_name": "fixture-pod", "resource": "pods", "id": "fixture-id", "documentId": "fixture-document", "collectionId": "fixture-collection", "title": "Fixture", "query": "fixture", "command": "id", "RegionId": "region-test", "ZoneId": "zone-test", "InstanceIds": ["vm-test"], "Filters": [], "IncludeAllInstances": True, "uid": "gpu", "hostname": "node-a", "start": 10, "end": 20, "step": 10}
     schema = json.loads((ROOT / "capability_services" / directory / "schemas" / f"{action_name}-input.json").read_text())
     value = {key: common[key] for key in schema.get("required", []) if key in common}
     if action_name == "jobs-submit":
@@ -223,7 +250,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
             async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
                 dependencies = {}
                 if directory == "suanlicloud_http":
-                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
+                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
                 package = await bundle.publish(client, image_ref=IMAGE, dependencies=dependencies)
                 raw = await client.invoke(package, client.names.action("read"), {})
                 assert raw["publication_state"] == "published"
@@ -241,6 +268,16 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                         "attributes": {"dashboard_url": "https://volcano.example:7443", "kubernetes_ref": related_kubernetes},
                     })
                     binding = {"target": volcano_uri}
+                elif directory == "grafana_http":
+                    config = {"api_origin": "https://grafana-internal.example", "gpu_metric": {
+                        "name": "DCGM_FI_DEV_GPU_UTIL", "node_label": "Hostname", "index_label": "gpu", "unit": "percent"}}
+                    grafana_uri = client.names.name("resources", "grafana", "bj")
+                    related_kubernetes = client.names.name("activations", "kubernetes-http", "v4", "slave-a", "beijing")
+                    await client.invoke(client.names.root, client.names.action("register-resource"), {
+                        "resource_id": grafana_uri, "mcue_ref": client.names.mcue("computing/grafana"), "package": package,
+                        "attributes": {"dashboard_url": "https://grafana.example:7443", "kubernetes_ref": related_kubernetes},
+                    })
+                    binding = {"target": grafana_uri}
                 activation = await client.invoke(slave, client.names.action("activate-package"), {"package": package, "instance_name": "integration", "instance_config": config, "credential_profile": profile, "idempotency_key": "activate", **binding})
                 target = activation["resource"]
                 stored = next(a for a in app.state.slaves["slave-a"].activations.values() if a.instance_name == "integration")
@@ -252,10 +289,10 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                 else:
                     assert not any("dst=/run/loom/credentials" in arg for args in mounts for arg in args)
                 auth = (await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activation["revision"]})
-                        if bundle.manifest["body"].get("authentication") else None)
+                        if bundle.manifest["body"].get("authentication") and directory != "grafana_http" else None)
                 if directory == "suanli_vm_ssh_http":
                     assert activation["state"] == "pending_auth"
-                    assert auth["browser_auth"][0]["client"]["bridge_url"].endswith("/api/v1/auth/browser/bridge")
+                    assert auth["authentication"]["client"]["bridge_url"].endswith("/api/v1/auth/browser/bridge")
                     pending = await client.describe(target)
                     assert not any("/exports/" in o["action"]["uri"] for o in pending["offers"])
                     assert len(pending["resource"]["metadata"]["actions"]) == len(exports)
@@ -275,9 +312,11 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                 else:
                     assert activation["state"] == "ready", activation
                     if auth is not None:
-                        assert auth["health_reports"][0]["activation_state"] == "ready", auth
+                        assert auth["authentication"]["status"] == "authenticated", auth
                 description = await client.describe(target)
                 metadata = description["resource"]["metadata"]
+                if bundle.manifest["body"].get("authentication"):
+                    assert metadata["authentication"]["status"] == "authenticated"
                 assert metadata["package"] == package
                 assert metadata["host"] == slave
                 assert metadata["instance_name"] == "integration"
@@ -323,7 +362,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     assert failure_result["state"] in {"failed", "awaiting_decision"}, failure_result
                     with pytest.raises(GripError, match="invalid_input"):
                         await client.invoke(target, exports[0]["uri"], {"arguments": {"command": "id", "timeout_seconds": -1}, "expected_revision": activation["revision"], "idempotency_key": "invalid-input"})
-                elif directory in {"outline_http", "suanlicloud_http", "volcano_http"}:
+                elif directory in {"outline_http", "suanlicloud_http", "volcano_http", "grafana_http"}:
                     for failure in ("failed", "invalid"):
                         external[failure] = True
                         call = await client.invoke(target, exports[0]["uri"], {"arguments": {}, "expected_revision": activation["revision"], "idempotency_key": failure})
@@ -344,11 +383,28 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     direct_result = await wait_result(app, client, direct["run"])
                     assert direct_result["state"] == "completed"
                     assert direct_result["outcome"]["value"]["allocated"] == 2
+                if directory == "grafana_http":
+                    domain = await client.describe(grafana_uri)
+                    assert domain["resource"]["mcue"] == "computing/grafana"
+                    assert domain["resource"]["metadata"]["attributes"]["kubernetes_ref"] == related_kubernetes
+                    assert domain["resource"]["metadata"]["activations"] == [target]
+                    assert metadata["target"] == grafana_uri
+                    gpu_action = next(a["uri"] for a in declarations if a["name"] == "gpu_utilization")
+                    direct = await client.invoke(grafana_uri, gpu_action, {
+                        "arguments": {"hostname": "node-a"}, "expected_revision": activation["revision"],
+                        "idempotency_key": "direct-grafana-gpu",
+                    })
+                    direct_result = await wait_result(app, client, direct["run"])
+                    assert direct_result["state"] == "completed", direct_result
+                    point, = direct_result["outcome"]["value"]["samples"]
+                    assert (point["hostname"], point["gpu_index"], point["utilization_percent"]) == ("node-a", 0, 42)
                 # A second instance has its own Docker identity and can be stopped
                 # independently even though it shares the immutable package.
                 second_config = {**config, "host": "192.0.2.8"} if config else {}
                 if directory == "volcano_http":
                     second_config = {"api_origin": "https://second-volcano-internal.example"}
+                elif directory == "grafana_http":
+                    second_config = {**config, "api_origin": "https://second-grafana-internal.example"}
                 second = await client.invoke(slave, client.names.action("activate-package"), {
                     "package": package, "instance_name": "second", "instance_config": second_config,
                     "idempotency_key": "activate-second",
@@ -358,7 +414,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                 if "host" in config:
                     configurations = [json.loads(path.read_text()) for path in (tmp_path / "instances").rglob("*.json")]
                     assert {c["host"] for c in configurations} == {"192.0.2.7", "192.0.2.8"}
-                elif directory == "volcano_http":
+                elif directory in {"volcano_http", "grafana_http"}:
                     configurations = [json.loads(path.read_text()) for path in (tmp_path / "instances").rglob("*.json")]
                     assert {c["api_origin"] for c in configurations} == {config["api_origin"], second_config["api_origin"]}
                 stopped = await client.invoke(target, client.names.action("stop"), {"expected_revision": activation["revision"], "idempotency_key": "stop"})
@@ -392,6 +448,135 @@ async def test_service_publisher_rejects_mutable_image_and_unresolved_access_pac
     async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
         with pytest.raises(ValueError, match="immutable_image_ref_required"):
             await bundle.publish(client, image_ref="registry.example/cloud:latest")
-        with pytest.raises(ValueError, match="service_artifact_dependency_missing:grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3"):
+        with pytest.raises(ValueError, match="service_artifact_dependency_missing:grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4"):
             await bundle.publish(client, image_ref=IMAGE)
         assert await client.resources(mcue="capability/package") == []
+
+
+@pytest.mark.parametrize("rotate_session", [False, True])
+async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_out_of_runs(tmp_path, rotate_session):
+    from capability_services.grafana_http.server import GrafanaGateway, Handler
+    instance = tmp_path / "instance.json"
+    instance.write_text(json.dumps({"api_origin": "https://grafana-internal.example",
+                                   "browser_origin": "https://grafana-public.example:7443"}))
+    authorized = {"allow": True}
+    session = {"cookie": "browser-private-cookie", "rotation_required": False, "rotations": 0}
+    def provider(request):
+        if not authorized["allow"] or request.headers.get("Cookie") != "grafana_session=" + session["cookie"]:
+            return httpx.Response(401)
+        if request.method == "POST" and request.url.path == "/api/user/auth-tokens/rotate":
+            session.update(cookie="browser-rotated-cookie", rotation_required=False, rotations=session["rotations"] + 1)
+            return httpx.Response(200, json={}, headers={"Set-Cookie": "grafana_session=browser-rotated-cookie; Path=/; Secure"})
+        if session["rotation_required"]:
+            return httpx.Response(401, json={"messageId": "session.token.rotate"})
+        if request.url.path == "/api/datasources":
+            return httpx.Response(200, json=[{"uid": "prom", "name": "Prometheus", "type": "prometheus", "isDefault": True}])
+        return httpx.Response(200, json={"status": "success", "data": {"resultType": "vector", "result": [
+            {"metric": {"Hostname": "node-a", "gpu": "2"}, "value": [10, "37"]}]}})
+    gateway = GrafanaGateway(instance_path=instance, credential_root=tmp_path / "credentials",
+                             state_root=tmp_path / "state", transport=httpx.MockTransport(provider))
+    handler = type("BrowserGrafanaHandler", (Handler,), {"gateway": gateway})
+    settings = Settings(grip_token="browser-test", public_base_url="http://observer", coding_agent_backend="none", agent_lease_ttl_seconds=300)
+    repo = ObserverRepository(settings=settings)
+    app = create_embedded_app(repo, settings=settings)
+    bundle = ServicePackage(ROOT / "capability_services/grafana_http")
+    with serve(handler) as port:
+        runner = DockerFixture()
+        runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="internal", egress_network="egress",
+            runner=runner, http_transport=LocalGatewayTransport(port), credential_dir=tmp_path,
+            instance_state_dir=tmp_path / "instances")
+        app.state.slaves["slave-a"].runtime_plugin_host = RuntimePluginHost(
+            plugins={('service', 'container:http', '1'): RuntimeAdapter(runtime)})
+        seed_embedded_slaves(repo, app.state.slaves)
+        try:
+            async with LoomClient("http://observer", token=settings.grip_token,
+                    transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
+                package = await bundle.publish(client, image_ref=IMAGE)
+                slave = (await client.resources(mcue="computing/slave"))[0]["uri"]
+                activated = await client.invoke(slave, client.names.action("activate-package"), {
+                    "package": package, "instance_name": "bj", "instance_config": json.loads(instance.read_text()),
+                    "idempotency_key": "activate-browser-grafana"})
+                assert activated["state"] == "pending_auth"
+                target = activated["resource"]
+                desc = await client.describe(target)
+                assert all(not x["available"] for x in desc["resource"]["metadata"]["actions"])
+                stored = next(iter(app.state.slaves["slave-a"].activations.values()))
+                for attempt in range(3):
+                    started = await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activated["revision"]})
+                    login = started["authentication"]
+                    info = login["client"]
+                    replaced = await client.invoke(target, client.names.action("auth-start"), {"expected_revision": activated["revision"]})
+                    old_info, info = info, replaced["authentication"]["client"]
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://observer") as browser:
+                        stale = await browser.post("/api/v1/auth/browser/bridge",
+                            headers={"Authorization": "Bearer " + old_info["session_token"]},
+                            json={"action": "open", "session_id": old_info["session_id"]})
+                        assert stale.status_code == 404
+                        headers = {"Authorization": "Bearer " + info["session_token"]}
+                        opened = await browser.post("/api/v1/auth/browser/bridge", headers=headers,
+                            json={"action": "open", "session_id": info["session_id"], "query": {}})
+                        assert opened.status_code == 200, opened.text
+                        value = opened.json()
+                        assert value["location"] == "https://grafana-public.example:7443/login/generic_oauth"
+                        callback = {"action": "callback", "session_id": info["session_id"],
+                                    "browser_binding": value["browser_binding"],
+                                    "query": {"grafana_session": ["browser-private-cookie"]}}
+                        accepted = await browser.post("/api/v1/auth/browser/bridge", headers=headers, json=callback)
+                        assert accepted.status_code == 200 and accepted.json() == {"status": "accepted"}
+                        assert (await browser.post("/api/v1/auth/browser/bridge", headers=headers, json=callback)).status_code == 404
+                    worker = app.state.slaves["slave-a"]
+                    for _ in range(2):
+                        for report in await worker.inspect_activation_health():
+                            await repo.record_capability_health(report)
+                            worker.acknowledge_health_report(report.report_id)
+                    ready = await client.describe(target)
+                    assert ready["resource"]["metadata"]["state"] == "ready"
+                    assert ready["resource"]["metadata"]["revision"] == activated["revision"]
+                    assert ready["resource"]["metadata"]["authentication"]["status"] == "authenticated"
+                    assert info["session_token"] not in json.dumps(ready)
+                    if attempt < 2:
+                        authorized["allow"] = False
+                        for report in await worker.inspect_activation_health():
+                            await repo.record_capability_health(report)
+                            worker.acknowledge_health_report(report.report_id)
+                        expired = (await client.describe(target))["resource"]["metadata"]
+                        assert expired["state"] == "pending_auth"
+                        assert expired["authentication"]["status"] == "auth_required"
+                        if attempt == 1:
+                            from loom_v2.contracts.types import CapabilityHealthReport
+                            await repo.record_capability_health(CapabilityHealthReport(
+                                report_id="historical-auth-failure", package_version_ref=stored.package_version_ref,
+                                package_digest=stored.package_digest, target_slave="slave-a", instance_name="bj",
+                                activation_state="failed", activation_revision=activated["revision"]))
+                            key = next(iter(worker.activations))
+                            worker.activations[key] = worker.activations[key].model_copy(update={"activation_state": "failed"})
+                        authorized["allow"] = True
+                session["rotation_required"] = rotate_session
+                action = next(x for x in ready["resource"]["metadata"]["actions"] if x["name"] == "gpu_utilization")
+                submitted = await client.invoke(target, action["uri"], {
+                    "arguments": {"hostname": "node-a", "datasource_uid": "prom", "gpu_metric": {
+                        "name": "DCGM_FI_DEV_GPU_UTIL", "node_label": "Hostname", "index_label": "gpu", "unit": "percent"}},
+                    "expected_revision": activated["revision"], "idempotency_key": "gpu-after-browser-login"})
+                outcome = await wait_result(app, client, submitted["run"])
+                assert outcome["state"] == "completed", outcome
+                assert outcome["outcome"]["value"]["samples"][0]["utilization_percent"] == 37
+                assert "browser-private-cookie" not in json.dumps(await client.resources())
+                assert "browser-private-cookie" not in json.dumps(outcome)
+                assert "browser-rotated-cookie" not in json.dumps(outcome)
+                assert json.loads(gateway.state_path.read_text())["cookie"] == session["cookie"]
+                assert session["rotations"] == int(rotate_session)
+                for report in await worker.inspect_activation_health():
+                    await repo.record_capability_health(report)
+                    worker.acknowledge_health_report(report.report_id)
+                current = (await client.describe(target))["resource"]["metadata"]
+                assert current["state"] == "ready"
+                assert current["revision"] == activated["revision"]
+                assert current["authentication"]["status"] == "authenticated"
+                created = [call for call in runner.calls if call[0] == "create"]
+                assert len(created) == 1
+                assert any("target=/var/lib/loom/service" in str(arg) for arg in created[0])
+        finally:
+            await app.state.driver.stop_execution_loop()
+            for slave in app.state.slaves.values():
+                await slave.close()
+            gateway.close()

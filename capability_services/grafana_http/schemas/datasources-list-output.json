@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "uid",
+          "name",
+          "type",
+          "is_default"
+        ]
+      }
+    },
+    "complete": {
+      "const": true
+    }
+  },
+  "required": [
+    "status",
+    "items",
+    "complete"
+  ]
+}

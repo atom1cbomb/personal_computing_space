@@ -1,0 +1,141 @@
+{
+  "package_type": "service",
+  "package_id": "grafana-http",
+  "package_version": "v4",
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
+  "body": {
+    "image_ref": "registry.example/loom/grafana-gateway@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "network_profile": "egress",
+    "authentication": {
+      "start_path": "/v1/auth/start",
+      "status_path": "/v1/auth/status",
+      "browser_path": "/v1/auth/browser",
+      "interaction": {
+        "mode": "browser-cookie",
+        "cookie_name": "grafana_session"
+      }
+    },
+    "persistent_state": true
+  },
+  "action_exports": [
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/datasources-list",
+        "version_or_digest": "1a3922f734c2dd7a35643b9d4b84de9ee64b9c73c6705d8904b87a63e1c511e6",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/datasources-list/sha256/69410033f6420076f58d219e99477833d8ba7a8c813bac1d08deb1eda668ec76",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/datasources/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/dashboards-list",
+        "version_or_digest": "bfaf12eccf107da65a5a5d49f965e394873f10c572882c469e16e634de59ae13",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/dashboards-list/sha256/cf0cce4c4015a5e360776c5928498923c790a08083a59f3dfa066c618e916a24",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/dashboards/list"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/dashboard-get",
+        "version_or_digest": "3114a3b3cb46f21cce3c23c778848ea966646dc5175e8511ef65f3c0820aad76",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/dashboard-get/sha256/43ca07a55595c0b014e4522394e5d1b9dcb01808c4250b2647622485ab10ff93",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/dashboards/get"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/metrics-query",
+        "version_or_digest": "d58dae6689fed1a5061a6d9e164d37be2a75049b144091bc34ef06e89f78d8b1",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/metrics-query/sha256/81e52cbe831e7e1cbfc925b727daa8cf89c98ab4197fc8aabe6f8dc5b9c2006a",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/metrics/query"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/metrics-query-range",
+        "version_or_digest": "45960b68ffd11f31dfe0caef923225ba60d00fb52f2385460dd43f0b1d0dfc2b",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/metrics-query-range/sha256/f094458ffb103fd2547654db0b30c43123392e8ce80947d8515e869f57b11555",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/metrics/query-range"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-utilization",
+        "version_or_digest": "ea70a952329c75d5ed897b165fee9c696dc84e38bc51a12e5724a56a8dc76660",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-utilization/sha256/f268319c6beb2f248651e33c7a7ad378b5c9c11ed1725875d6cbef79943ae5d2",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/gpu/utilization"
+      }
+    }
+  ]
+}

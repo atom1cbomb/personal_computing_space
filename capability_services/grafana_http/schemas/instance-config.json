@@ -1,0 +1,61 @@
+{
+  "type": "object",
+  "required": [
+    "api_origin"
+  ],
+  "properties": {
+    "api_origin": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 2048
+    },
+    "datasource_uid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "gpu_metric": {
+      "type": "object",
+      "required": [
+        "name",
+        "node_label",
+        "index_label",
+        "unit"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "node_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "index_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uuid_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "percent",
+            "ratio"
+          ]
+        }
+      }
+    },
+    "browser_origin": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 2048
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "properties": {
+    "hostname": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253
+    },
+    "gpu_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "time": {
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "datasource_uid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "gpu_metric": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "node_label": {
+          "type": "string"
+        },
+        "index_label": {
+          "type": "string"
+        },
+        "uuid_label": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "percent",
+            "ratio"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "node_label",
+        "index_label",
+        "unit"
+      ]
+    }
+  },
+  "required": [
+    "hostname"
+  ]
+}

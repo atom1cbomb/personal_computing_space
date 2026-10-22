@@ -656,7 +656,7 @@ class SlaveService:
                 code = getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable"
                 raise RuntimeError(code) from exc
             status = str(response.get("status") or "")
-            state = {"authenticated": "ready", "auth_required": "pending_auth"}.get(status, "failed")
+            state = {"authenticated": "ready", "auth_required": "pending_auth"}.get(status, "degraded")
             profile = dict(activation.runtime_profile)
             if isinstance(response.get("runtime_profile"), dict):
                 profile.update(response["runtime_profile"])

@@ -116,23 +116,28 @@ class VmSshGateway:
     def _credentials_present(self) -> bool:
         return self.private_key.is_file() and not self.private_key.is_symlink()
 
-    def _ssh_probe(self) -> bool:
+    def _ssh_probe(self) -> str:
         """Verify the newly-created PK key can actually reach the VM."""
         if not self._credentials_present():
-            return False
+            return "auth_required"
         args = [*self._ssh_args(), "true"]
         try:
             process = subprocess.run(
                 args,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 timeout=15,
                 check=False,
+                env={**os.environ, "LC_ALL": "C"},
             )
         except (OSError, subprocess.TimeoutExpired):
-            return False
-        return process.returncode == 0
+            return "auth_failed"
+        if process.returncode == 0:
+            return "authenticated"
+        if b"Permission denied" in process.stderr:
+            return "auth_required"
+        return "auth_failed"
 
     def _clear_login(self, *, stop_process: bool) -> None:
         if self._expiry_timer is not None:
@@ -163,7 +168,7 @@ class VmSshGateway:
         with self._lock:
             if self._browser_session and self._browser_session["session_id"] == session_id:
                 self._clear_login(stop_process=True)
-                self._auth_failed = True
+                self._auth_failed = False
 
     def auth_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         # Installation may probe this endpoint without creating a login.
@@ -308,9 +313,7 @@ class VmSshGateway:
             process = self._login_process
             if process is not None and process.poll() != 0:
                 return {"status": "auth_required" if process.poll() is None else "auth_failed"}
-            if self._ssh_probe():
-                return {"status": "authenticated"}
-            return {"status": "auth_failed" if self._credentials_present() else "auth_required"}
+            return {"status": self._ssh_probe()}
 
     def exec(self, command: Any, timeout_seconds: Any = DEFAULT_TIMEOUT) -> dict[str, Any]:
         timeout = validate_exec(command, timeout_seconds)

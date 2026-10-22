@@ -1,17 +1,22 @@
 # 通过 GRIP 使用能力服务包
 
-六个服务包都使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 调用业务 action → 读取 Run。
+七个服务包都使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 调用业务 action → 读取 Run。
 能力包是不可变资源，Slave 是执行资源，激活实例也是资源；外部调用方只使用返回的 GRIP URI。
 包内的 `/v1/...` 是 `container:http/1` runtime 到容器的内部绑定。
 
+创建带认证的新能力包时，参照 skill 的
+[认证接入指南](../skills/personal-computing-space/references/authentication-authoring.md)。
+使用系统统一的 `auth-start` 和 `loom-auth`，在网关内实现供应商认证与凭据验证。
+
 | 目录 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---:|---|
-| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v4 | 6 | 实例选择 profile，其中含 Kubernetes kubeconfig/policy |
+| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v6 | 6 | 实例选择 profile，其中含 Kubernetes kubeconfig/policy |
 | [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
-| [outline_http](outline_http/README.md) | outline-http/v2 | 12 | 实例选择 profile，其中含 `outline_key` |
-| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v4 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
-| [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v4 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
-| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v3 | 1 | `{host,port,user}`；opkssh 浏览器认证 |
+| [grafana_http](grafana_http/README.md) | grafana-http/v4 | 6 | 本地浏览器扫码、实例会话持久化及自动令牌轮换；仪表盘、Prometheus 指标和节点/GPU 编号对应的实际利用率 |
+| [outline_http](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
+| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v5 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v5 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
+| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v4 | 1 | `{host,port,user}`；opkssh 浏览器认证 |
 
 ## 发布
 
@@ -42,7 +47,7 @@ python scripts/publish_service_package.py capability_services/outline_http \
 Suanli Cloud 的创建 VM descriptor 引用 Suanli SSH 使用包。先发布 SSH 包，再创建依赖映射文件：
 
 ```json
-{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v3": "<刚发布的 SSH 包完整 GRIP URI>"}
+{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4": "<刚发布的 SSH 包完整 GRIP URI>"}
 ```
 
 发布 Suanli Cloud 时用 `--dependencies dependencies.json`，发布工具会校验引用的包坐标和真实 digest。
@@ -66,7 +71,7 @@ description = await client.describe(activation["resource"])
 ```
 
 `activate-package` 自动创建或复用激活实例资源，`activation["resource"]` 就是其 GRIP URI。
-例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v4/slave-a/default`。
+例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v5/slave-a/default`。
 仅手工启动 Docker 容器不会向 Observer 注册实例；应通过 Slave 的激活动作使用服务包。
 
 `credential_profile` 是激活实例的字段，与 `instance_config` 并列；填 Slave operator 已配置的
@@ -137,8 +142,10 @@ python scripts/generate_service_contracts.py --check
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest -q tests/capability_services tests/api/test_grip.py
 ```
 
-集成测试逐个发布六个真实包并执行全部 38 个业务导出，经过 GRIP、Driver、Slave、
+集成测试逐个发布七个真实包并执行全部 44 个业务导出，经过 GRIP、Driver、Slave、
 真实 `container:http` runtime 和本机 HTTP gateway。Docker、kubectl/SSH 可执行文件及外部 provider
 使用测试替身；这些结果不代表生产云、真实 Docker 或浏览器登录验收。
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用
 可使用 `examples/grip/invoke.py`，由调用者明确提供目标、action 和输入。
+
+统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](../docs/authentication.md)。

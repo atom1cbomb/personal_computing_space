@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "search": {
+      "type": "string",
+      "maxLength": 256
+    }
+  }
+}

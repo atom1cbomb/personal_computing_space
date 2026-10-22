@@ -28,13 +28,12 @@ variables or request fields. The exact localhost callback is already
 registered with the OIDC client. The package does not invent a device-code
 protocol.
 
-The package also carries `client/loom_vm_auth.py`, a user-side local browser
-bridge. It listens only on the user's `127.0.0.1:3000`, forwards only `/login`
-and `/login-callback` to the one-time HTTPS Observer bridge URL, and exits when
-the user stops it. It does not open an SSH tunnel, require an Observer host
-account, or proxy arbitrary URLs. The activation GRIP `auth-start` response supplies the
-short-lived session token and bridge URL; never copy that token into a
-permanent configuration file.
+Use the [unified SDK login portal](../../docs/authentication.md) with
+`suanli-vm-ssh-http/v4`. The package declares `interaction.mode=redirect`.
+The client opens an isolated browser, captures the registered localhost callback,
+and forwards it to the Observer's one-time bridge. Login expiry and SSH
+Permission denied require authentication again; connection and host-key errors
+remain failures. Reuse the same activation and portal to retry.
 
 Build and publish an immutable digest image, then replace the placeholder in
 `package.example.json`.

@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanli-vm-ssh-http",
-  "package_version": "v3",
+  "package_version": "v4",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -16,10 +16,8 @@
       "start_path": "/v1/auth/start",
       "status_path": "/v1/auth/status",
       "browser_path": "/v1/auth/browser",
-      "client": {
-        "kind": "local-browser-bridge",
-        "protocol_version": "1",
-        "entrypoint": "client/loom_vm_auth.py"
+      "interaction": {
+        "mode": "redirect"
       }
     }
   },

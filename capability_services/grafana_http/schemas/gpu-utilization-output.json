@@ -1,0 +1,102 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "no_data"
+      ]
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "hostname": {
+      "type": "string"
+    },
+    "unit": {
+      "type": "string",
+      "const": "percent"
+    },
+    "metric": {
+      "type": "string"
+    },
+    "datasource_uid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "queried_at": {
+      "type": "string"
+    },
+    "query_time": {
+      "type": "string"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "gpu_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gpu_uuid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "utilization_percent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "sampled_at": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "required": [
+          "hostname",
+          "gpu_index",
+          "gpu_uuid",
+          "utilization_percent",
+          "sampled_at",
+          "labels"
+        ]
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "infos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "status",
+    "complete",
+    "hostname",
+    "unit",
+    "metric",
+    "datasource_uid",
+    "queried_at",
+    "query_time",
+    "samples",
+    "warnings",
+    "infos"
+  ]
+}

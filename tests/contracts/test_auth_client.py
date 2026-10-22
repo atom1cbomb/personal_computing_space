@@ -1,0 +1,156 @@
+import asyncio
+from copy import deepcopy
+from http.server import ThreadingHTTPServer
+import json
+import threading
+import time
+
+import httpx
+import pytest
+
+from loom_orchestration.auth import Handler, Login, https_origin
+from loom_orchestration.grip import Names
+
+
+class Observer:
+    names = Names("loom.local", "workspace-default")
+    base_url = "https://observer.example"
+
+    def __init__(self, method="redirect"):
+        self.method = method
+        self.calls = []
+        self.ready = False
+        self.revision = 1
+        self.auth = {"method": method, "status": "auth_required", "expires_at": time.time() + 240,
+                     "verification_uri": "https://login.example/device", "user_code": "ABCD-EFGH",
+                     "client": {"bridge_url": self.base_url + "/api/v1/auth/browser/bridge",
+                                "session_id": "s" * 43, "session_token": "private-bridge-token"},
+                     "cookie_name": "grafana_session"}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def describe(self, target):
+        return {"resource": {"uri": target, "metadata": {
+            "state": "ready" if self.ready else "pending_auth", "desired_state": "running", "revision": self.revision,
+            "authentication": {"method": self.method, "status": "authenticated" if self.ready else "auth_required"}}},
+            "offers": [{"action": {"uri": self.names.action("auth-start")}}]}
+
+    async def invoke(self, target, action, inputs):
+        self.calls.append((target, action, inputs))
+        self.ready = False
+        return {"resource": target, "revision": self.revision, "authentication": deepcopy(self.auth)}
+
+
+@pytest.mark.parametrize("method", ["redirect", "device-code", "browser-cookie"])
+async def test_each_declared_method_uses_the_same_action_and_waits_for_ready(method, monkeypatch):
+    observer = Observer(method)
+    target = observer.names.name("activations", "service", "v1", "slave", "test")
+    login = Login(target, lambda: observer)
+    seen = []
+
+    async def browser(client, auth, revision, expires_at):
+        assert login.status()["phase"] != "completed"
+        seen.append(auth["method"])
+        assert revision == 1
+        asyncio.get_running_loop().call_later(.01, setattr, observer, "ready", True)
+
+    monkeypatch.setattr(login, "_browser", browser)
+    await login.authenticate()
+    assert seen == [method]
+    assert login.status()["phase"] == "completed"
+    assert observer.calls == [(target, observer.names.action("auth-start"), {"expected_revision": 1})]
+    assert "private-bridge-token" not in json.dumps(login.status())
+
+
+def test_failed_and_expired_attempts_restart_without_restarting_the_helper(monkeypatch):
+    observer = Observer()
+    target = observer.names.name("activations", "service", "v1", "slave", "test")
+    login = Login(target, lambda: observer)
+    attempts = []
+
+    async def browser(client, auth, revision, expires_at):
+        attempts.append(revision)
+        if len(attempts) == 1:
+            raise RuntimeError("authentication_expired")
+        if len(attempts) == 2:
+            raise RuntimeError("private-cookie=secret")
+        observer.ready = True
+
+    monkeypatch.setattr(login, "_browser", browser)
+    for phase in ["expired", "failed", "completed"]:
+        login.start()
+        login._thread.join(timeout=3)
+        assert login.status()["phase"] == phase
+        assert "secret" not in json.dumps(login.status())
+    assert len(observer.calls) == 3
+    assert all(call[0] == target and call[2] == {"expected_revision": 1} for call in observer.calls)
+
+
+async def test_revision_change_prevents_reporting_a_new_activation_as_login_success(monkeypatch):
+    observer = Observer()
+    login = Login(observer.names.name("activations", "service", "v1", "slave", "test"), lambda: observer)
+
+    async def browser(*args):
+        observer.revision = 2
+        observer.ready = True
+
+    monkeypatch.setattr(login, "_browser", browser)
+    with pytest.raises(RuntimeError, match="activation_changed"):
+        await login.authenticate()
+
+
+async def test_bridge_keeps_credentials_in_post_body_and_enforces_observer_origin():
+    observer = Observer()
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(200, json={"status": "accepted"})
+
+    observer.transport = httpx.MockTransport(handle)
+    login = Login("resource", lambda: observer)
+    await login._bridge(observer, observer.auth["client"], "callback", binding="private-binding",
+                        query={"grafana_session": ["private-cookie"]})
+    request, = calls
+    assert request.headers["authorization"] == "Bearer private-bridge-token"
+    assert "private-cookie" not in str(request.url)
+    assert json.loads(request.content)["query"] == {"grafana_session": ["private-cookie"]}
+    with pytest.raises(RuntimeError, match="observer_bridge_failed"):
+        await login._bridge(observer, {**observer.auth["client"], "bridge_url": "https://untrusted.example/api/v1/auth/browser/bridge"}, "open")
+    assert len(calls) == 1
+
+
+def test_portal_starts_only_selected_instance_and_rejects_cross_origin_requests(monkeypatch):
+    logins = {name: Login(name, Observer) for name in ["bj", "nj", "ict-bj"]}
+    started = []
+    for name, login in logins.items():
+        monkeypatch.setattr(login, "start", lambda name=name: started.append(name))
+    handler = type("TestHandler", (Handler,), {"logins": logins, "csrf": "local-csrf"})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}") as client:
+            assert "重新认证" in client.get("/").text
+            assert client.get("/login?resource=bj").status_code == 404
+            assert client.post("/login", json={"resource": "bj"}).status_code == 403
+            assert client.post("/login", json={"resource": "bj", "csrf": "local-csrf"},
+                               headers={"Origin": "https://untrusted.example"}).status_code == 403
+            assert client.get("/", headers={"Host": "untrusted.example"}).status_code == 403
+            for _ in range(2):
+                assert client.post("/login", json={"resource": "nj", "csrf": "local-csrf"}).status_code == 202
+            assert started == ["nj", "nj"]
+            assert [x["resource"] for x in client.get("/status").json()] == list(logins)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize("location", ["http://idp.example/login", "https://user:password@idp.example/login", "https://idp.example/\nlogin"])
+def test_browser_requires_a_valid_https_destination(location):
+    with pytest.raises(RuntimeError, match="browser_login_location_invalid"):
+        https_origin(location)
