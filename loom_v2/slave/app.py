@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, nullcontext, suppress
 from uuid import uuid4
 from typing import Any
 
@@ -33,11 +33,31 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         await app.state.service.init_db()
+        data_task = None
+        data_server = None
+        if settings.grip_data_listen_port is not None:
+            import uvicorn
+            from .grip_data import create_data_app
+            data_server = uvicorn.Server(uvicorn.Config(create_data_app(app.state.service),
+                host=settings.grip_data_listen_host, port=settings.grip_data_listen_port,
+                lifespan="off", access_log=False, ws_max_size=65536, ws_max_queue=16,
+                ws_ping_interval=20, ws_ping_timeout=40, timeout_graceful_shutdown=5))
+            # The outer server owns process signals and closes this listener
+            # through lifespan; a second handler would swallow its SIGTERM.
+            data_server.capture_signals = nullcontext
+            data_task = asyncio.create_task(data_server.serve())
+        dependency_task = asyncio.create_task(dependency_loop())
         app.state.registration_task = asyncio.create_task(register_loop())
         app.state.capability_health_task = asyncio.create_task(capability_health_loop())
         try:
             yield
         finally:
+            if data_server is not None:
+                data_server.should_exit = True
+            dependency_task.cancel()
+            await asyncio.gather(dependency_task, return_exceptions=True)
+            if data_task:
+                await data_task
             for task in (app.state.capability_health_task, app.state.registration_task):
                 if task is not None:
                     task.cancel()
@@ -146,10 +166,6 @@ def create_app(
     async def capability_health_loop() -> None:
         interval = max(0.1, settings.capability_health_interval_seconds)
         while True:
-            lease = app.state.lease
-            if lease is None:
-                await asyncio.sleep(interval)
-                continue
             try:
                 reports = await app.state.service.inspect_activation_health()
                 for report in reports:
@@ -173,6 +189,34 @@ def create_app(
             except Exception:
                 pass
             await asyncio.sleep(interval)
+
+    async def dependency_loop():
+        from .dependencies import write
+        from loom_v2.service_access import activation_uri
+        while True:
+            lease = app.state.lease
+            if lease is not None:
+                service = app.state.service
+                for key, activation in list(service.activations.items()):
+                    if activation.desired_state != "running" or not activation.dependencies:
+                        continue
+                    package = service._find_cached_package(activation.package_version_ref, activation.package_digest)
+                    if package is None:
+                        continue
+                    try:
+                        response = await observer_request("/internal/v1/service-dependencies", {
+                            "agent_id": slave_id, "instance_id": lease.instance_id, "lease_id": lease.lease_id,
+                            "epoch": lease.epoch, "workspace_id": lease.workspace_id,
+                            "activation": activation_uri(service.names, package, activation), "revision": activation.activation_revision})
+                        response.raise_for_status()
+                        async with service._activation_locks.setdefault(key, asyncio.Lock()):
+                            current = service.activations.get(key)
+                            if current and current.desired_state == "running" and current.activation_revision == activation.activation_revision:
+                                write(settings, service.workspace_id, activation, response.json())
+                    except (httpx.HTTPError, ValueError, OSError):
+                        # Previously issued grants retain only their original TTL.
+                        pass
+            await asyncio.sleep(30)
 
     @app.get("/healthz")
     async def health() -> dict[str, object]:

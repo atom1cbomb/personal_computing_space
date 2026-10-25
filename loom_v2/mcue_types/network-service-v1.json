@@ -1,0 +1,27 @@
+{
+  "mcue": "network/service",
+  "version": "v1",
+  "description": "Kubernetes service access",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {
+      "display_name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 4096
+      },
+      "kubernetes_ref": {
+        "type": "string",
+        "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"
+      }
+    },
+    "required": [
+      "kubernetes_ref"
+    ],
+    "additionalProperties": false
+  }
+}

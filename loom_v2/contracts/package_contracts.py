@@ -265,6 +265,7 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
         "type": "object",
         "required": ["path"],
         "properties": {
+            "interaction": {"enum": ["task", "request-reply", "byte-stream"]},
             "path": {
                 "type": "string",
                 "pattern": _ORIGIN_PATH_PATTERN,

@@ -1,5 +1,5 @@
 plugin_id = "container-http-v1"
-protocol_version = "loom.runtime-plugin/1"
+protocol_version = "loom.runtime-plugin/2"
 command = ["bin/runtime-plugin"]
 
 [[supports]]

@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "embeddings": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      }
+    },
+    "dimension": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "embeddings",
+    "dimension"
+  ]
+}

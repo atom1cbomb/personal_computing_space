@@ -51,6 +51,32 @@ def render_project(config: DeploymentConfig, machine_name: str) -> RenderedProje
     }
     if machine.role == "observer" and config.grip_token is not None:
         secret_files["grip_token"] = config.grip_token
+    if machine.role in {"observer", "slave"}:
+        app = document["services"][machine.role]
+        access = config.service_access
+        keys = {k: v for k, v in config.service_key_material.items() if machine.role == "observer" or k != "grip-signing"}
+        secret_files.update(keys)
+        for name in keys:
+            document["secrets"][name] = {"file": "./secrets/" + name}
+            app["secrets"].append(name)
+        app["environment"].update({
+            "LOOM_GRIP_AUTHORITY": config.grip_authority,
+            "LOOM_GRIP_VERIFICATION_KEYS": json.dumps({kid: "/run/secrets/grip-verify-" + kid for kid in access.verification_keys}),
+            "LOOM_GRIP_ALLOW_INSECURE_SERVICES": str(access.allow_insecure).lower(),
+        })
+        if machine.role == "observer":
+            app["environment"].update({
+                "LOOM_GRIP_SIGNING_KEY_FILE": "/run/secrets/grip-signing" if access.signing_key_file else "",
+                "LOOM_GRIP_SIGNING_KEY_ID": access.signing_key_id,
+                "LOOM_GRIP_ACCESS_TOKEN_SECONDS": str(access.access_token_seconds),
+                "LOOM_GRIP_DATA_BINDINGS": json.dumps(access.data_bindings),
+                "LOOM_GRIP_UPSTREAM_BINDINGS": json.dumps(access.upstream_bindings),
+            })
+        else:
+            if machine.grip_data_port:
+                app["environment"].update({"LOOM_GRIP_DATA_LISTEN_HOST": "0.0.0.0", "LOOM_GRIP_DATA_LISTEN_PORT": "8091"})
+                app["ports"].append(f"{machine.grip_data_publish_host}:{machine.grip_data_port}:8091")
+            app["environment"]["LOOM_RUNTIME_PLUGIN_CONSUMER_PORTS"] = json.dumps(machine.consumer_ports)
     return RenderedProject(
         machine=machine.name,
         role=machine.role,

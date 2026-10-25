@@ -57,7 +57,7 @@ def test_type_items_enum_and_range_errors_are_structured() -> None:
 @pytest.mark.parametrize(
     "schema",
     [
-        {"type": "object", "additionalProperties": False},
+        {"type": "object", "unevaluatedProperties": False},
         {"$ref": "#/definitions/x"},
         {"type": "string", "format": "email"},
     ],

@@ -45,7 +45,12 @@ def array(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def k8s_definitions() -> dict[str, dict[str, Any]]:
+    service_input = obj(["service_ref"], service_ref={"type": "string", "pattern": "^grip://"})
+    service_input["additionalProperties"] = False
     return {
+        "services-ensure": {"input": service_input, "output": obj(["status", "service_ref", "namespace", "name", "uid", "state"], status=string(const="ensured"), service_ref=string(), namespace=string(), name=string(), uid=string(), state=string())},
+        "service-access-status": {"input": service_input, "output": obj(["service_ref", "state", "last_error", "checked_at"], service_ref=string(), state=string(), last_error={"type":["string","null"]}, checked_at={"type":["string","null"]})},
+        "open-service-stream": {"input": service_input, "output": obj()},
         "resources-list": {
             "input": obj(resource=string(enum=["pods", "pvc", "jobs", "vcjobs"])),
             "output": obj(["status", "resource"], status=string(const="ok"), resource=obj()),
@@ -261,7 +266,19 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
     }
 
 
+def embedding_definitions():
+    vector = array({"type": "number"})
+    dimension = {"type": "integer", "minimum": 1}
+    return {
+        "embed": {"input": obj(["texts"], texts={"type": "array", "items": string(), "minItems": 1, "maxItems": 256},
+                                normalize={"type": "boolean"}, instruction={"type": ["string", "null"]}),
+                  "output": obj(["embeddings", "dimension"], embeddings=array(vector), dimension=dimension)},
+        "info": {"input": obj(), "output": obj(["model", "dimension", "device"], model=string(), dimension=dimension, device=string())},
+    }
+
+
 DEFINITIONS = {
+    "embedding_http": embedding_definitions,
     "kubernetes_http": k8s_definitions,
     "volcano_http": volcano_definitions,
     "grafana_http": grafana_definitions,

@@ -151,6 +151,7 @@ class DynamicOrchestrationRuntime:
                     target_resource_ref=activation.target_resource_ref,
                     instance_config=dict(activation.instance_config),
                     credential_profile=activation.credential_profile,
+                    dependencies=activation.dependencies,
                 )
                 worker = self.workers.get(activation.target_slave)
                 slave = self.slaves.get(activation.target_slave)
@@ -643,6 +644,7 @@ class DynamicOrchestrationRuntime:
             target_resource_ref=desired.target_resource_ref,
             instance_config=dict(desired.instance_config),
             credential_profile=desired.credential_profile,
+            dependencies=desired.dependencies,
         )
         action = action_name(action_ref)
 

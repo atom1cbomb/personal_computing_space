@@ -14,7 +14,7 @@ python -m venv .loom-agent
 .loom-agent/bin/python -c "from loom_orchestration import LoomClient, ResourceEffect, SubmissionBuilder"
 ```
 
-Dependencies are Pydantic, httpx, jsonschema and rfc8785. In an offline environment, obtain their
+Dependencies are Pydantic, httpx, httpcore, websockets, jsonschema and rfc8785. In an offline environment, obtain their
 compatible wheels from the operator as well; the skill archive contains only
 the Loom SDK wheel. No server modules, Docker SDK, database or model provider
 are required in the external agent environment.
@@ -49,8 +49,10 @@ methods have been removed. Use resource descriptions and actions instead.
 Select exact returned URIs; do not infer an action from its suffix. Slave
 `run-package` input is `{package, action, arguments, idempotency_key}`. It
 returns `{run: <Run URI>}`. Query Run with the built-in `read` action.
-An activated instance exports business actions with input
-`{arguments, expected_revision, idempotency_key}` and the same Run receipt.
+An activated instance uses that wrapper only for `interaction=task` exports.
+`request-reply` exports take business input and return business output directly;
+`byte-stream` exports use `open_stream`. Read [service-bindings.md](service-bindings.md)
+for trusted routes, scoped credentials, `configure`, and dependency contexts.
 Use `activate-package` on a Slave for named service instances, then `auth-start`
 when offered by a pending-auth instance. This does not create a second run.
 

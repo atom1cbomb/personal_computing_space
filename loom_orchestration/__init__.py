@@ -7,6 +7,9 @@ Observer data plane.
 
 from .contracts import ClosureContract, ResourceRef, TaskClosure
 from .client import LoomClient
+from .dependencies import DependencyContext
+from .streams import WebSocketStream, StreamAborted
+from .bindings import AccessCredential
 from .service_package import ServicePackage
 from .grip import GripError, Names
 from .package import OrchestratorPackage
@@ -17,6 +20,7 @@ from .metadata import ResourceEffect, validate_action_descriptor
 from .mcue import McueDefinition
 
 __all__ = [
+    "DependencyContext", "WebSocketStream", "StreamAborted", "AccessCredential",
     "ClosureContract",
     "LoomClient",
     "McueDefinition",

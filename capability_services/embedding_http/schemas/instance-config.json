@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "service_ref": {
+      "type": "string",
+      "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"
+    },
+    "dependency": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "request_timeout_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 3600
+    }
+  },
+  "required": [
+    "service_ref"
+  ],
+  "additionalProperties": false
+}

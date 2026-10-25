@@ -372,6 +372,17 @@ class CapabilityPackageVersion(ContractModel):
         return normalize(payload)
 
 
+class ActivationDependency(ContractModel):
+    target: URI
+    actions: list[URI] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_actions(self):
+        if len(set(self.actions)) != len(self.actions):
+            raise ValueError("duplicate_dependency_action")
+        return self
+
+
 class CapabilityPackageActivation(ContractModel):
     package_version_ref: str
     package_digest: str
@@ -391,6 +402,9 @@ class CapabilityPackageActivation(ContractModel):
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
     credential_profile: CredentialProfile | None = None
+    dependencies: dict[str, ActivationDependency] = Field(default_factory=dict)
+
+    applied_revision: int | None = Field(default=None, ge=1)
 
 
 class CapabilityPackage(ContractModel):
@@ -417,6 +431,7 @@ class CapabilityProvisionCommand(ContractModel):
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
     credential_profile: CredentialProfile | None = None
+    dependencies: dict[str, ActivationDependency] = Field(default_factory=dict)
 
 
 class CapabilityDeprovisionCommand(ContractModel):
@@ -431,6 +446,7 @@ class CapabilityDeprovisionCommand(ContractModel):
     target_resource_ref: ResourceRef | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
     credential_profile: CredentialProfile | None = None
+    dependencies: dict[str, ActivationDependency] = Field(default_factory=dict)
 
 
 class CapabilityHealthReport(ContractModel):

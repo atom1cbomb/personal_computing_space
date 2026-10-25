@@ -31,7 +31,7 @@ from loom_v2.contracts.types import (
 )
 
 
-PLUGIN_PROTOCOL_VERSION = "loom.runtime-plugin/1"
+PLUGIN_PROTOCOL_VERSION = "loom.runtime-plugin/2"
 
 
 class RuntimePluginError(RuntimeError):
@@ -150,6 +150,10 @@ class RuntimePlugin(Protocol):
         attempt_id: str,
         deadline_seconds: float | None = None,
     ) -> dict[str, Any]: ...
+
+    async def open_stream(self, package: CapabilityPackageVersion, action_export: ActionExport,
+                          payload: dict[str, Any], *, activation: dict[str, Any],
+                          request_id: str, deadline: str | None = None) -> Any: ...
 
     async def inspect(self, activation: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -504,6 +508,19 @@ class ProcessRuntimePlugin:
             },
         )
 
+    async def open_stream(self, package, action_export, payload, *, activation, request_id, deadline=None):
+        from loom_orchestration.grip import Request
+        from loom_orchestration.streams import connect_stream, STREAM_PROTOCOL
+        await self._restart_if_needed()
+        request = Request(version="grip.v1", request_id=request_id, method="INVOKE",
+            auth={"credential": "runtime-local"}, target=package.version_ref,
+            action=action_export.action_descriptor_ref.resource_id,
+            input={"package": package.model_dump(mode="json"), "action_export": action_export.model_dump(mode="json"),
+                   "payload": payload, "activation": activation},
+            accepted_protocols=[STREAM_PROTOCOL], deadline=deadline)
+        return await connect_stream("ws://localhost/v1/stream", request,
+            unix_path=str(self.socket_path), timeout=self.call_timeout)
+
     async def inspect(self, activation: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/v1/inspect", {"activation": activation})
 
@@ -728,6 +745,10 @@ class RuntimePluginHost:
         deadline_seconds: float | None = None,
     ) -> dict[str, Any]:
         return await self.get(package).invoke(package, action_export, payload, activation=activation, attempt_id=attempt_id, deadline_seconds=deadline_seconds)
+
+    async def open_stream(self, package, action_export, payload, *, activation, request_id, deadline=None):
+        return await self.get(package).open_stream(package, action_export, payload,
+            activation=activation, request_id=request_id, deadline=deadline)
 
     async def inspect(self, package: CapabilityPackageVersion, activation: dict[str, Any]) -> dict[str, Any]:
         payload = dict(activation)

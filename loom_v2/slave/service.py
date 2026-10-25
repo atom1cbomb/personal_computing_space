@@ -5,6 +5,8 @@ from loom_orchestration.naming import content_uri
 
 import asyncio
 import json
+import random
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -69,10 +71,13 @@ class SlaveService:
     _activation_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     _pending_health_reports: dict[str, CapabilityHealthReport] = field(default_factory=dict, init=False, repr=False)
     _last_reported_health: dict[str, tuple[int, str]] = field(default_factory=dict, init=False, repr=False)
+    _recovery_backoff: dict[str, tuple[int, float, float]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.settings = self.settings or Settings()
         self.names = Names(self.settings.grip_authority, self.workspace_id)
+        from .grip_data import SlaveGripData
+        self.grip_data = SlaveGripData(self)
         self.sessions = make_session_factory(self.engine) if self.engine is not None else None
         if self.content_store is None:
             self.content_store = ContentStore.from_settings(self.settings)
@@ -138,6 +143,8 @@ class SlaveService:
                         target_resource_ref=(ResourceRef.model_validate(item["target_resource_ref"]) if item.get("target_resource_ref") else None),
                         instance_config=dict(item.get("instance_config") or {}),
                         credential_profile=item.get("credential_profile"),
+                        dependencies=item.get("dependencies", {}),
+                        applied_revision=item.get("applied_revision"),
                     )
                 except (TypeError, ValueError):
                     continue
@@ -179,6 +186,8 @@ class SlaveService:
             "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None,
             "instance_config": dict(activation.instance_config),
             "credential_profile": activation.credential_profile,
+            "dependencies": {k: v.model_dump(mode="json") for k, v in activation.dependencies.items()},
+            "applied_revision": activation.applied_revision,
             "runtime_handle": dict(runtime_handle or {}),
             "last_idempotency_key": activation.last_idempotency_key,
             "last_error_code": last_error_code,
@@ -204,6 +213,8 @@ class SlaveService:
             async with self.sessions() as session:
                 replica_row = await session.get(SlaveReplicaRow, self.slave_id)
                 for row in (replica_row.capability_activations if replica_row is not None else []):
+                    if row.get("activation_state") == "failed" and row["desired_state"] == "running":
+                        continue
                     package_payload = row.get("package_payload") or {}
                     try:
                         package = CapabilityPackageVersion.model_validate(package_payload)
@@ -233,13 +244,19 @@ class SlaveService:
                         "target_resource_ref": row.get("target_resource_ref"),
                         "instance_config": row.get("instance_config") or {},
                         "credential_profile": row.get("credential_profile"),
+                        "dependencies": row.get("dependencies", {}),
+                        "applied_revision": row.get("applied_revision"),
                     })
         else:
             for key, activation in self.activations.items():
+                if activation.activation_state == "failed" and activation.desired_state == "running":
+                    continue
                 package = self._find_cached_package(activation.package_version_ref, activation.package_digest)
                 if package is None or not self._uses_runtime_plugin(package):
                     continue
-                entries.append({"activation_key": key, "workspace_id": self.workspace_id, "slave_id": self.slave_id, "target_slave": self.slave_id, "package_version_ref": package.version_ref, "package_digest": package.package_digest, "package_type": package.package_type, "execution": package.execution.model_dump(mode="json"), "package_payload": package.model_dump(mode="json"), "desired_state": activation.desired_state, "activation_revision": activation.activation_revision, "runtime_profile": activation.runtime_profile, "instance_name": activation.instance_name, "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None, "instance_config": activation.instance_config, "credential_profile": activation.credential_profile})
+                entries.append({"activation_key": key, "workspace_id": self.workspace_id, "slave_id": self.slave_id, "target_slave": self.slave_id, "package_version_ref": package.version_ref, "package_digest": package.package_digest, "package_type": package.package_type, "execution": package.execution.model_dump(mode="json"), "package_payload": package.model_dump(mode="json"), "desired_state": activation.desired_state, "activation_revision": activation.activation_revision, "runtime_profile": activation.runtime_profile, "instance_name": activation.instance_name, "target_resource_ref": activation.target_resource_ref.model_dump(mode="json") if activation.target_resource_ref else None, "instance_config": activation.instance_config, "credential_profile": activation.credential_profile, "dependencies": {k:v.model_dump(mode="json") for k,v in activation.dependencies.items()}})
+        if not entries:
+            return {}
         try:
             response = await self.runtime_plugin_host.reconcile(entries)
         except RuntimePluginError:
@@ -266,6 +283,8 @@ class SlaveService:
                 continue
             state = str(item.get("activation_state") or ("ready" if (item.get("inspect") or {}).get("running") else activation.activation_state))
             update_fields: dict[str, Any] = {"activation_state": state if state in {"ready", "pending_auth", "degraded", "failed", "stopped", "lost"} else activation.activation_state}
+            if state == "ready":
+                update_fields["applied_revision"] = activation.activation_revision
             if isinstance(item.get("runtime_profile"), dict):
                 update_fields["runtime_profile"] = dict(item["runtime_profile"])
             updated = activation.model_copy(update=update_fields)
@@ -481,6 +500,10 @@ class SlaveService:
                 raise RuntimeError("activation_instance_binding_conflict")
         activation_key = self._activation_key(ref, command.instance_name)
         existing = self.activations.get(activation_key)
+        if existing is not None and command.activation_revision == existing.activation_revision and (
+                existing.instance_config != command.instance_config or existing.dependencies != command.dependencies
+                or existing.target_resource_ref != command.target_resource_ref):
+            raise RuntimeError("activation_revision_conflict")
         retry = self._lifecycle_retry(
             existing,
             desired_state="running",
@@ -490,6 +513,12 @@ class SlaveService:
             credential_profile=command.credential_profile,
         )
         self._accept_activation_revision(activation_key, retry=retry)
+        prior = self.activations.get(activation_key)
+        if prior is not None and not retry:
+            from loom_v2.service_access import activation_uri
+            await self.grip_data.revoke(activation_uri(self.names, package, prior))
+            from .dependencies import revoke
+            revoke(self.settings, self.workspace_id, prior)
         if retry and existing is not None and existing.activation_state == "ready":
             return self._remember_health_report(activation_key, CapabilityHealthReport(
                 report_id=f"health-{uuid4().hex}",
@@ -518,6 +547,7 @@ class SlaveService:
             "target_resource_ref": command.target_resource_ref,
             "instance_config": dict(command.instance_config),
             "credential_profile": command.credential_profile,
+            "dependencies": command.dependencies,
         }
         pending = (
             existing.model_copy(update=values)
@@ -535,6 +565,9 @@ class SlaveService:
         self.activations[activation_key] = pending
         await self._persist_activation(package, pending)
         try:
+            if command.dependencies:
+                from .dependencies import prepare
+                prepare(self.settings, self.workspace_id, pending)
             response = await self.runtime_plugin_host.provision(package, command)
         except (RuntimePluginError, RuntimeError) as exc:
             code = getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable"
@@ -548,6 +581,7 @@ class SlaveService:
         activation = pending.model_copy(
             update={
                 "activation_state": state,
+                "applied_revision": command.activation_revision if state == "ready" else pending.applied_revision,
                 "evidence_refs": [
                     str(item)
                     for item in response.get("evidence_refs", [])
@@ -619,6 +653,7 @@ class SlaveService:
         activation_key = self._activation_key(package.version_ref, command.instance_name)
         lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
         async with lock:
+            existing = self.activations.get(activation_key)
             if self._uses_runtime_plugin(package):
                 return await self._provision_runtime_locked(command, package)
             return await self._provision_executor_locked(command, package)
@@ -733,6 +768,12 @@ class SlaveService:
             credential_profile=command.credential_profile,
         )
         self._accept_activation_revision(activation_key, retry=retry)
+        prior = self.activations.get(activation_key)
+        if prior is not None and not retry:
+            from loom_v2.service_access import activation_uri
+            await self.grip_data.revoke(activation_uri(self.names, package, prior))
+            from .dependencies import revoke
+            revoke(self.settings, self.workspace_id, prior)
         if retry and existing_activation is not None and existing_activation.activation_state == "ready":
             return self._remember_health_report(activation_key, CapabilityHealthReport(
                 report_id=f"health-{uuid4().hex}",
@@ -759,6 +800,7 @@ class SlaveService:
             "target_resource_ref": command.target_resource_ref,
             "instance_config": dict(command.instance_config),
             "credential_profile": command.credential_profile,
+            "dependencies": command.dependencies,
         }
         pending = (
             existing_activation.model_copy(update=pending_values)
@@ -836,6 +878,8 @@ class SlaveService:
             raise RuntimeError("capability_package_ref_mismatch")
         lock = self._activation_locks.setdefault(self._activation_key(package.version_ref, command.instance_name), asyncio.Lock())
         async with lock:
+            from loom_v2.service_access import activation_uri
+            existing = self.activations.get(self._activation_key(package.version_ref, command.instance_name))
             return await self._deprovision_locked(command, package)
 
     async def _deprovision_locked(
@@ -859,6 +903,12 @@ class SlaveService:
             credential_profile=command.credential_profile,
         )
         self._accept_activation_revision(activation_key, retry=retry)
+        prior = self.activations.get(activation_key)
+        if prior is not None and not retry:
+            from loom_v2.service_access import activation_uri
+            await self.grip_data.revoke(activation_uri(self.names, package, prior))
+            from .dependencies import revoke
+            revoke(self.settings, self.workspace_id, prior)
         evidence_refs = (
             list(existing.evidence_refs)
             if existing is not None
@@ -872,6 +922,7 @@ class SlaveService:
             "target_resource_ref": command.target_resource_ref,
             "instance_config": dict(command.instance_config),
             "credential_profile": command.credential_profile,
+            "dependencies": command.dependencies,
         }
         desired = (
             existing.model_copy(update=desired_values)
@@ -990,8 +1041,7 @@ class SlaveService:
             async with lock:
                 activation = self.activations.get(activation_key)
                 if activation is None or (
-                    activation_key in self._pending_health_reports
-                    or activation.desired_state != "running"
+                    activation.desired_state != "running"
                 ):
                     continue
                 package = self._find_cached_package(
@@ -1023,22 +1073,45 @@ class SlaveService:
                             details["runtime_profile"]["authentication"] = inspected["authentication"]
                         if inspected.get("identity_match") and inspected.get("healthy") and inspected.get("authenticated", True):
                             state = "ready"
+                            self._recovery_backoff.pop(activation_key, None)
                         elif inspected.get("identity_match") and inspected.get("healthy") and inspected.get("authentication", {}).get("status") == "auth_required":
                             state = "pending_auth"
-                        elif inspected.get("exists") and inspected.get("running"):
+                        elif inspected.get("exists") and inspected.get("running") and inspected.get("configuration_match", True):
                             state = "degraded"
+                        elif not inspected.get("exists") or inspected.get("identity_match"):
+                            state = "degraded"
+                            # Recover missing/stopped containers locally, independently
+                            # of Observer leases. Persistent failure stays failed.
+                            revision, delay, next_attempt = self._recovery_backoff.get(activation_key, (activation.activation_revision, 1, 0))
+                            if revision == activation.activation_revision and time.monotonic() < next_attempt:
+                                continue
+                            if revision != activation.activation_revision:
+                                delay = 1
+                            self._recovery_backoff[activation_key] = (activation.activation_revision, min(delay * 2, 30), time.monotonic() + delay * random.uniform(.8, 1.0))
+                            recovered = await self.runtime_plugin_host.provision(package, CapabilityProvisionCommand(
+                                command_id=f"recover-{uuid4().hex}", package_version_ref=package.version_ref,
+                                package_digest=package.package_digest, target_slave=self.slave_id,
+                                workspace_id=self.workspace_id, idempotency_key=activation.last_idempotency_key,
+                                activation_revision=activation.activation_revision, instance_name=activation.instance_name,
+                                target_resource_ref=activation.target_resource_ref, instance_config=activation.instance_config,
+                                credential_profile=activation.credential_profile, dependencies=activation.dependencies))
+                            state = recovered.get("activation_state", "ready")
+                            if state == "ready":
+                                self._recovery_backoff.pop(activation_key, None)
+                            details["runtime_profile"] = recovered.get("runtime_profile", activation.runtime_profile)
                         else:
                             state = "failed"
                     except (RuntimePluginError, RuntimeError) as exc:
-                        state = "failed"
-                        details["code"] = getattr(exc, "code", None) or str(exc)
+                        code = getattr(exc, "code", None) or str(exc)
+                        state = "degraded" if code in {"service_runtime_unavailable", "runtime_plugin_unavailable", "service_docker_timeout", "service_health_check_failed"} else "failed"
+                        details["code"] = code
 
                 health = (activation.activation_revision, state)
                 runtime_profile = details.get("runtime_profile", activation.runtime_profile)
-                if self._last_reported_health.get(activation_key) == health and runtime_profile == activation.runtime_profile:
+                if self._last_reported_health.get(activation_key) == health and runtime_profile == activation.runtime_profile and activation.activation_state == state:
                     continue
                 if state != activation.activation_state or runtime_profile != activation.runtime_profile:
-                    activation = activation.model_copy(update={"activation_state": state, "runtime_profile": runtime_profile})
+                    activation = activation.model_copy(update={"activation_state": state, "runtime_profile": runtime_profile, "applied_revision": activation.activation_revision if state == "ready" else activation.applied_revision})
                     self.activations[activation_key] = activation
                     await self._persist_activation(package, activation)
                 report = CapabilityHealthReport(
@@ -1054,7 +1127,7 @@ class SlaveService:
                 )
                 self._pending_health_reports[activation_key] = report
                 reports.append(report)
-        return reports
+        return list({(r.package_version_ref, r.instance_name): r for r in reports}.values())
 
     def acknowledge_health_report(self, report_id: str) -> None:
         for activation_key, report in list(self._pending_health_reports.items()):

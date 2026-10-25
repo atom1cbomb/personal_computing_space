@@ -269,3 +269,5 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
 进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。
 
 统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](docs/authentication.md)。
+
+服务动作、直连/中转与 K8s 字节流见 [GRIP 服务 binding](docs/grip-service-bindings.md)。

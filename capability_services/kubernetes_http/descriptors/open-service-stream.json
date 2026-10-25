@@ -1,0 +1,10 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/open-service-stream",
+  "name": "open-service-stream",
+  "description": "Open one TCP byte stream to a configured owned Service; failures never replay bytes.",
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/instance-config/sha256/8dfdc232265ff7f00514546961ee961dc69c3050e8abd0a9843ca1ad65e12e5a",
+    "identity_criterion": "content_digest"
+  }
+}

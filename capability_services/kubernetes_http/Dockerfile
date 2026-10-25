@@ -13,7 +13,11 @@ RUN apt-get update \
     && rm -rf /tmp/kubelogin.zip /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server.py /app/server.py
+COPY loom_orchestration /app/loom_orchestration
+COPY packages/loom-orchestration /app/packages/loom-orchestration
+RUN pip install --no-cache-dir /app/packages/loom-orchestration 'fastapi>=0.115,<1' 'uvicorn[standard]>=0.30,<1'
+COPY capability_services/kubernetes_http /app/capability_services/kubernetes_http
+RUN mkdir -p /var/lib/loom/service/kube && chown -R 65534:65534 /var/lib/loom/service
 USER 65534:65534
 EXPOSE 8080
-ENTRYPOINT ["python", "/app/server.py"]
+ENTRYPOINT ["python", "-m", "capability_services.kubernetes_http.server"]

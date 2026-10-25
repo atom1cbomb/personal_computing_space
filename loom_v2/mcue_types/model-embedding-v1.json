@@ -1,0 +1,37 @@
+{
+  "mcue": "model/embedding",
+  "version": "v1",
+  "description": "Embedding model with verified upstream identity",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {
+      "display_name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 4096
+      },
+      "kubernetes_ref": {
+        "type": "string",
+        "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"
+      },
+      "model_name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "dimensions": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "required": [
+      "model_name",
+      "dimensions",
+      "kubernetes_ref"
+    ],
+    "additionalProperties": false
+  }
+}

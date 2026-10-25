@@ -5,8 +5,11 @@ description: Use when a coding agent needs to discover or describe Loom resource
 
 # Personal Computing Space
 
-Use the Observer as the only external entry point. The external agent owns
-discovery and orchestration; Driver only executes a frozen submission.
+Use Observer for discovery, management and task submission. Invoke resource actions
+through the operator-trusted bindings in DESCRIBE; a service, Slave data gateway,
+or Observer relay may implement a binding. The external agent owns orchestration;
+Driver executes frozen task submissions. For service calls, streams, activation
+configuration and dependency grants, read [references/service-bindings.md](references/service-bindings.md).
 
 ## Public SDK
 
@@ -47,7 +50,7 @@ resource; action offers and runtime configuration govern its use.
   the user's explicit `accept` or `abandon` decision.
 - Never call Observer `/mcp`, Driver `/driver/v1/*`, Observer `/internal/v1/*`,
   or Slave `/worker/v1/*`. Those are internal control surfaces.
-- Do not use internal Driver or Slave endpoints. Direct plan submission is the
+- Public GRIP service data bindings are distinct from internal Driver/Slave endpoints. Direct plan submission is the
   supported public planning path; the Observer owns Run mutation and enqueue.
 - Treat `ResourceRef` and digest fields as server-owned facts. Do not calculate,
   invent, or overwrite content/package/draft digests; obtain immutable refs from
@@ -108,8 +111,9 @@ authentication → `exec`; retain the InstanceId for
 
 ## Workflow
 
-1. Check `GET /healthz` and `GET /api/v1/runtime`. Stop and report
-   `driver_unavailable` rather than bypassing the Observer.
+1. For task submission, check `GET /healthz` and `GET /api/v1/runtime`; report
+   `driver_unavailable` if task execution is unavailable. Service bindings do not
+   depend on Driver readiness. Discover their own availability and contracts.
 2. Discover compute with `await client.resources(mcue="computing/slave")` and inspect descriptions
    for Slave `run-package` / `activate-package` offers. Select available leases
    using `metadata.available` and inspect executor/runtime descriptors.

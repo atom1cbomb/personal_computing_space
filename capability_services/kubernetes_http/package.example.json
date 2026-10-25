@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "kubernetes-http",
-  "package_version": "v6",
+  "package_version": "v8",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -17,13 +17,14 @@
       "interaction": {
         "mode": "device-code"
       }
-    }
+    },
+    "persistent_state": true
   },
   "action_exports": [
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/resources-list",
-        "version_or_digest": "c419b88c0a7cfcd4f1deb1991af74d952da1fb919eccddbf2d7d90087914ea6b",
+        "version_or_digest": "eebf53a9db3ba0c13ca0ade2b35f514c2b7ac8621c3236acda839db598fd0656",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -42,7 +43,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/resources-get",
-        "version_or_digest": "ff1817966fec26013f59fbc3a646c30fb4c34d7fd147f274c97c85d8b98584d2",
+        "version_or_digest": "921c0e8a8158264c3a1e0fb1bf2e6e6ea99d389827f6fe03e14c5dc3c539297f",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -61,7 +62,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/jobs-submit",
-        "version_or_digest": "e697ec8a3b2b2e15d3de2b78debd7d0dfb0e1182c41d3b8460e4093c9695fb2d",
+        "version_or_digest": "eae1ed55bdd21753649b7a9e49011227fc820028b486dcca9e1d59a8bd8a5d0a",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -80,7 +81,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/jobs-status",
-        "version_or_digest": "8d852d184c7273565d1a4b0523fa6b3faf5d18699cc9b6f60dc4ef5a2f321060",
+        "version_or_digest": "01a4c2f2aebf63c00e9904a455da9693c6d8d76b87265cf2a77a6d9217d14cf7",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -99,7 +100,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/jobs-logs",
-        "version_or_digest": "c6e0a89b36463cabc06764e1a3e670ec24e8bfd76965c2dbe4ede9ee1c31020a",
+        "version_or_digest": "0d43e7d7853736a1e3db034c161b549998e9c2fb8b3bd1ef6a0326949b423026",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -118,7 +119,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/jobs-delete",
-        "version_or_digest": "72cb43409bca9c6049f38e47788e53f6098917a30600636a78e892a7dc28ca50",
+        "version_or_digest": "4e8931c02b2126c5ae98e7f091c4e3b0cca9b472a023eeaf956a281f7a946764",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -132,6 +133,66 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/jobs/delete"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/services-ensure",
+        "version_or_digest": "6862bd4b1cae03fdb4194d57eafc6a898b366e6379f4d581ef3ad5fe8ae002af",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/contracts/services-ensure/sha256/bc617b469279b291dcb19a35c9467fe457b84f02f6dfbcc82a2ed044e23b88bd",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.service.ensure"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/services/ensure",
+        "interaction": "task"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/service-access-status",
+        "version_or_digest": "709857c40a1de5a156639e127de04fa2fff83beb2e597697642758b01653ca38",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/contracts/service-access-status/sha256/755eadd2646d9cba5aad4eab9e69b893110c25a2dc91fa63cc644ef2988642a3",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.service.access"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/services/access-status",
+        "interaction": "request-reply"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/k8s/open-service-stream",
+        "version_or_digest": "abc66d951c81a0b8219b5790f4234f69015b5ecfeeee94021b3e0497450d5ac9",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/contracts/open-service-stream/sha256/b4653b92a02ab1206caa6d11e612e7d21751edd4f588f2f78d7e8e3da7e3cc5c",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "kubernetes.service.access"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/services/stream",
+        "interaction": "byte-stream"
       }
     }
   ]

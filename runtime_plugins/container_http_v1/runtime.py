@@ -33,7 +33,7 @@ PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
 RUNTIME_DESCRIPTOR: dict[str, Any] = {
     "plugin_id": "container-http-v1",
-    "protocol_version": "loom.runtime-plugin/1",
+    "protocol_version": "loom.runtime-plugin/2",
     "supports": [
         {
             "package_type": "service",
@@ -186,7 +186,7 @@ class DockerContainerHTTPRuntimeV1:
     ) -> Path:
         safe_workspace = re.sub(r"[^a-z0-9_.-]", "-", workspace_id.lower()).strip("-")[:40] or "workspace"
         safe_instance = re.sub(r"[^a-z0-9-]", "-", instance_name.lower()).strip("-")[:63] or "default"
-        return self.instance_state_dir / safe_workspace / package_digest / f"{safe_instance}.json"
+        return self.instance_state_dir / safe_workspace / self.slave_id / package_digest / f"{safe_instance}.json"
 
     def _write_instance_config(
         self,
@@ -691,6 +691,20 @@ class DockerContainerHTTPRuntimeV1:
             },
         }
 
+    def _configuration(self, package_ref, activation):
+        consumer = json.loads(os.getenv("LOOM_RUNTIME_PLUGIN_CONSUMER_PORTS", "{}"))
+        consumer = consumer.get(f"{package_ref}:{self._instance_name(activation)}")
+        return {"instance_config": self._instance_config(activation), "target": activation.get("target_resource_ref"),
+                "dependencies": activation.get("dependencies", {}), "consumer": consumer}
+
+    def _configuration_matches(self, container, package_ref, activation):
+        configuration = self._configuration(package_ref, activation)
+        actual = (container.get("Config", {}).get("Labels") or {}).get("io.loom.config-digest")
+        if actual is None and not any(configuration.values()):
+            return True
+        expected = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode()).hexdigest()
+        return actual == expected
+
     async def provision(
         self, package: dict[str, Any], command: dict[str, Any]
     ) -> dict[str, Any]:
@@ -705,6 +719,22 @@ class DockerContainerHTTPRuntimeV1:
         network_args = self._network_args(package)
         instance_config = command.get("instance_config") or {}
         config_mount: list[str] = []
+        dependency_mount = []
+        if command.get("dependencies"):
+            directory = self.instance_state_dir / workspace_id / self.slave_id / package_digest / instance_name / "dependencies"
+            if not directory.is_dir():
+                raise RuntimeError("dependency_context_unavailable")
+            dependency_mount = ["--mount", f"type=bind,src={directory},dst=/run/loom/dependencies,readonly"]
+        # Only the operator may publish a consumer port. Packages cannot choose
+        # host addresses or open their private runtime endpoints to callers.
+        configuration = self._configuration(package_ref, command)
+        consumer = configuration["consumer"]
+        consumer_args = []
+        if consumer:
+            host_port, container_port_value = int(consumer["host_port"]), int(consumer["container_port"])
+            if not 1 <= host_port <= 65535 or not 1 <= container_port_value <= 65535 or container_port_value == container_port:
+                raise RuntimeError("consumer_binding_invalid")
+            consumer_args = ["--publish", f"127.0.0.1:{host_port}:{container_port_value}"]
         if instance_config or command.get("target_resource_ref") is not None:
             config_path = self._write_instance_config(
                 workspace_id, package_digest, instance_name, command
@@ -763,6 +793,12 @@ class DockerContainerHTTPRuntimeV1:
             await self._remove_container(container_name)
             existing = None
 
+        configuration_digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode()).hexdigest()
+        if instance_config or configuration["target"] or configuration["dependencies"] or consumer or (existing and (existing.get("Config", {}).get("Labels") or {}).get("io.loom.config-digest")):
+            labels["io.loom.config-digest"] = configuration_digest
+        if existing is not None and not self._labels_match(existing, labels):
+            await self._remove_container(container_name)
+            existing = None
         idempotent = False
         if existing is None:
             args = [
@@ -772,7 +808,7 @@ class DockerContainerHTTPRuntimeV1:
                 "--pull=never",
                 "--restart",
                 "unless-stopped",
-                *network_args,
+                *network_args[:2],
                 "--read-only",
                 "--user",
                 "65534:65534",
@@ -791,6 +827,8 @@ class DockerContainerHTTPRuntimeV1:
             ]
             args.extend(credential_mount)
             args.extend(config_mount)
+            args.extend(dependency_mount)
+            args.extend(consumer_args)
             if persistent_state:
                 args.extend(
                     [
@@ -804,6 +842,14 @@ class DockerContainerHTTPRuntimeV1:
             created = await self._docker(args)
             if created.returncode != 0:
                 raise RuntimeError("service_container_start_failed")
+            # Older Docker engines cannot create a container with multiple
+            # endpoints. Attach the operator-approved egress network before
+            # starting, so no workload runs with incomplete isolation/setup.
+            for network in network_args[3::2]:
+                connected = await self._docker(["network", "connect", network, container_name])
+                if connected.returncode != 0:
+                    await self._remove_container(container_name)
+                    raise RuntimeError("service_container_network_failed")
             started = await self._docker(["start", container_name])
             if started.returncode != 0:
                 await self._remove_container(container_name)
@@ -875,16 +921,7 @@ class DockerContainerHTTPRuntimeV1:
             "idempotent": idempotent,
         }
 
-    async def invoke(
-        self,
-        package: dict[str, Any],
-        action_export: dict[str, Any],
-        payload: dict[str, Any],
-        *,
-        activation: dict[str, Any],
-        attempt_id: str,
-        deadline_seconds: float | None = None,
-    ) -> dict[str, Any]:
+    async def _invocation_endpoint(self, package, action_export, activation):
         image_ref, container_port, _health_path, exports = self._service_values(
             package
         )
@@ -920,7 +957,25 @@ class DockerContainerHTTPRuntimeV1:
         if not bool((container.get("State") or {}).get("Running")):
             raise RuntimeError("service_activation_not_ready")
 
+        if not self._configuration_matches(container, package_ref, activation):
+            raise RuntimeError("service_configuration_not_applied")
         host = await self._http_host(container_name, container)
+
+        return host, container_port, path, package_digest, instance_name
+
+    async def invoke(
+        self,
+        package: dict[str, Any],
+        action_export: dict[str, Any],
+        payload: dict[str, Any],
+        *,
+        activation: dict[str, Any],
+        attempt_id: str,
+        deadline_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        if (action_export.get("runtime_binding") or {}).get("interaction") == "byte-stream":
+            raise RuntimeError("stream_action_not_task")
+        host, container_port, path, package_digest, instance_name = await self._invocation_endpoint(package, action_export, activation)
 
         capacity_timeout = (
             float(deadline_seconds)
@@ -979,6 +1034,22 @@ class DockerContainerHTTPRuntimeV1:
         finally:
             semaphore.release()
 
+    async def open_stream(self, package, action_export, payload, *, activation, request_id, deadline=None):
+        from loom_orchestration.grip import Request
+        from loom_orchestration.streams import connect_stream, STREAM_PROTOCOL
+        if (action_export.get("runtime_binding") or {}).get("interaction") != "byte-stream":
+            raise RuntimeError("service_endpoint_binding_mismatch")
+        host, port, path, _, _ = await self._invocation_endpoint(package, action_export, activation)
+        # The protected container network is a private runtime channel. Public
+        # authorization has already been checked by the data entry.
+        target = activation.get("target_resource_ref") or {}
+        target = target.get("resource_id") or self._execution_identity(package)[0]
+        action = action_export["action_descriptor_ref"]["resource_id"]
+        request = Request(version="grip.v1", request_id=request_id, method="INVOKE",
+            auth={"credential": "runtime-local"}, target=target, action=action,
+            input=payload, accepted_protocols=[STREAM_PROTOCOL], deadline=deadline)
+        return await connect_stream(f"ws://{host}:{port}{path}", request, timeout=self.request_timeout)
+
     async def inspect(self, activation: dict[str, Any]) -> dict[str, Any]:
         package = activation.get("package_payload") or activation.get("package")
         if not isinstance(package, dict):
@@ -1016,8 +1087,10 @@ class DockerContainerHTTPRuntimeV1:
             image_ref=image_ref,
         )
         running = bool((container.get("State") or {}).get("Running"))
+        configuration_match = self._configuration_matches(container, package_ref, activation)
         healthy = bool(
             identity_match
+            and configuration_match
             and running
             and await self._health(name, port, health_path)
         )
@@ -1025,6 +1098,7 @@ class DockerContainerHTTPRuntimeV1:
             "exists": True,
             "running": running,
             "identity_match": identity_match,
+            "configuration_match": configuration_match,
             "healthy": healthy,
         }
         authentication = self._authentication(package)
@@ -1152,6 +1226,7 @@ class DockerContainerHTTPRuntimeV1:
                     "target_resource_ref": activation.get("target_resource_ref"),
                     "instance_config": dict(activation.get("instance_config") or {}),
                     "credential_profile": activation.get("credential_profile"),
+                    "dependencies": activation.get("dependencies", {}),
                 }
                 provisioned = await self.provision(package, command)
                 results.append({"activation_key": activation_key, **provisioned})
@@ -1159,7 +1234,7 @@ class DockerContainerHTTPRuntimeV1:
                 results.append(
                     {
                         "activation_key": activation_key,
-                        "activation_state": "failed",
+                        "activation_state": "degraded" if str(exc) in {"service_runtime_unavailable", "service_docker_timeout", "service_health_check_failed"} else "failed",
                         "runtime_plugin_id": "container-http-v1",
                         "details": {
                             "code": str(exc) or "runtime_plugin_error"

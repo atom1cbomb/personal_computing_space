@@ -1,6 +1,8 @@
 # 通过 GRIP 使用能力服务包
 
-七个服务包都使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 调用业务 action → 读取 Run。
+服务包使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 按 offer 调用业务 action。
+任务 action 返回 Run；请求回复 action 直接返回业务结果；字节流 action 用 SDK `open_stream` 建立通道。
+调用地址由 binding 决定，支持服务直连和 Observer 中转，见 [服务 binding](../docs/grip-service-bindings.md)。
 能力包是不可变资源，Slave 是执行资源，激活实例也是资源；外部调用方只使用返回的 GRIP URI。
 包内的 `/v1/...` 是 `container:http/1` runtime 到容器的内部绑定。
 
@@ -10,7 +12,8 @@
 
 | 目录 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---:|---|
-| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v6 | 6 | 实例选择 profile，其中含 Kubernetes kubeconfig/policy |
+| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
+| [embedding_http](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
 | [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
 | [grafana_http](grafana_http/README.md) | grafana-http/v4 | 6 | 本地浏览器扫码、实例会话持久化及自动令牌轮换；仪表盘、Prometheus 指标和节点/GPU 编号对应的实际利用率 |
 | [outline_http](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
@@ -21,11 +24,14 @@
 ## 发布
 
 先构建并推送相应目录的 Dockerfile，记录仓库返回的真实 `registry/repository@sha256:...`。
-两个 SSH 镜像共用 `capability_services/ssh_execution.py`，从仓库根目录构建：
+两个 SSH 镜像共用 `capability_services/ssh_execution.py`；K8s 和 embedding 镜像需要 SDK。
+这四个镜像都从仓库根目录构建：
 
 ```sh
 docker build -f capability_services/vm_ssh_http/Dockerfile -t loom/vm-ssh-gateway .
 docker build -f capability_services/suanli_vm_ssh_http/Dockerfile -t loom/suanli-vm-ssh-gateway .
+docker build -f capability_services/kubernetes_http/Dockerfile -t loom/kubernetes-gateway:v8 .
+docker build -f capability_services/embedding_http/Dockerfile -t loom/embedding-gateway:v1 .
 ```
 
 配置 `LOOM_OBSERVER_URL`、`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID` 和 `LOOM_GRIP_TOKEN`。
@@ -96,6 +102,8 @@ SSH 包的 `instance_config` 必须提供 `host`、`port`、`user`。
 `pending_auth` 时调用实例的 `auth-start`，输入当前 `expected_revision`；按返回指引完成认证，
 重新描述实例确认 ready 后调用业务 action。认证接口不再列作 Kubernetes 业务导出。
 
+以下是任务 action 的调用方式：
+
 ```python
 run = await client.invoke(activation["resource"], selected_action_uri, {
     "arguments": business_input,
@@ -107,7 +115,10 @@ result = await client.invoke(run["run"], client.names.action("read"), {})
 
 `selected_action_uri` 必须取自 offers。可以先按 `metadata.actions` 的名称选动作，再匹配其 offer；
 对 action 资源 DESCRIBE 也可查看 `metadata.descriptor`。输入以 offer 的 schema 为准。
-动作执行返回 `{run: <GRIP URI>}`，按 Run 的状态继续查询结果。复用相同幂等 key 时参数必须保持一致。
+任务动作返回 `{run: <GRIP URI>}`，按 Run 的状态继续查询结果。复用相同幂等 key 时参数必须保持一致。
+直接请求回复动作传业务输入，返回业务结果；流动作使用 `client.open_stream(target, action, input)`。
+它们不使用任务的 arguments/revision/idempotency 包装。以 DESCRIBE 的 mode、Schema 为准，
+不能把 `request-reply` mode 一律理解成直接业务结果：任务提交本身也是请求回复，结果 Schema 是 Run 引用。
 停止实例调用其 `stop`，输入 `expected_revision` 和一个新的 `idempotency_key`。
 SSH 的成功标准是退出码为 0 且没有超时，两种 SSH 包均携带确定性 validator。
 
@@ -142,10 +153,12 @@ python scripts/generate_service_contracts.py --check
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest -q tests/capability_services tests/api/test_grip.py
 ```
 
-集成测试逐个发布七个真实包并执行全部 44 个业务导出，经过 GRIP、Driver、Slave、
-真实 `container:http` runtime 和本机 HTTP gateway。Docker、kubectl/SSH 可执行文件及外部 provider
+集成测试发布原有七个包的当前模板，经过 GRIP、Driver、Slave、
+真实 `container:http` runtime 和本机 HTTP gateway；另有 embedding 的真实 HTTP/WS 通道测试。
+任务导出经 Driver 执行，服务导出直接回复或建立流。Docker、kubectl/SSH 可执行文件及外部 provider
 使用测试替身；这些结果不代表生产云、真实 Docker 或浏览器登录验收。
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用
 可使用 `examples/grip/invoke.py`，由调用者明确提供目标、action 和输入。
 
-统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](../docs/authentication.md)。
+SDK 0.8 包含统一登录、重新认证和服务 binding 支持，参见 [认证说明](../docs/authentication.md)
+及 [服务部署步骤](../docs/service-bindings-deployment.md)。

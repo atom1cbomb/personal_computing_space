@@ -37,11 +37,13 @@ def seed_embedded_slaves(
                 "slave-a",
                 content_store=repository.content_store,
                 capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
+                settings=settings,
             ),
             "slave-b": SlaveService(
                 "slave-b",
                 content_store=repository.content_store,
                 capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
+                settings=settings,
             ),
         }
     now = datetime.now(timezone.utc)
@@ -100,11 +102,13 @@ def create_embedded_app(
             "slave-a",
             content_store=repository.content_store,
             capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
+                settings=settings,
         ),
         "slave-b": SlaveService(
             "slave-b",
             content_store=repository.content_store,
             capability_action_timeout_seconds=settings.capability_action_timeout_seconds,
+                settings=settings,
         ),
     }
     workers: dict[str, WorkerSession] = {}

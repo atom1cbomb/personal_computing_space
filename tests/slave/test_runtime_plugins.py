@@ -281,7 +281,7 @@ async def test_discovery_rejects_duplicate_provider_before_starting_processes(
         executable.chmod(0o755)
         (bundle / "plugin.toml").write_text(
             f'''plugin_id = "{name}"
-protocol_version = "loom.runtime-plugin/1"
+protocol_version = "loom.runtime-plugin/2"
 command = ["bin/runtime-plugin"]
 
 [[supports]]
@@ -391,3 +391,46 @@ async def test_generic_plugin_provision_invoke_and_deprovision_without_core_type
     assert result.resource_ref.digest == store.digest(stored)
     assert stopped.activation_state == "stopped"
     assert plugin.calls == ["provision", "invoke", "deprovision"]
+
+
+async def test_private_plugin_stream_uses_real_unix_websocket_without_task(tmp_path):
+    import socket,tempfile
+    import uvicorn
+    from loom_orchestration.streams import TCPStream
+    from runtime_plugins.container_http_v1.server import PluginServer
+    from tests.slave.test_container_http_runtime import _package
+    package=_package(['/v1/stream'])
+    export=package.action_exports[0].model_copy(update={'runtime_binding':{'path':'/v1/stream','interaction':'byte-stream'}})
+    calls=[]
+    async def echo(reader,writer):
+        try:
+            while data:=await reader.read(65536):writer.write(data);await writer.drain()
+        finally:writer.close();await writer.wait_closed()
+    tcp=await asyncio.start_server(echo,'127.0.0.1',0)
+    class Runtime:
+        async def open_stream(self,pkg,action,payload,**kwargs):
+            calls.append(kwargs['request_id'])
+            reader,writer=await asyncio.open_connection('127.0.0.1',tcp.sockets[0].getsockname()[1])
+            stream=TCPStream(reader,writer);stream.body={'accepted':True};return stream
+    with tempfile.TemporaryDirectory(prefix='loom-uds-') as directory:
+        manifest=_PluginManifest(root=tmp_path,plugin_id='stream',protocol_version=PLUGIN_PROTOCOL_VERSION,
+            command=('unused',),supports=(RuntimePluginSupport('service','container:http','1'),))
+        plugin=ProcessRuntimePlugin(manifest,socket_dir=Path(directory))
+        plugin.process=SimpleNamespace(returncode=None)
+        plugin._client=httpx.AsyncClient()
+        listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);listener.bind(str(plugin.socket_path));listener.listen();listener.setblocking(False)
+        server=uvicorn.Server(uvicorn.Config(PluginServer(Runtime()).app(),lifespan='off',log_level='error',ws_max_size=65536,ws_max_queue=16))
+        task=asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(5):
+                while not server.started:await asyncio.sleep(.01)
+            stream=await plugin.open_stream(package,export,{},activation={},request_id='private-stream')
+            assert stream.body=={'accepted':True}
+            await stream.write(b'private-runtime-bytes')
+            assert await stream.read()==b'private-runtime-bytes'
+            await stream.aclose()
+            assert calls==['private-stream']
+        finally:
+            server.should_exit=True;await task;listener.close()
+            await plugin._client.aclose()
+    tcp.close();await tcp.wait_closed()

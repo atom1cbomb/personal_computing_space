@@ -55,7 +55,7 @@ export LOOM_GRIP_TOKEN='<由部署方配置的独立 bearer token>'
 
 `LOOM_GRIP_AUTHORITY` 是稳定资源命名域，不是 Slave 拨号地址。`LOOM_PUBLIC_BASE_URL` 是调用者可达的 Observer 外部地址，TLS 可以在反向代理终止。`POST /.well-known/grip` 同时承载描述和调用。SDK 使用传入的 Observer URL 作为该命名域的显式可信引导映射。未配置 token 时 GRIP 拒绝访问；HTTP Authorization 和 Cookie 不补齐消息中的 auth。
 
-本地开发可将 public base URL 设为 `http://127.0.0.1:18080`，客户端显式传 `allow_insecure_grip=True`；这使用独立的 `loom-http-json.v1` 绑定。生产 TLS 使用 `https-json.v1`。两个绑定都只支持 request-reply，UTF-8 JSON、HTTP 200 内的 GRIP reply/error；非 200、连接失败和非法 JSON 是承载失败。没有字节流，也没有自动重试或重定向。
+本地开发可将 public base URL 设为 `http://127.0.0.1:18080`，客户端显式传 `allow_insecure_grip=True`；这使用独立的 `loom-http-json.v1` 绑定。生产 TLS 使用 `https-json.v1`。两个绑定都只支持 request-reply，UTF-8 JSON、HTTP 200 内的 GRIP reply/error；非 200、连接失败和非法 JSON 是承载失败。字节流使用独立的 `loom-wss-stream.v1` 绑定；没有自动重试或重定向。详见 [服务 binding 与字节流](grip-service-bindings.md)。
 
 ## 运行能力包
 
@@ -98,7 +98,7 @@ async def main():
 asyncio.run(main())
 ```
 
-执行动作返回 `{"run": "grip://.../runs/..."}`，表示已持久化排队；业务结果在 read 返回的 `outcome` 中。Driver 需要在线领取队列。`request_id` 只关联通信；业务 `idempotency_key` 重用相同输入会返回同一任务，改变输入会拒绝。通信超时不表示任务没有执行。
+显式运行任务返回 `{"run": "grip://.../runs/..."}`，表示已持久化排队；业务结果在 read 返回的 `outcome` 中。Driver 需要在线领取队列。`request_id` 只关联通信；业务 `idempotency_key` 重用相同输入会返回同一任务，改变输入会拒绝。通信超时不表示任务没有执行。
 
 run-package 在指定 Slave 执行一个普通包导出。`container:python_orchestrator/1` 是 Driver 的编排运行方式，继续通过完整计划提交，不伪装为 Slave runtime。
 
@@ -122,7 +122,7 @@ description = await client.describe(activation["resource"])
 DESCRIBE 的 `metadata.actions` 列出包声明的全部业务动作，包括名称、说明、描述符、
 IoContract、权限和副作用，以及 `available` / `unavailable_reason`。其中 `arguments_schema`
 和 `result_schema` 是业务输入输出 Schema 引用；`input_schema` / `output_schema` 则描述 GRIP
-调用的参数包装及 `{run: ...}` 回执。Schema 正文按引用继续读取。
+调用契约：task 使用参数包装及 `{run: ...}`；request-reply 直接使用业务输入输出，byte-stream 使用建流契约。Schema 正文按引用继续读取。
 `offers` 列出当前可调用的动作与 binding。实例未就绪或停止时，仍能查看全部业务动作说明。
 
 instance_config 必须符合包的配置 Schema；target 可省略，提供时必须是已登记在当前 workspace 的领域资源。配置仅进入受控激活记录，不放进公开目录。`pending_auth` 表示还需认证，不能执行业务动作；如果描述提供 auth-start，可在该实例上调用它，输入 `{"expected_revision": revision}`，按返回的认证指引完成操作。浏览器 bridge 复用现有认证辅助通道。
@@ -134,7 +134,7 @@ instance_config 必须符合包的配置 Schema；target 可省略，提供时�
 此接口需要激活凭据版本的 Observer、Driver、Slave 和 SDK 0.6.0；见
 [升级说明](activation-credentials-upgrade.md)。
 
-ready 后，从实例的 offers 选定业务动作并调用：
+ready 后，从实例的 offers 选定业务动作并按其 Schema 调用。以下 SSH 导出仍为 task：
 
 ```python
 result = await client.invoke(activation_uri, business_action_uri, {

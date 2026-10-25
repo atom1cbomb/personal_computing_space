@@ -145,3 +145,22 @@ def test_grip_configuration_is_delivered_only_to_observer_and_redacted(tmp_path)
     assert observer.secret_files["grip_token"] == "private-grip-fixture"
     assert "private-grip-fixture" not in observer.redacted_preview
     assert "grip_token" not in render_project(config, "worker-a").secret_files
+
+
+def test_service_binding_keys_only_sign_on_observer_and_loopback_ports(tmp_path):
+    from dataclasses import replace
+    from loom_v2.deployment.config import ServiceAccessConfig
+    config=make_config(tmp_path)
+    access=ServiceAccessConfig(signing_key_file='private.pem', verification_keys={'service-access-v1':'public.pem'})
+    worker=config.machine('worker-a').model_copy(update={'service_id':'slave-autopaper', 'grip_data_port':8091,
+        'consumer_ports':{'grip://loom.local/workspaces/workspace-default/packages/embedding-http/v1:autopapers':{'host_port':8001,'container_port':8081}}})
+    config=replace(config, service_access=access, service_key_material={'grip-signing':'PRIVATE-TEST-KEY','grip-verify-service-access-v1':'PUBLIC-TEST-KEY'},
+        machines=tuple(worker if m.name==worker.name else m for m in config.machines))
+    observer=render_project(config,'observer');slave=render_project(config,worker.name)
+    assert 'grip-signing' in observer.secret_files and 'grip-signing' not in slave.secret_files
+    assert 'PRIVATE-TEST-KEY' not in observer.redacted_preview+slave.redacted_preview
+    app=json.loads(slave.compose_text)['services']['slave']
+    assert '127.0.0.1:8091:8091' in app['ports']
+    assert '8001:8081' not in app['ports']  # only the capability runtime gets this approval
+    assert json.loads(app['environment']['LOOM_RUNTIME_PLUGIN_CONSUMER_PORTS'])==worker.consumer_ports
+    assert 'LOOM_GRIP_SIGNING_KEY_FILE' not in app['environment']

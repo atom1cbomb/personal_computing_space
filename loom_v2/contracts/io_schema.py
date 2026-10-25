@@ -30,6 +30,8 @@ SUPPORTED_KEYWORDS = frozenset(
         "maximum",
         "minLength",
         "maxLength",
+        "additionalProperties", "propertyNames", "pattern",
+        "minProperties", "maxProperties", "minItems", "maxItems", "exclusiveMinimum",
     }
 )
 
@@ -75,6 +77,11 @@ def _reject_unsupported_keywords(schema: Any, *, path: str = "$") -> None:
     items = schema.get("items")
     if isinstance(items, Mapping) or isinstance(items, bool):
         _reject_unsupported_keywords(items, path=f"{path}.items")
+
+    for keyword in ("additionalProperties", "propertyNames"):
+        child = schema.get(keyword)
+        if isinstance(child, (Mapping, bool)):
+            _reject_unsupported_keywords(child, path=f"{path}.{keyword}")
 
 
 def validate_schema(schema: Any) -> None:

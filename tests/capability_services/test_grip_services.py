@@ -5,7 +5,7 @@ Only Docker and external providers are fixtures; no live infrastructure is used.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from http.server import ThreadingHTTPServer
 from importlib import import_module
 import json
@@ -38,8 +38,14 @@ async def wait_result(app, client, run):
     pytest.fail(f"execution did not settle: {result}")
 
 
-@contextmanager
-def serve(handler):
+@asynccontextmanager
+async def serve(handler):
+    from fastapi import FastAPI
+    from tests.support.asgi_server import running_asgi
+    if isinstance(handler, FastAPI):
+        async with running_asgi(handler) as base:
+            yield int(base.rsplit(":", 1)[1])
+        return
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
     thread.start()
@@ -98,6 +104,13 @@ class RuntimeAdapter:
 
     async def invoke(self, package, export, payload, **kwargs):
         return await self.runtime.invoke(package.model_dump(mode="json"), export.model_dump(mode="json"), payload, **kwargs)
+
+    async def open_stream(self, package, export, payload, *, activation, request_id, deadline=None):
+        from loom_orchestration.streams import connect_stream, STREAM_PROTOCOL
+        await self.runtime._invocation_endpoint(package.model_dump(mode="json"), export.model_dump(mode="json"), activation)
+        request = {"version":"grip.v1", "request_id":request_id, "method":"INVOKE", "auth":{"credential":"runtime-local"},
+                   "target":package.version_ref,"action":export.action_descriptor_ref.resource_id,"input":payload,"accepted_protocols":[STREAM_PROTOCOL]}
+        return await connect_stream(f"ws://127.0.0.1:{self.runtime.http_transport.port}" + export.runtime_binding["path"], request)
 
     async def auth_start(self, package, activation):
         return await self.runtime.auth_start(package.model_dump(mode="json"), activation)
@@ -215,12 +228,33 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
             key = {"DescribeRegions": "Regions", "DescribeZones": "Zones", "DescribeImages": "Images", "DescribeNodes": "Nodes", "DescribeInstances": "Instances", "RunInstances": "Instances", "DescribeInstanceStatus": "InstanceStatuses"}.get(action, "StateTransitions")
             return Response({key: []}, 200)
         monkeypatch.setattr(module.httpx, "stream", provider)
+    if directory == "kubernetes_http":
+        from capability_services.kubernetes_http.service_access import ServiceAccess, OWNER
+        service_ref="grip://loom.local/workspaces/workspace-default/resources/services/fixture"
+        access=ServiceAccess(gateway, {"service_targets":{service_ref:{"namespace":"test", "name":"fixture", "port":8001,
+            "selector":{"app":"fixture"}, "workload":{"resource":"deployment","name":"fixture","uid":"workload"}}}})
+        original_run=gateway._run
+        def command(args, **kwargs):
+            if "deployment" in args:
+                value={"metadata":{"uid":"workload"},"spec":{"template":{"metadata":{"labels":{"app":"fixture"}}}}}
+            elif "service" in args:
+                value={"metadata":{"uid":"service","name":"fixture","namespace":"test","annotations":{OWNER:service_ref},
+                                   "ownerReferences":[ServiceAccess.owner_reference(access.targets[service_ref])]},
+                       "spec":{"type":"ClusterIP","clusterIP":"10.0.0.1","selector":{"app":"fixture"},
+                               "ports":[{"name":"http","port":8001,"targetPort":8001,"protocol":"TCP"}]}}
+            else:return original_run(args, **kwargs)
+            return 0,json.dumps(value),"",False
+        monkeypatch.setattr(gateway,"_run",command)
+        def start(ref):
+            access.channels[ref]={"state":"ready","port":external["local_port"],"streams":set(),"task":None}
+        access.start=start
+        return gateway, module.create_app(gateway,access), external
     handler = type("FixtureHandler", (module.Handler,), {"gateway": gateway})
     return gateway, handler, external
 
 
 def arguments(directory, action_name):
-    common = {"name": "fixture-job", "pod_name": "fixture-pod", "resource": "pods", "id": "fixture-id", "documentId": "fixture-document", "collectionId": "fixture-collection", "title": "Fixture", "query": "fixture", "command": "id", "RegionId": "region-test", "ZoneId": "zone-test", "InstanceIds": ["vm-test"], "Filters": [], "IncludeAllInstances": True, "uid": "gpu", "hostname": "node-a", "start": 10, "end": 20, "step": 10}
+    common = {"service_ref":"grip://loom.local/workspaces/workspace-default/resources/services/fixture", "name": "fixture-job", "pod_name": "fixture-pod", "resource": "pods", "id": "fixture-id", "documentId": "fixture-document", "collectionId": "fixture-collection", "title": "Fixture", "query": "fixture", "command": "id", "RegionId": "region-test", "ZoneId": "zone-test", "InstanceIds": ["vm-test"], "Filters": [], "IncludeAllInstances": True, "uid": "gpu", "hostname": "node-a", "start": 10, "end": 20, "step": 10}
     schema = json.loads((ROOT / "capability_services" / directory / "schemas" / f"{action_name}-input.json").read_text())
     value = {key: common[key] for key in schema.get("required", []) if key in common}
     if action_name == "jobs-submit":
@@ -234,10 +268,20 @@ def arguments(directory, action_name):
 async def test_real_service_package_grip_lifecycle_and_every_export(directory, tmp_path, monkeypatch):
     gateway, handler, external = gateway_fixture(directory, tmp_path, monkeypatch)
     settings = Settings(grip_token="service-test", public_base_url="http://observer", coding_agent_backend="none", agent_lease_ttl_seconds=300)
+    if directory == "kubernetes_http":
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+        key=Ed25519PrivateKey.generate()
+        (tmp_path/"signing.pem").write_bytes(key.private_bytes(Encoding.PEM,PrivateFormat.PKCS8,NoEncryption()))
+        (tmp_path/"verify.pem").write_bytes(key.public_key().public_bytes(Encoding.PEM,PublicFormat.SubjectPublicKeyInfo))
+        settings.grip_signing_key_file=str(tmp_path/"signing.pem")
+        settings.grip_verification_keys={settings.grip_signing_key_id:str(tmp_path/"verify.pem")}
+        settings.grip_allow_insecure_services=True
     repo = ObserverRepository(settings=settings)
     app = create_embedded_app(repo, settings=settings)
     bundle = ServicePackage(ROOT / "capability_services" / directory)
-    with serve(handler) as port:
+    async with serve(handler) as port:
+        external["local_port"]=port
         runner = DockerFixture()
         transport = LocalGatewayTransport(port)
         profile = "service-test" if directory not in {"suanli_vm_ssh_http", "volcano_http"} else None
@@ -340,12 +384,26 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                         assert (await client.read_json(ResourceRef.model_validate(declaration[key])))["type"] == "object"
                 for source, action in zip(bundle.manifest["action_exports"], exports, strict=True):
                     action_name = source["action_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]
+                    interaction=source["runtime_binding"].get("interaction","task")
+                    if interaction == "request-reply":
+                        result=await client.invoke(target,action["uri"],arguments(directory,action_name))
+                        assert result["state"] == "ready"
+                        continue
+                    if interaction == "byte-stream":
+                        from loom_orchestration.grip import Request
+                        _, payload, _, _ = await client._prepare(target,action["uri"],arguments(directory,action_name),mode="byte-stream")
+                        opened=await app.state.service_access.open_stream(Request.model_validate(payload))
+                        try:
+                            await opened.stream.write(b"GET /healthz HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n")
+                            assert b"200 OK" in await opened.stream.read(65536)
+                        finally:await opened.stream.aclose()
+                        continue
                     data = {"arguments": arguments(directory, action_name), "expected_revision": activation["revision"], "idempotency_key": action_name}
                     submitted = await client.invoke(target, action["uri"], data)
                     assert await client.invoke(target, action["uri"], data) == submitted
                     result = await wait_result(app, client, submitted["run"])
                     assert result["state"] == "completed", (action_name, result)
-                business_paths = {e["runtime_binding"]["path"] for e in bundle.manifest["action_exports"]}
+                business_paths = {e["runtime_binding"]["path"] for e in bundle.manifest["action_exports"] if e["runtime_binding"].get("interaction") != "byte-stream"}
                 calls = [p for _, p, _ in transport.calls if p in business_paths]
                 assert sorted(calls) == sorted(business_paths), "each export runs once despite repeated GRIP invocation"
                 if "ssh" in directory:
@@ -480,7 +538,7 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
     repo = ObserverRepository(settings=settings)
     app = create_embedded_app(repo, settings=settings)
     bundle = ServicePackage(ROOT / "capability_services/grafana_http")
-    with serve(handler) as port:
+    async with serve(handler) as port:
         runner = DockerFixture()
         runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="internal", egress_network="egress",
             runner=runner, http_transport=LocalGatewayTransport(port), credential_dir=tmp_path,

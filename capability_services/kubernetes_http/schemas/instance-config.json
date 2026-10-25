@@ -1,0 +1,75 @@
+{
+  "type": "object",
+  "properties": {
+    "service_targets": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "namespace": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "selector": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "workload": {
+            "type": "object",
+            "properties": {
+              "resource": {
+                "enum": [
+                  "vcjob",
+                  "deployment",
+                  "job"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uid": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "resource",
+              "name",
+              "uid"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "namespace",
+          "name",
+          "port",
+          "selector",
+          "workload"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

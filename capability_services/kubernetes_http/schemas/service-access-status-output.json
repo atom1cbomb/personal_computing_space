@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "service_ref": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "last_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checked_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "service_ref",
+    "state",
+    "last_error",
+    "checked_at"
+  ]
+}

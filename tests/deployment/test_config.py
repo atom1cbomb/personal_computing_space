@@ -69,6 +69,60 @@ def test_loads_defaults_and_derives_cross_host_urls(tmp_path: Path):
     assert config.driver.workspace_path == "/srv/loom/workspace"
 
 
+def test_inventory_accepts_third_slave_and_rejects_consumer_port_collision(tmp_path):
+    for filename in ("internal.secret", "postgres.secret", "minio.secret"):
+        write_secret(tmp_path / filename, "fixture-secret")
+    text = config_text() + '''
+[[machines]]
+name = "worker-b"
+ssh_host = "10.0.0.14"
+ssh_user = "root"
+role = "slave"
+service_id = "slave-b"
+
+[[machines]]
+name = "autopaper"
+ssh_host = "10.0.0.15"
+ssh_user = "root"
+role = "slave"
+service_id = "slave-autopaper"
+grip_data_port = 8091
+[machines.consumer_ports."grip://loom.local/workspaces/workspace-default/packages/embedding-http/v1:autopapers"]
+host_port = 8001
+container_port = 8081
+'''
+    path = tmp_path / "deployment.toml"
+    path.write_text(text)
+    config = DeploymentConfig.from_file(path)
+    assert len(config.slaves) == 3
+    assert "slave-autopaper" in config.urls.slaves
+    path.write_text(text.replace("host_port = 8001", "host_port = 8091"))
+    with pytest.raises(DeploymentConfigError, match="published ports must be distinct"):
+        DeploymentConfig.from_file(path)
+
+
+def test_service_signing_key_requires_matching_public_key(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    for filename in ("internal.secret", "postgres.secret", "minio.secret"):
+        write_secret(tmp_path / filename, "fixture-secret")
+    key = Ed25519PrivateKey.generate()
+    (tmp_path / "sign.pem").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    (tmp_path / "verify.pem").write_bytes(key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+    path = tmp_path / "deployment.toml"
+    path.write_text(config_text().replace("[driver]", '''[cluster.service_access]
+signing_key_file = "sign.pem"
+verification_keys = { service-access-v1 = "verify.pem" }
+
+[driver]'''))
+    config = DeploymentConfig.from_file(path)
+    assert set(config.service_key_material) == {"grip-signing", "grip-verify-service-access-v1"}
+    assert "PRIVATE KEY" not in repr(config)
+    (tmp_path / "verify.pem").write_bytes(Ed25519PrivateKey.generate().public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+    with pytest.raises(DeploymentConfigError, match="do not match"):
+        DeploymentConfig.from_file(path)
+
+
 @pytest.mark.parametrize("field,value", [
     ("codex_provider", "volcengine-agent-plan"),
     ("codex_base_url", "https://provider.example"),

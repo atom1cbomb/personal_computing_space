@@ -50,6 +50,8 @@ async def execute_activation_targets(
     credential_profile: str | None = None,
     slave_gateway: Any | None = None,
     expected_revision: int | None = None,
+    dependencies: dict | None = None,
+    configure: bool = False,
 ) -> list[dict[str, Any]]:
     """Execute one promote/deactivate command for each selected target.
 
@@ -79,6 +81,8 @@ async def execute_activation_targets(
             target_resource_ref=target_resource_ref,
             instance_config=instance_config,
             credential_profile=credential_profile,
+            dependencies=dependencies,
+            configure=configure,
             **({"expected_revision": expected_revision} if expected_revision is not None else {}),
         )
         command_values: dict[str, Any] = {
@@ -90,6 +94,7 @@ async def execute_activation_targets(
             "target_resource_ref": desired.target_resource_ref,
             "instance_config": dict(desired.instance_config),
             "credential_profile": desired.credential_profile,
+            "dependencies": desired.dependencies,
             "workspace_id": workspace_id,
             "idempotency_key": desired.last_idempotency_key,
             "activation_revision": desired.activation_revision,

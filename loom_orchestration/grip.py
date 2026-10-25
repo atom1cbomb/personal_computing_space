@@ -91,14 +91,14 @@ class Request(Model):
 class Reply(Model):
     version: Literal["grip.v1"]
     request_id: str = Field(pattern=REQUEST_ID)
-    kind: Literal["reply", "error"]
+    kind: Literal["reply", "error", "stream-open"]
     body: dict[str, Any] | None = None
     error_code: str | None = Field(default=None, min_length=1)
     error_message: str | None = None
 
     @model_validator(mode="after")
     def check_kind(self) -> "Reply":
-        if self.kind == "reply":
+        if self.kind in {"reply", "stream-open"}:
             if self.body is None or {"error_code", "error_message"} & self.model_fields_set:
                 raise ValueError("invalid_reply")
         elif self.error_code is None or "body" in self.model_fields_set:

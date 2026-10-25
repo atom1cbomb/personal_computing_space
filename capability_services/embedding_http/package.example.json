@@ -1,0 +1,57 @@
+{
+  "package_type": "service",
+  "package_id": "embedding-http",
+  "package_version": "v1",
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
+  "body": {
+    "image_ref": "registry.example/loom/embedding-gateway@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "network_profile": "egress"
+  },
+  "action_exports": [
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/model/embed",
+        "version_or_digest": "8daaf166a251a63a9e1b88b047bbad17cec211a0fa44249bf4247d8b75fd7b12",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/contracts/embed/sha256/62c1dbf904df6b141c8e8edf86021bddcf38d356656e12ec6c61f2378d454cff",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "model.embedding.embed"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/model/embed",
+        "interaction": "request-reply"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/model/info",
+        "version_or_digest": "c88ab9b3ce323ef4ecd12c4812fafc5a4a12bbc894ed7c10b96823587e715475",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/contracts/info/sha256/eb9fdb20d5bd79b23e61b9fb703d0b6114dfc1e97e5d74e4f4ca87a29db7550d",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "model.embedding.info"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/model/info",
+        "interaction": "request-reply"
+      }
+    }
+  ]
+}

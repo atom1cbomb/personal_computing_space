@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None, *, forced_target: str | None = None) -> 
     parser.add_argument("--config", required=True, type=Path, help="TOML deployment inventory")
     parser.add_argument("--source-root", type=Path, default=_repository_root(), help="repository to upload (default: this checkout)")
     parser.add_argument("--dry-run", action="store_true", help="render plans without opening SSH or changing remote state")
-    parser.add_argument("--id", help="Slave service ID (slave-a or slave-b)")
+    parser.add_argument("--id", help="Slave service ID from the deployment inventory (for example slave-autopaper)")
     parser.add_argument("--command-timeout", type=_positive_float, default=900.0, help="SSH command/build timeout in seconds (default: 900)")
     parser.add_argument("--health-timeout", type=_positive_float, default=300.0, help="role health timeout in seconds (default: 300)")
     parser.add_argument("--health-interval", type=_positive_float, default=2.0, help="seconds between health probes (default: 2)")

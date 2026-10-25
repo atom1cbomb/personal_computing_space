@@ -9,23 +9,28 @@ shell command.
 from __future__ import annotations
 
 import json
+import errno
+import logging
 import os
 import re
 import subprocess
 import signal
 import threading
-import contextlib
 import time
 from urllib.parse import parse_qs, urlparse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from fastapi import Request, WebSocket
 
 
 MAX_BODY = 2 * 1024 * 1024
 MAX_OUTPUT = 4 * 1024 * 1024
 COMMAND_TIMEOUT = float(os.getenv("K8S_GATEWAY_COMMAND_TIMEOUT", "30"))
 AUTH_CHECK_INTERVAL = 30.0
+AUTH_RETRY_INITIAL = 2.0
+AUTH_RETRY_MAX = 60.0
+AUTH_LOGIN_TIMEOUT = 300.0
+logger = logging.getLogger(__name__)
 NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 LOGIN_PROMPT_RE = re.compile(
     r"^(?:Please visit the following URL in your browser manually:\s*|Open\s+)"
@@ -54,15 +59,19 @@ class KubernetesGateway:
         self.policy_path = credential_root / "policy.json"
         self.kubectl = kubectl
         self.timeout = timeout
-        self.home = Path(os.getenv("K8S_GATEWAY_HOME", "/tmp/loom-kube-home"))
+        self.home = Path(os.getenv("K8S_GATEWAY_HOME", "/var/lib/loom/service/kube"))
         self.home.mkdir(parents=True, exist_ok=True)
         self._auth_lock = threading.Lock()
         self._auth_process: subprocess.Popen[bytes] | None = None
         self._auth_stdout = bytearray()
         self._auth_stderr = bytearray()
         self._auth_readers: list[threading.Thread] = []
-        self._auth_completed_at: float | None = None
-        self._revalidation_deadline: float | None = None
+        self._auth_result: dict[str, Any] | None = None
+        self._auth_next_retry_at: float | None = None
+        self._auth_failures = 0
+        self._auth_deadline: float | None = None
+        self._auth_pending_status = "auth_required"
+        self._auth_challenge_seen = False
         self.policy = self._load_policy()
 
     def _load_policy(self) -> dict[str, str]:
@@ -161,42 +170,59 @@ class KubernetesGateway:
 
     def _probe(self) -> dict[str, Any]:
         with self._auth_lock:
-            # kubelogin refreshes its credentials on a fresh kubectl invocation.
-            # A completed successful process is not permanent authentication.
-            if (self._auth_process is not None and self._auth_process.poll() == 0
-                    and bytes(self._auth_stdout).strip().lower() in {b"yes", b"true"}
-                    and self._auth_completed_at is not None
-                    and time.monotonic() - self._auth_completed_at >= AUTH_CHECK_INTERVAL):
+            if self._auth_process is None and self._auth_result is None:
                 self._start_auth_process_locked()
-                # Keep the last verified success while a bounded refresh is in
-                # flight. A new device challenge or failure takes precedence.
-                self._revalidation_deadline = time.monotonic() + self.timeout
-            started = self._auth_process is None
-            if self._auth_process is None:
-                self._start_auth_process_locked()
-            if started:
-                for _ in range(10):
-                    state = self._auth_state_locked()
-                    if self._auth_process is not None and self._auth_process.poll() is not None:
-                        return state
-                    if "verification_uri" in state or state.get("status") == "authenticated":
-                        return state
-                    threading.Event().wait(0.05)
+                return self._wait_auth_start_locked()
+            state = self._auth_state_locked()
+            if self._auth_next_retry_at is not None and time.monotonic() >= self._auth_next_retry_at:
+                # Only a previously verified success gets a bounded grace
+                # period. Retrying a failure never makes the instance ready.
+                self._start_auth_process_locked(pending_status=state["status"])
             return self._auth_state_locked()
 
-    def _start_auth_process_locked(self) -> None:
-        old = self._auth_process
-        if old is not None and old.poll() is None:
-            return
-        if old is not None:
-            self._kill_group(old)
-            old.wait(timeout=2)
+    def _stop_auth_process_locked(self) -> None:
+        if self._auth_process is not None and self._auth_result is None:
+            # Reap the child and terminate helpers even if kubectl itself
+            # already exited but a helper still holds its pipes open.
+            self._kill_group(self._auth_process)
+            self._auth_process.wait(timeout=2)
+        for reader in self._auth_readers:
+            reader.join(timeout=0.1)
+
+    def _finish_auth_locked(self, result: dict[str, Any]) -> dict[str, Any]:
+        self._stop_auth_process_locked()
+        self._auth_deadline = None
+        self._auth_result = result
+        self._auth_next_retry_at = None
+        delay = None
+        if result["status"] == "authenticated":
+            self._auth_failures = 0
+            delay = AUTH_CHECK_INTERVAL
+        elif result.get("retryable"):
+            self._auth_failures = min(self._auth_failures + 1, 7)
+            delay = min(AUTH_RETRY_INITIAL * 2 ** (self._auth_failures - 1), AUTH_RETRY_MAX)
+        else:
+            self._auth_failures = 0
+        if delay is not None:
+            self._auth_next_retry_at = time.monotonic() + delay
+        if result["status"] == "auth_failed":
+            # Fixed reason codes only: stderr can contain provider credentials.
+            logger.warning("Kubernetes authentication check failed: reason=%s retry_in=%s",
+                           result["reason"], delay)
+        return dict(result)
+
+    def _start_auth_process_locked(self, *, pending_status: str = "auth_required") -> None:
+        self._stop_auth_process_locked()
+        self._auth_process = None
         # Old reader threads retain their old buffers and cannot contaminate
         # another attempt's challenge or authorization result.
         self._auth_stdout, self._auth_stderr = bytearray(), bytearray()
         self._auth_readers = []
-        self._auth_completed_at = None
-        self._revalidation_deadline = None
+        self._auth_result = None
+        self._auth_next_retry_at = None
+        self._auth_pending_status = pending_status
+        self._auth_challenge_seen = False
+        self._auth_deadline = time.monotonic() + self.timeout
         try:
             process = subprocess.Popen(
                 [*self._base_args(), "auth", "can-i", "get", "pods"],
@@ -210,8 +236,11 @@ class KubernetesGateway:
                 },
                 start_new_session=True,
             )
-        except OSError as exc:
-            raise GatewayError("kubernetes_client_unavailable") from exc
+        except (OSError, GatewayError) as exc:
+            retryable = isinstance(exc, OSError) and exc.errno not in {errno.ENOENT, errno.EACCES, errno.ENOEXEC, errno.ENOTDIR}
+            self._finish_auth_locked({"status": "auth_failed", "retryable": retryable,
+                                      "reason": "probe_failed" if retryable else "configuration_error"})
+            return
         self._auth_process = process
         for stream, target in (
             (process.stdout, self._auth_stdout),
@@ -228,68 +257,95 @@ class KubernetesGateway:
 
     @staticmethod
     def _read_auth_stream(stream: Any, target: bytearray) -> None:
-        while True:
-            chunk = stream.readline()
-            if not chunk:
-                return
-            target.extend(chunk[:MAX_OUTPUT])
-            if len(target) > MAX_OUTPUT:
-                del target[MAX_OUTPUT:]
+        try:
+            while chunk := stream.readline(65536):
+                target.extend(chunk[:MAX_OUTPUT])
+                if len(target) > MAX_OUTPUT:
+                    del target[MAX_OUTPUT:]
+        finally:
+            stream.close()
+
+    @staticmethod
+    def _auth_failure(stdout: str, stderr: str) -> dict[str, Any]:
+        message = stderr.lower()
+        if stdout.strip().lower() in {"no", "false"} or "forbidden" in message:
+            return {"status": "auth_failed", "retryable": False, "reason": "permission_denied"}
+        if any(marker in message for marker in (
+            "invalid_client", "invalid_scope", "unsupported_grant_type", "x509:",
+            "certificate verify failed", "invalid apiversion", "no configuration has been provided",
+            "interactivemode must be specified", "no such file or directory",
+        )):
+            return {"status": "auth_failed", "retryable": False, "reason": "configuration_error"}
+        if any(marker in message for marker in (
+            "invalid_grant", "unauthorized", "you must be logged in", "provide credentials",
+        )):
+            return {"status": "auth_required", "poll_after_seconds": 5}
+        transient = any(marker in message for marker in (
+            "timeout", "timed out", "deadline exceeded", "context canceled", "connection",
+            "eof", "no route", "no such host", "temporary failure", "network",
+            "service unavailable", "bad gateway", "too many requests",
+        ))
+        # Unknown failed checks also get bounded retries; a new provider error
+        # must not recreate the permanently latched failure this fixes.
+        return {"status": "auth_failed", "retryable": True,
+                "reason": "transport_error" if transient else "probe_failed"}
 
     def _auth_state_locked(self) -> dict[str, Any]:
+        if self._auth_result is not None:
+            return dict(self._auth_result)
         process = self._auth_process
         if process is None:
-            return {"status": "auth_failed", "retryable": True}
-        if process.poll() is not None:
+            return {"status": "auth_failed", "retryable": True, "reason": "probe_pending"}
+        returncode = process.poll()
+        if returncode is not None:
             for reader in self._auth_readers:
                 reader.join(timeout=0.1)
-            if self._auth_completed_at is None:
-                self._auth_completed_at = time.monotonic()
         stdout = bytes(self._auth_stdout).decode("utf-8", errors="replace")
         stderr = bytes(self._auth_stderr).decode("utf-8", errors="replace")
-        if process.poll() is None:
-            challenge = self._challenge(stdout, stderr)
-            if challenge:
-                self._revalidation_deadline = None
-                return challenge
-            if self._revalidation_deadline is not None:
-                if time.monotonic() < self._revalidation_deadline:
-                    return {"status": "authenticated"}
-                return {"status": "auth_failed", "retryable": True}
-            return {"status": "auth_required", "poll_after_seconds": 5}
-        self._revalidation_deadline = None
-        if process.returncode == 0 and stdout.strip().lower() in {"yes", "true"}:
-            return {"status": "authenticated"}
         challenge = self._challenge(stdout, stderr)
+        if returncode is None:
+            if challenge and not self._auth_challenge_seen:
+                self._auth_challenge_seen = True
+                self._auth_pending_status = "auth_required"
+                self._auth_deadline = time.monotonic() + AUTH_LOGIN_TIMEOUT
+            if self._auth_deadline is not None and time.monotonic() >= self._auth_deadline:
+                result = ({"status": "auth_required", "poll_after_seconds": 5} if self._auth_challenge_seen else
+                          {"status": "auth_failed", "retryable": True, "reason": "probe_timeout"})
+                return self._finish_auth_locked(result)
+            if challenge:
+                return challenge
+            if self._auth_pending_status == "authenticated":
+                return {"status": "authenticated"}
+            if self._auth_pending_status == "auth_failed":
+                return {"status": "auth_failed", "retryable": True, "reason": "probe_pending"}
+            return {"status": "auth_required", "poll_after_seconds": 5}
+        if returncode == 0 and stdout.strip().lower() in {"yes", "true"}:
+            return self._finish_auth_locked({"status": "authenticated"})
         if challenge:
             # The process no longer polls the authorization server. The printed
             # device URL/code belongs to a dead attempt and must not be reused.
-            return {"status": "auth_required", "poll_after_seconds": 5}
-        return {"status": "auth_failed", "retryable": False}
+            return self._finish_auth_locked({"status": "auth_required", "poll_after_seconds": 5})
+        return self._finish_auth_locked(self._auth_failure(stdout, stderr))
+
+    def _wait_auth_start_locked(self) -> dict[str, Any]:
+        # Give a fast credential check/device prompt a short opportunity to
+        # finish without making health requests wait for upstream networking.
+        for _ in range(10):
+            state = self._auth_state_locked()
+            if self._auth_result is not None or "verification_uri" in state or state["status"] == "authenticated":
+                return state
+            threading.Event().wait(0.05)
+        return self._auth_state_locked()
 
     def _auth_start(self) -> dict[str, Any]:
         with self._auth_lock:
-            if self._auth_process is not None and self._auth_process.poll() is None:
-                self._kill_group(self._auth_process)
-                self._auth_process.wait(timeout=2)
+            self._auth_failures = 0
             self._start_auth_process_locked()
-            # Give a device-code plugin a short opportunity to print its
-            # challenge, while keeping the HTTP request bounded.
-            for _ in range(10):
-                state = self._auth_state_locked()
-                if state.get("status") != "auth_required" or "verification_uri" in state:
-                    return state
-                threading.Event().wait(0.05)
-            return self._auth_state_locked()
+            return self._wait_auth_start_locked()
 
     def close(self) -> None:
         with self._auth_lock:
-            process = self._auth_process
-            if process is not None and process.poll() is None:
-                self._kill_group(process)
-            if process is not None:
-                with contextlib.suppress(Exception):
-                    process.wait(timeout=1)
+            self._stop_auth_process_locked()
             self._auth_process = None
 
     def _require_auth(self) -> dict[str, Any] | None:
@@ -396,55 +452,63 @@ class KubernetesGateway:
         raise GatewayError("not_found")
 
 
-class Handler(BaseHTTPRequestHandler):
-    gateway: KubernetesGateway
+def create_app(gateway, access=None):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from loom_orchestration.stream_server import serve_stream
+    from .service_access import AccessError, ServiceAccess
+    access = access or ServiceAccess(gateway)
 
-    def _write(self, status: int, value: dict[str, Any]) -> None:
-        body = json.dumps(value, separators=(",", ":")).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/healthz":
-            self._write(200, {"status": "ok"})
-        else:
-            self._write(404, {"error": "not_found"})
-
-    def do_POST(self) -> None:  # noqa: N802
+    @asynccontextmanager
+    async def lifespan(app):
+        await access.start_saved()
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if length < 0 or length > MAX_BODY:
-                raise GatewayError("request_too_large")
-            payload = json.loads(self.rfile.read(length))
+            yield
+        finally:
+            await access.close()
+            gateway.close()
+
+    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.get("/healthz")
+    async def health():
+        return {"status": "ok"}
+
+    @app.websocket("/v1/services/stream")
+    async def stream(websocket: WebSocket):
+        await serve_stream(websocket, access.open)
+
+    @app.post("/v1/{path:path}")
+    async def invoke(path: str, request: Request):
+        try:
+            body = bytearray()
+            async for chunk in request.stream():
+                body.extend(chunk)
+                if len(body) > MAX_BODY:
+                    raise GatewayError("request_too_large")
+            payload = json.loads(body)
             if not isinstance(payload, dict):
                 raise GatewayError("request_json_invalid")
-            result = self.gateway.handle(self.path, payload)
-            self._write(200, result)
-        except GatewayError as exc:
-            self._write(200, {"status": "error", "error": exc.code})
-        except (ValueError, json.JSONDecodeError):
-            self._write(200, {"status": "error", "error": "request_json_invalid"})
+            if path == "services/ensure":
+                return await access.ensure(payload.get("service_ref"))
+            if path == "services/access-status":
+                return access.status(payload.get("service_ref"))
+            return await asyncio.to_thread(gateway.handle, "/v1/" + path, payload)
+        except (GatewayError, AccessError) as exc:
+            return JSONResponse({"status": "error", "error": exc.code})
+        except (ValueError, TypeError):
+            return JSONResponse({"status": "error", "error": "request_json_invalid"})
+    return app
 
-    def log_message(self, format: str, *_args: Any) -> None:
-        return
 
-
-def main() -> None:
-    root = Path(os.getenv("K8S_GATEWAY_CREDENTIAL_ROOT", "/run/loom/credentials"))
-    gateway = KubernetesGateway(
-        credential_root=root,
-        kubectl=os.getenv("K8S_GATEWAY_KUBECTL", "kubectl"),
-    )
-    Handler.gateway = gateway
-    server = ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler)
-    try:
-        server.serve_forever()
-    finally:
-        gateway.close()
-        server.server_close()
+def main():
+    import uvicorn
+    gateway = KubernetesGateway(credential_root=Path(os.getenv("K8S_GATEWAY_CREDENTIAL_ROOT", "/run/loom/credentials")),
+        kubectl=os.getenv("K8S_GATEWAY_KUBECTL", "kubectl"))
+    uvicorn.run(create_app(gateway), host="0.0.0.0", port=int(os.getenv("PORT", "8080")),
+        ws_max_size=65536, ws_max_queue=16, ws_ping_interval=20, ws_ping_timeout=40, access_log=False)
 
 
 if __name__ == "__main__":

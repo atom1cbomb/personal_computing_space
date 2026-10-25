@@ -1,7 +1,7 @@
 """Workspace resource directory and GRIP application actions.
 
-The directory is a projection of existing authoritative records. Invocation
-submits ordinary durable runs; it never introduces a second execution engine.
+The directory projects authoritative contracts and deployment bindings.
+Task actions submit durable Runs; service actions use their declared bindings.
 """
 from __future__ import annotations
 
@@ -10,10 +10,11 @@ import base64
 import hashlib
 import hmac
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from fastapi import Request as HttpRequest
 from fastapi.responses import JSONResponse
@@ -28,10 +29,11 @@ from loom_orchestration.mcue import McueDefinition
 from loom_orchestration.naming import content_digest, resource_label
 from loom_v2.contracts.errors import DomainError
 from loom_v2.contracts.types import CapabilityPackageVersion, ClosureContract, ResourceRef, TaskClosure
-from loom_v2.observer.repository import RunRecord
+from loom_v2.observer.repository import RunSummary
 from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
 from loom_v2.observer.authentication import authentication_view
 from loom_v2.digest import digest_json
+from loom_v2.service_access import interaction
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +76,9 @@ class RunInput(Model):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
+from loom_v2.contracts.types import ActivationDependency
+
+
 class ActivateInput(Model):
     package: URI
     idempotency_key: str = Field(min_length=1, max_length=128)
@@ -86,6 +91,7 @@ class ActivateInput(Model):
                     "Select a new instance_name to change profiles.",
     )
     target: URI | None = None
+    dependencies: dict[str, ActivationDependency] = Field(default_factory=dict)
 
 
 class CallInput(Model):
@@ -103,10 +109,21 @@ class StopInput(Model):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
+class ConfigureInput(StopInput):
+    instance_config: dict[str, Any] | None = None
+    dependencies: dict[str, ActivationDependency] | None = None
+
+
+class ConfigureOutput(ResourceOutput):
+    desired_revision: int
+    applied_revision: int | None
+    state: str
+
+
 INPUTS = {"read": Empty, "cancel": Empty, "list-resources": ListInput,
           "publish-mcue-type": McueDefinition, "update-attributes": UpdateAttributesInput,
-          "register-resource": RegisterInput, "run-package": RunInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput}
-OUTPUTS = {"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
+          "register-resource": RegisterInput, "run-package": RunInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
+OUTPUTS = {"configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
            "update-attributes": AttributesOutput}
 OBJECT = {"type": "object"}
 RUN_RESULT = {"type": "object", "properties": {"run": {"type": "string"}},
@@ -117,6 +134,13 @@ RUN_RESULT = {"type": "object", "properties": {"run": {"type": "string"}},
 class Entry:
     description: dict[str, Any]
     value: Any = None
+
+
+@dataclass
+class PackageActions:
+    offers: list[dict]
+    declarations: list[dict]
+    entries: dict[str, Entry]
 
 
 class GripService:
@@ -131,6 +155,11 @@ class GripService:
         if base and (urlsplit(base).scheme not in {"http", "https"} or urlsplit(base).username
                      or urlsplit(base).query or urlsplit(base).fragment):
             raise ValueError("invalid_grip_public_base_url")
+        self._builtin = {name: self.offer(self.names.action(name), self.names.schema(name + "-input"),
+                                        self.names.schema(name + "-output")) for name in INPUTS}
+        self._static = self._static_entries()
+        self._call_schema = CallInput.model_json_schema()
+        self._package_actions: dict[tuple[str, str], PackageActions] = {}
 
     @property
     def repo(self):
@@ -147,11 +176,12 @@ class GripService:
         ref = export.action_descriptor_ref
         return self.names.name("actions", "exports", package.package_id, package.package_version, resource_label(ref.resource_id), "sha256", ref.digest)
 
-    def offer(self, action, input_schema, output_schema):
-        binding = {"protocol": self.protocol, "audience": self.names.root}
+    def offer(self, action, input_schema, output_schema, *, mode="request-reply"):
+        from loom_orchestration.bindings import stream_endpoint
+        binding = {"protocol": "loom-wss-stream.v1" if mode == "byte-stream" else self.protocol, "audience": self.names.root}
         if self.endpoint:
-            binding["endpoint"] = self.endpoint
-        return {"action": {"uri": action, "mode": "request-reply",
+            binding["endpoint"] = stream_endpoint(self.settings.public_base_url) if mode == "byte-stream" else self.endpoint
+        return {"action": {"uri": action, "mode": mode,
                            "input_schema": input_schema, "output_schema": output_schema},
                 "bindings": [binding]}
 
@@ -162,102 +192,176 @@ class GripService:
                                              else await self.repo._load_json_content(ref))
         return self._immutable_metadata[key]
 
-    async def catalog(self) -> dict[str, Entry]:
+    def _entry(self, target, mcue, metadata, offers, value=None):
+        metadata = {"mcue_ref": self.names.mcue(mcue), "attributes": {}, **metadata}
+        return Entry({"resource": {"uri": target, "mcue": mcue, "metadata": metadata}, "offers": offers}, value)
+
+    def _schema_entry(self, target, schema):
+        return self._entry(target, "grip/schema", {"language": "https://json-schema.org/draft/2020-12/schema"},
+                           [self._builtin["read"]], schema)
+
+    def _static_entries(self) -> dict[str, Entry]:
         n = self.names
-        entries: dict[str, Entry] = {}
-        schemas: dict[str, dict] = {}
-        builtin = {}
-
-        definitions = await self.repo.list_mcue_definitions(self.settings.workspace_id)
-
-        def add(target, mcue, metadata, offers, value=None):
-            metadata = {"mcue_ref": n.mcue(mcue), "attributes": {}, **metadata}
-            description = {"resource": {"uri": target, "mcue": mcue, "metadata": metadata}, "offers": offers}
-            entries[target] = Entry(description, value)
-
+        builtin = self._builtin
+        entries = {n.root: self._entry(n.root, "loom/workspace", {},
+                    [builtin["list-resources"], builtin["register-resource"], builtin["publish-mcue-type"]])}
         for name, model in INPUTS.items():
-            schemas[n.schema(name + "-input")] = model.model_json_schema()
-            schemas[n.schema(name + "-output")] = (
+            entries[n.action(name)] = self._entry(n.action(name), "grip/action", {"contract": builtin[name]["action"]},
+                                                  [builtin["read"]], builtin[name]["action"])
+            entries[n.schema(name + "-input")] = self._schema_entry(n.schema(name + "-input"), model.model_json_schema())
+            entries[n.schema(name + "-output")] = self._schema_entry(n.schema(name + "-output"),
                 OUTPUTS[name].model_json_schema() if name in OUTPUTS
                 else RUN_RESULT if name == "run-package" else OBJECT
             )
-            builtin[name] = self.offer(n.action(name), n.schema(name + "-input"), n.schema(name + "-output"))
-        schemas[n.schema("run-output")] = RUN_RESULT
-        add(n.root, "loom/workspace", {}, [builtin["list-resources"], builtin["register-resource"], builtin["publish-mcue-type"]])
-        for target, definition in definitions.items():
-            add(target, "grip/mcue-type", {"mcue": definition["mcue"], "version": definition["version"]},
-                [builtin["read"]], definition)
-        agents = await self.repo.list_agents(self.settings.workspace_id, role="slave")
-        from loom_v2.contracts.refs import select_slave_agents
-        agents.sort(key=lambda a: str(a.get("last_seen_at") or ""), reverse=True)
-        for slave, agent in select_slave_agents(agents).items():
-            caps = agent.get("capabilities") or {}
-            add(n.name("slaves", slave), "computing/slave", {
-                "slave_id": slave,
-                "available": agent["lease_state"] == "active",
-                "lease_state": agent["lease_state"], "last_seen_at": agent.get("last_seen_at"),
-                "base_actions": sorted(caps.get("base_actions", [])),
-                "term_support": caps.get("term_support", []),
-                "executor_descriptors": caps.get("executor_descriptors", []),
-                "runtime_plugin_descriptors": caps.get("runtime_plugin_descriptors", []),
-            }, [builtin["run-package"], builtin["activate-package"]], slave)
+        entries[n.schema("run-output")] = self._schema_entry(n.schema("run-output"), RUN_RESULT)
+        return entries
 
-        bound: dict[str, list[tuple[Any, Any, list]]] = {}
-        packages = await self.repo.list_capability_packages(workspace_id=self.settings.workspace_id)
-        for package in packages:
-            if (package.publication_state != "published"
-                    or package.workspace_id != self.settings.workspace_id):
-                continue
-            package_uri = self.package_uri(package)
-            exports = []
-            declarations = []
-            for export in package.action_exports:
-                action = self.export_uri(package, export)
-                contract = await self._metadata(export.io_contract_ref)
-                argument_schema = OBJECT
-                if contract.get("input_schema_ref"):
-                    argument_schema = await self._metadata(ResourceRef.model_validate(contract["input_schema_ref"]))
-                schema_uri = n.name("schemas", "calls", package.package_id, package.package_version,
-                                    resource_label(export.action_descriptor_ref.resource_id), "sha256", export.action_descriptor_ref.digest)
-                schema = CallInput.model_json_schema()
+    async def _actions(self, package) -> PackageActions:
+        key = (package.version_ref, package.package_digest)
+        if key in self._package_actions:
+            return self._package_actions[key]
+        n = self.names
+        result = PackageActions([], [], {})
+        for export in package.action_exports:
+            action = self.export_uri(package, export)
+            contract = await self._metadata(export.io_contract_ref)
+            argument_schema = OBJECT
+            if contract.get("input_schema_ref"):
+                argument_schema = await self._metadata(ResourceRef.model_validate(contract["input_schema_ref"]))
+            schema_uri = n.name("schemas", "calls", package.package_id, package.package_version,
+                                resource_label(export.action_descriptor_ref.resource_id), "sha256", export.action_descriptor_ref.digest)
+            call_kind = interaction(export)
+            if call_kind == "task":
+                schema = deepcopy(self._call_schema)
                 schema["properties"]["arguments"] = argument_schema
-                schemas[schema_uri] = schema
+                result.entries[schema_uri] = self._schema_entry(schema_uri, schema)
                 offer = self.offer(action, schema_uri, n.schema("run-output"))
-                exports.append(offer)
-                descriptor = await self._metadata(export.action_descriptor_ref, descriptor=True)
-                declaration = {
-                    **offer["action"],
-                    "name": descriptor.get("name") or resource_label(export.action_descriptor_ref.resource_id),
-                    "description": descriptor.get("description", ""),
-                    "action_descriptor_ref": export.action_descriptor_ref.model_dump(mode="json", exclude_none=True),
-                    "io_contract_ref": export.io_contract_ref.model_dump(mode="json", exclude_none=True),
-                    "arguments_schema": contract.get("input_schema_ref"),
-                    "result_schema": contract.get("output_schema_ref"),
-                    "effect_class": export.effect_class,
-                    "permissions": list(export.permissions),
-                    "replay_safety": export.replay_safety,
-                    "descriptor": descriptor,
-                }
-                declarations.append(declaration)
-                if descriptor.get("resource_id"):
-                    identity = descriptor["resource_id"]
+            else:
+                output_schema = OBJECT
+                if contract.get("output_schema_ref"):
+                    output_schema = await self._metadata(ResourceRef.model_validate(contract["output_schema_ref"]))
+                result.entries[schema_uri] = self._schema_entry(schema_uri, argument_schema)
+                result.entries[schema_uri + "/output"] = self._schema_entry(schema_uri + "/output", output_schema)
+                offer = self.offer(action, schema_uri, schema_uri + "/output", mode=call_kind)
+            result.offers.append(offer)
+            descriptor = await self._metadata(export.action_descriptor_ref, descriptor=True)
+            declaration = {
+                **offer["action"],
+                "name": descriptor.get("name") or resource_label(export.action_descriptor_ref.resource_id),
+                "description": descriptor.get("description", ""),
+                "action_descriptor_ref": export.action_descriptor_ref.model_dump(mode="json", exclude_none=True),
+                "io_contract_ref": export.io_contract_ref.model_dump(mode="json", exclude_none=True),
+                "arguments_schema": contract.get("input_schema_ref"),
+                "result_schema": contract.get("output_schema_ref"),
+                "effect_class": export.effect_class,
+                "permissions": list(export.permissions),
+                "replay_safety": export.replay_safety,
+                "descriptor": descriptor,
+                "interaction": call_kind,
+            }
+            result.declarations.append(declaration)
+            result.entries[action] = self._entry(action, "grip/action", declaration, [self._builtin["read"]], declaration)
+        self._package_actions[key] = result
+        return result
+
+    def _target_family(self, target):
+        for prefix, family in (("mcue-types", "grip/mcue-type"), ("slaves", "computing/slave"),
+                               ("packages", "capability/package"), ("activations", "capability/activation"),
+                               ("schemas", "grip/schema"), ("resources", "managed"), ("runs", "execution/run")):
+            if target.startswith(self.names.root + "/" + prefix + "/"):
+                return family
+        # Descriptor identities are supplied by packages, not inferred from URI paths.
+        return "grip/action"
+
+    async def catalog(self, *, target: str | None = None, mcue: str | None = None) -> dict[str, Entry]:
+        n, builtin = self.names, self._builtin
+        entries: dict[str, Entry] = {}
+        family = self._target_family(target) if target is not None else None
+
+        def wanted(uri, resource_mcue):
+            return (target is None or target == uri) and (mcue is None or mcue == resource_mcue)
+
+        def source(resource_mcue):
+            return (family is None or family == resource_mcue) and (mcue is None or mcue == resource_mcue)
+
+        def add(uri, resource_mcue, metadata, offers, value=None):
+            if wanted(uri, resource_mcue):
+                entries[uri] = self._entry(uri, resource_mcue, metadata, offers, value)
+
+        # Registered resources may use any MCUE, including a built-in type.
+        definitions, resources = {}, []
+        if target is None or family in {"grip/mcue-type", "managed"}:
+            definitions = await self.repo.list_mcue_definitions(self.settings.workspace_id)
+        if source("grip/mcue-type"):
+            for uri, definition in definitions.items():
+                add(uri, "grip/mcue-type", {"mcue": definition["mcue"], "version": definition["version"]},
+                    [builtin["read"]], definition)
+        if target is None or family == "managed":
+            resources = [r for r in await self.repo.list_resources(self.settings.workspace_id)
+                         if wanted(r.resource_ref.resource_id, definitions[r.mcue_ref]["mcue"])]
+
+        if source("computing/slave"):
+            agents = await self.repo.list_agents(self.settings.workspace_id, role="slave")
+            from loom_v2.contracts.refs import select_slave_agents
+            agents.sort(key=lambda a: str(a.get("last_seen_at") or ""), reverse=True)
+            for slave, agent in select_slave_agents(agents).items():
+                caps = agent.get("capabilities") or {}
+                add(n.name("slaves", slave), "computing/slave", {
+                    "slave_id": slave,
+                    "available": agent["lease_state"] == "active",
+                    "lease_state": agent["lease_state"], "last_seen_at": agent.get("last_seen_at"),
+                    "base_actions": sorted(caps.get("base_actions", [])),
+                    "term_support": caps.get("term_support", []),
+                    "executor_descriptors": caps.get("executor_descriptors", []),
+                    "runtime_plugin_descriptors": caps.get("runtime_plugin_descriptors", []),
+                }, [builtin["run-package"], builtin["activate-package"]], slave)
+
+        states = []
+        if resources or any(source(t) for t in ("capability/package", "capability/activation", "grip/action", "grip/schema")):
+            package_ref = target if family == "capability/package" else None
+            if target is not None:
+                for prefix in ("activations/", "schemas/calls/", "actions/exports/"):
+                    path = n.root + "/" + prefix
+                    if target.startswith(path):
+                        parts = target[len(path):].split("/")
+                        if len(parts) >= 2:
+                            package_ref = n.name("packages", unquote(parts[0]), unquote(parts[1]))
+            states = await self.repo.list_published_package_states(self.settings.workspace_id, package_ref=package_ref)
+        resource_ids = {r.resource_ref.resource_id for r in resources}
+        bound: dict[str, list[tuple[Any, Any, list]]] = {}
+        for package, activations in states:
+            package_uri = self.package_uri(package)
+            selected = [a for a in activations if wanted(self.activation_uri(package, a), "capability/activation")]
+            bindings = [a for a in activations if a.activation_state == "ready" and a.desired_state == "running"
+                        and a.target_resource_ref and a.target_resource_ref.resource_id in resource_ids]
+            if not (wanted(package_uri, "capability/package") or selected or bindings or source("grip/action") or source("grip/schema")):
+                continue
+            actions = await self._actions(package)
+            exports, declarations = actions.offers, actions.declarations
+            for uri, entry in actions.entries.items():
+                if wanted(uri, entry.description["resource"]["mcue"]):
+                    entries[uri] = entry
+            for declaration in declarations:
+                identity = declaration["descriptor"].get("resource_id")
+                if identity and wanted(identity, "grip/action"):
                     if identity not in entries:
                         revisions = {"descriptors": []}
                         add(identity, "grip/action", revisions, [builtin["read"]], revisions)
-                    ref = export.action_descriptor_ref.model_dump(mode="json", exclude_none=True)
+                    ref = declaration["action_descriptor_ref"]
                     if ref not in entries[identity].value["descriptors"]:
                         entries[identity].value["descriptors"].append(ref)
-                add(action, "grip/action", declaration, [builtin["read"]], declaration)
             add(package_uri, "capability/package", {
                 "package_id": package.package_id, "package_version": package.package_version,
                 "digest": package.package_digest, "execution": package.execution.model_dump(mode="json"),
                 "executable": package.is_executable, "actions": declarations,
             }, [builtin["read"]], package)
-            for activation in await self.repo.list_package_activations(package):
+            for activation in selected:
                 activation_uri = self.activation_uri(package, activation)
-                target = (activation.target_resource_ref.resource_id
+                bound_target = (activation.target_resource_ref.resource_id
                           if activation.target_resource_ref else None)
                 ready = activation.activation_state == "ready" and activation.desired_state == "running"
+                projected = self.app.state.service_access.project(package, activation, exports) if ready else []
+                callable_actions = {o["action"]["uri"] for o in projected}
                 unavailable_reason = (None if ready else
                                       "desired_state_" + activation.desired_state if activation.desired_state != "running" else
                                       "activation_" + activation.activation_state)
@@ -266,25 +370,27 @@ class GripService:
                             "description": f"Activated {package.package_id} {package.package_version} on {activation.target_slave}.",
                             "instance_name": activation.instance_name, "state": activation.activation_state,
                             "desired_state": activation.desired_state, "revision": activation.activation_revision,
-                            "target": target,
-                            "actions": [{**a, "available": ready, "unavailable_reason": unavailable_reason}
+                            "applied_revision": activation.applied_revision,
+                            "target": bound_target,
+                            **self.app.state.service_access.metadata(package, activation),
+                            "actions": [{**a, "available": a["uri"] in callable_actions, "unavailable_reason": None if a["uri"] in callable_actions else unavailable_reason or "binding_unavailable"}
                                         for a in declarations]}
                 authentication = (package.body or {}).get("authentication")
                 if authentication:
                     metadata["authentication"] = authentication_view(
                         package, activation.runtime_profile.get("authentication") or {})
                 add(activation_uri, "capability/activation", metadata,
-                    [builtin["stop"], *([builtin["auth-start"]] if authentication and authentication.get("interaction") and activation.desired_state == "running" else []), *(exports if ready else [])], (package, activation))
-                if target and ready:
-                    bound.setdefault(target, []).append((package, activation, exports))
+                    [builtin["stop"], *([builtin["configure"]] if activation.desired_state == "running" else []), *([builtin["auth-start"]] if authentication and authentication.get("interaction") and activation.desired_state == "running" else []), *projected], (package, activation))
+            for activation in bindings:
+                bound.setdefault(activation.target_resource_ref.resource_id, []).append((package, activation, self.app.state.service_access.project(package, activation, exports)))
 
-        package_names = {p.version_ref: self.package_uri(p) for p in packages if p.workspace_id == self.settings.workspace_id}
-        for resource in await self.repo.list_resources(self.settings.workspace_id):
-            target = resource.resource_ref.resource_id
-            candidates = bound.get(target, [])
+        package_names = {p.version_ref: self.package_uri(p) for p, _ in states}
+        for resource in resources:
+            uri = resource.resource_ref.resource_id
+            candidates = bound.get(uri, [])
             # Ambiguous instances are named explicitly, never chosen by order.
             offers = candidates[0][2] if len(candidates) == 1 else []
-            add(target, definitions[resource.mcue_ref]["mcue"], {
+            add(uri, definitions[resource.mcue_ref]["mcue"], {
                 "mcue_ref": resource.mcue_ref,
                 "attributes": resource.attributes,
                 "attributes_revision": resource.attributes_revision,
@@ -292,20 +398,27 @@ class GripService:
                 "package": package_names.get(resource.package_ref.resource_id) if resource.package_ref else None,
                 "activations": [self.activation_uri(p, a) for p, a, _ in candidates],
                 "managed_by": resource.managed_by_ref.resource_id if resource.managed_by_ref else None,
+                **(self.app.state.service_access.metadata(*candidates[0][:2]) if len(candidates) == 1 else {}),
             }, [builtin["update-attributes"], *offers], candidates[0][:2] if len(candidates) == 1 else None)
-        for record in await self.repo._all_records():
-            if record.closure_contract is None or record.closure_contract.workspace_id != self.settings.workspace_id:
-                continue
-            add(n.name("runs", record.run_id), "execution/run", {"state": record.state},
-                [builtin["read"], builtin["cancel"]], record)
-        for name, offer in builtin.items():
-            add(n.action(name), "grip/action", {"contract": offer["action"]}, [builtin["read"]], offer["action"])
-        for target, schema in schemas.items():
-            add(target, "grip/schema", {"language": "https://json-schema.org/draft/2020-12/schema"},
-                [builtin["read"]], schema)
-        for entry in entries.values():
-            entry.description["revision"] = digest_json(entry.description, domain="loom/grip-description/v1")
+        if source("execution/run"):
+            run_id = unquote(target[len(n.root + "/runs/"):]) if target is not None else None
+            for record in await self.repo.list_run_summaries(self.settings.workspace_id, run_id=run_id):
+                add(n.name("runs", record.run_id), "execution/run", {"state": record.state},
+                    [builtin["read"], builtin["cancel"]], record)
+        entries.update({uri: entry for uri, entry in self._static.items() if wanted(uri, entry.description["resource"]["mcue"])})
         return entries
+
+    async def resolve(self, target: str) -> Entry:
+        if target in self._static:
+            return self._static[target]
+        if target.startswith(self.names.root + "/content/") and content_digest(target):
+            entries = {}
+            await self._add_content(target, entries)
+        else:
+            entries = await self.catalog(target=target)
+        if target not in entries:
+            raise GripError("not_found")
+        return entries[target]
 
     async def _add_content(self, target, catalog):
         if not target.startswith(self.names.root + "/content/"):
@@ -331,11 +444,10 @@ class GripService:
             }},
             "offers": [self.offer(self.names.action("read"), self.names.schema("read-input"), self.names.schema("read-output"))],
         }, {"content": value, "media_type": stat.media_type, "encoding": encoding})
-        catalog[target].description["revision"] = digest_json(catalog[target].description, domain="loom/grip-description/v1")
 
-    async def _package(self, target, catalog):
-        entry = catalog.get(target)
-        if entry is None or not isinstance(entry.value, CapabilityPackageVersion):
+    async def _package(self, target):
+        entry = await self.resolve(target)
+        if not isinstance(entry.value, CapabilityPackageVersion):
             raise GripError("not_found")
         package = entry.value
         if package.is_interface or package.execution.kind == "container:python_orchestrator":
@@ -349,6 +461,8 @@ class GripService:
         raise GripError("unsupported_action")
 
     async def _submit(self, *, target, slave, package, export, arguments, key, activation=None):
+        if interaction(export) == "byte-stream":
+            raise GripError("unsupported_action")
         # submit_run_plan resolves idempotency before performing current
         # readiness checks, so a retry still finds its task if a Slave went away.
         contract = await self._metadata(export.io_contract_ref)
@@ -383,21 +497,17 @@ class GripService:
                                                request_id=submission_key, plan=plan)
         return {"run": self.names.name("runs", queued.run_id)}
 
-    async def invoke(self, request, catalog, http=None):
-        entry = catalog.get(request.target)
-        if entry is None:
-            raise GripError("not_found")
+    async def invoke(self, request, entry, http=None):
         offer = next((o for o in entry.description["offers"] if o["action"]["uri"] == request.action), None)
         if offer is None:
             raise GripError("unsupported_action")
-        schema = catalog[offer["action"]["input_schema"]].value
+        schema = (await self.resolve(offer["action"]["input_schema"])).value
         if not Draft202012Validator(schema).is_valid(request.input):
             raise GripError("invalid_input")
         n = self.names
         data = request.input
         if request.action == n.action("list-resources"):
-            return {"resources": [e.description["resource"] for e in catalog.values()
-                                  if not data.get("mcue") or e.description["resource"]["mcue"] == data["mcue"]]}
+            return {"resources": [e.description["resource"] for e in (await self.catalog(mcue=data.get("mcue"))).values()]}
         if request.action == n.action("publish-mcue-type"):
             target = await self.repo.publish_mcue_type(self.settings.workspace_id, data)
             return {"resource": target}
@@ -411,8 +521,8 @@ class GripService:
             payload = RegisterInput.model_validate(data)
             package_ref = None
             if payload.package is not None:
-                package_entry = catalog.get(payload.package)
-                if package_entry is None or not isinstance(package_entry.value, CapabilityPackageVersion):
+                package_entry = await self.resolve(payload.package)
+                if not isinstance(package_entry.value, CapabilityPackageVersion):
                     raise GripError("not_found")
                 package = package_entry.value
                 package_ref = ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest)
@@ -434,8 +544,8 @@ class GripService:
             })
             return {"resource": resource.resource_ref.resource_id, "attributes_revision": resource.attributes_revision}
         if request.action == n.action("read"):
-            if isinstance(entry.value, RunRecord):
-                return {"state": entry.value.state, "outcome": entry.value.outcome}
+            if isinstance(entry.value, RunSummary):
+                return await self.repo.read_run_result(self.settings.workspace_id, entry.value.run_id)
             if isinstance(entry.value, CapabilityPackageVersion):
                 return {**entry.value.model_dump(mode="json"), "resource": entry.value.version_ref}
             return entry.value
@@ -444,13 +554,13 @@ class GripService:
             return {"state": record.state}
         if request.action == n.action("run-package"):
             payload = RunInput.model_validate(data)
-            package = await self._package(payload.package, catalog)
+            package = await self._package(payload.package)
             export = self._export(package, payload.action)
             return await self._submit(target=request.target, slave=entry.value, package=package,
                                       export=export, arguments=payload.arguments, key=payload.idempotency_key)
         if request.action == n.action("activate-package"):
             payload = ActivateInput.model_validate(data)
-            package = await self._package(payload.package, catalog)
+            package = await self._package(payload.package)
             await self.repo.refresh_slaves(self.settings.workspace_id)
             if not self.repo._slave_supports_package(entry.value, package):
                 raise GripError("invalid_input")
@@ -465,12 +575,31 @@ class GripService:
             await self._activate(package, entry.value, "running", payload.idempotency_key,
                                  payload.instance_name, target_ref,
                                  payload.instance_config if "instance_config" in payload.model_fields_set else None,
-                                 credential_profile=payload.credential_profile)
+                                 credential_profile=payload.credential_profile,
+                                 dependencies=payload.dependencies if "dependencies" in payload.model_fields_set else None)
             activations = await self.repo.list_package_activations(package)
             activation = next(a for a in activations if a.target_slave == entry.value and a.instance_name == payload.instance_name)
             return {"resource": self.activation_uri(package, activation), "state": activation.activation_state,
                     "revision": activation.activation_revision}
         package, activation = entry.value
+        if request.action == n.action("configure"):
+            payload = ConfigureInput.model_validate(data)
+            if not ({"instance_config", "dependencies"} & payload.model_fields_set) or any(data.get(k) is None for k in ("instance_config", "dependencies") if k in data):
+                raise GripError("invalid_input")
+            if payload.dependencies is not None:
+                await self.app.state.service_access.validate_dependencies(payload.dependencies)
+            await self._activate(package, activation.target_slave, "running", payload.idempotency_key,
+                activation.instance_name, activation.target_resource_ref, payload.instance_config,
+                credential_profile=activation.credential_profile, expected_revision=payload.expected_revision,
+                dependencies=payload.dependencies, configure=True)
+            current = next(a for a in await self.repo.list_package_activations(package)
+                if a.target_slave == activation.target_slave and a.instance_name == activation.instance_name)
+            return {"resource": request.target, "desired_revision": current.activation_revision,
+                    "applied_revision": current.applied_revision, "state": current.activation_state}
+        if request.action not in {n.action("stop"), n.action("auth-start")}:
+            export = self._export(package, request.action)
+            if interaction(export) != "task":
+                return await self.app.state.service_access.invoke(request)
         stop_retry = (request.action == n.action("stop") and activation.desired_state == "stopped"
                       and activation.last_idempotency_key == data["idempotency_key"]
                       and data["expected_revision"] == activation.activation_revision - 1)
@@ -507,15 +636,17 @@ class GripService:
         return await self._submit(target=request.target, slave=activation.target_slave, package=package,
                                   export=export, arguments=data["arguments"], key=data["idempotency_key"], activation=activation)
 
-    async def _activate(self, package, slave, state, key, instance, target, config, *, credential_profile=None, expected_revision=None):
+    async def _activate(self, package, slave, state, key, instance, target, config, *, credential_profile=None, expected_revision=None, dependencies=None, configure=False):
+        if dependencies is not None:
+            await self.app.state.service_access.validate_dependencies(dependencies)
         reports = await execute_activation_targets(
             self.repo, package, [slave], desired_state=state, workspace_id=self.settings.workspace_id,
             workers=self.app.state.workers, slaves=self.app.state.slaves, idempotency_key=key,
             instance_name=instance, target_resource_ref=target, instance_config=config, expected_revision=expected_revision,
-            credential_profile=credential_profile,
+            credential_profile=credential_profile, dependencies=dependencies, configure=configure,
             slave_gateway=None if self.app.state.embedded else self.app.state.slave_gateway,
         )
-        if any("error" in report for report in reports):
+        if not configure and any("error" in report for report in reports):
             raise GripError("internal_error")
 
     async def handle(self, http: HttpRequest):
@@ -532,26 +663,30 @@ class GripService:
             if "auth" not in raw:
                 raise GripError("authentication_required")
             request = Request.model_validate(raw)
-            if not self.settings.grip_token or not hmac.compare_digest(request.auth.credential.encode(), self.settings.grip_token.encode()):
-                raise GripError("authentication_failed")
+            owner = bool(self.settings.grip_token and hmac.compare_digest(request.auth.credential.encode(), self.settings.grip_token.encode()))
+            if not owner:
+                if request.method != "INVOKE":
+                    raise GripError("authentication_failed")
+                self.app.state.service_access.tokens.verify(request, self.names.root)
             if request.auth.tenant is not None and request.auth.tenant != self.names.root:
                 raise GripError("forbidden")
             if self.protocol not in request.accepted_protocols:
                 raise GripError("unsupported_binding")
             if request.deadline and datetime.fromisoformat(request.deadline.replace("Z", "+00:00")) <= datetime.now(timezone.utc):
                 raise GripError("deadline_exceeded")
-            catalog = await self.catalog()
-            if request.target not in catalog and content_digest(request.target):
-                await self._add_content(request.target, catalog)
-            if request.target not in catalog:
-                raise GripError("not_found")
+            entry = await self.resolve(request.target)
             if request.deadline and datetime.fromisoformat(request.deadline.replace("Z", "+00:00")) <= datetime.now(timezone.utc):
                 raise GripError("deadline_exceeded")
             if request.method == "DESCRIBE":
-                body = catalog[request.target].description
+                body = {**entry.description, "revision": digest_json(entry.description, domain="loom/grip-description/v1")}
+                if body["resource"]["metadata"].get("service_access"):
+                    body["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=self.settings.grip_description_cache_seconds)).isoformat()
                 Description.model_validate(body)
             else:
-                body = await self.invoke(request, catalog, http)
+                if not owner:
+                    # Scoped credentials cannot invoke unrelated control actions.
+                    await self.app.state.service_access.resolve(request.target, request.action)
+                body = await self.invoke(request, entry, http)
             return JSONResponse({"version": "grip.v1", "request_id": request_id, "kind": "reply", "body": body},
                                 headers={"Cache-Control": "private, no-cache"})
         except GripError as exc:

@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/service-access-status-input/sha256/3bcbfe732dc30d6f89ffe1a2d650e92c8bce19998783994d18346d4cc9ed9495",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/service-access-status-output/sha256/c46b047f6fd635c53a87b58a7710b90923c226ffef7cf81f19d72a9539376973",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

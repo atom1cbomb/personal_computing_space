@@ -194,7 +194,7 @@ Schema 拒绝 tag image、非法端口、非 origin-form path 和未知字段。
 服务线协议固定为：
 
 - `GET <health_path>` 的任意 2xx 表示网关健康；声明认证时还需认证成功才能 ready；
-- `POST <runtime_binding.path>` 发送和接收 JSON document；
+- `runtime_binding.interaction` 缺省 task；request-reply 直接返回业务结果，byte-stream 使用同一路径的 WebSocket 建流接口。JSON 动作以 POST 发送和接收业务文档；
 - 不跟随重定向；
 - timeout、连接错误、5xx、非法 JSON 和超限响应不在同一 Attempt 内自动重放。
 
@@ -204,7 +204,7 @@ Slave Core 只提供一次性的通用 `RuntimePluginHost`。Operator 将 plugin
 
 ```toml
 plugin_id = "container-http-v1"
-protocol_version = "loom.runtime-plugin/1"
+protocol_version = "loom.runtime-plugin/2"
 command = ["bin/runtime-plugin"]
 
 [[supports]]
@@ -238,3 +238,10 @@ activation 使用 Observer 分配的单调 `activation_revision`。Slave 在持�
 ## 9. 当前边界
 
 Phase 1/2/3 已覆盖 package contract、digest、HTTP runtime、动态 descriptor 选择、activation revision fencing、后台健康与 capability snapshot。runtime descriptor digest attestation 仅在同一 execution 确有多个策略实现时另行设计。这些运行时事实均不属于 package identity，也不引入第二套 runtime 扩展系统。
+
+服务直连/Observer 中转、configure、依赖凭据及容器恢复规则见
+[GRIP 服务 binding](grip-service-bindings.md)。私有 runtime plugin 协议升级为
+`loom.runtime-plugin/2`，使用 ASGI HTTP 与 UDS WebSocket，不再手写 HTTP 解析器。
+动作 io.v1 为服务配置增加 additionalProperties、propertyNames、pattern、对象/数组
+数量限制和 exclusiveMinimum，仍拒绝远程引用及不支持的组合关键字，由 jsonschema
+执行校验。实例配置的扩展映射不进入 MCUE 公共属性。

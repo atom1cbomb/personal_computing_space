@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     public_base_url: str = ""
     grip_authority: str = "loom.local"
     grip_token: str = ""
+    # Operator-owned endpoints; package authors never choose their public routes.
+    grip_data_bindings: dict[str, list[dict]] = {}
+    grip_upstream_bindings: dict[str, list[dict]] = {}
+    grip_signing_key_file: str = ""
+    grip_signing_key_id: str = "service-access-v1"
+    grip_verification_keys: dict[str, str] = {}
+    grip_access_token_seconds: int = 3600
+    grip_stream_max_concurrency: int = 64
+    grip_description_cache_seconds: int = 30
+    grip_allow_insecure_services: bool = False
+    grip_data_listen_host: str = "127.0.0.1"
+    grip_data_listen_port: int | None = None
     agent_id: str = "driver-default"
     agent_instance_id: str | None = None
     agent_protocol_version: str = "loom.v1"

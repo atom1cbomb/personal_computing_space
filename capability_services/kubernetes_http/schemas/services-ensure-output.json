@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ensured"
+    },
+    "service_ref": {
+      "type": "string"
+    },
+    "namespace": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "uid": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "service_ref",
+    "namespace",
+    "name",
+    "uid",
+    "state"
+  ]
+}

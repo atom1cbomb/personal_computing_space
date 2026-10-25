@@ -217,3 +217,20 @@ redirect, `grafana_http` browser-cookie, `kubernetes_http` device-code, and
 matching contract and tests, not their provider-specific login assumptions.
 If a provider cannot fit these interactions, extend the protocol/runtime/SDK
 explicitly before promising support in a package declaration.
+
+## Service interaction and restart recovery
+
+A package authentication hook remains private regardless of its public data
+binding. Declare `runtime_binding.interaction` per export; default task creates
+a Run, request-reply returns business JSON, byte-stream opens a channel. Follow
+[service-bindings.md](service-bindings.md) for endpoint trust and dependency grants.
+Do not put service access tokens in instance_config or package manifests.
+
+For persistent authentication, set `body.persistent_state=true` and keep the
+upstream client's credential/refresh cache under `/var/lib/loom/service`. A
+same-version restart reuses that state; a different package digest gets its own
+volume and requires its own authorization. On authentication expiry, report
+`auth_required`; repeated `auth-start` must initiate a new flow on the same
+activation and resume new requests after authorization. Network errors and RBAC
+failures must not be presented as login requests. Supervised streams abort old
+requests and establish only new channels after recovery.

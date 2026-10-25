@@ -53,6 +53,7 @@ def create_app(
         try:
             yield
         finally:
+            await app.state.service_access.http.aclose()
             await app.state.gateway.close()
             for worker in app.state.workers.values():
                 with suppress(Exception):
@@ -95,6 +96,9 @@ def create_app(
 
     from .grip import GripService
     app.state.grip = GripService(app, settings)
+    from .service_access import ObserverServiceAccess
+    app.state.service_access = ObserverServiceAccess(app, settings)
+    app.state.service_access.install()
 
     @app.post("/.well-known/grip")
     async def grip(request: Request):

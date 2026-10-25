@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "service_ref": {
+      "type": "string",
+      "pattern": "^grip://"
+    }
+  },
+  "required": [
+    "service_ref"
+  ],
+  "additionalProperties": false
+}

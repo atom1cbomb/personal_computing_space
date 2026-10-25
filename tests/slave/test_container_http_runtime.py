@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -19,6 +20,61 @@ from runtime_plugins.container_http_v1.runtime import (
 
 
 IMAGE_REF = "registry.example/loom/http-test@sha256:" + "d" * 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", [False, True])
+async def test_stream_runtime_uses_serialized_package_identity(tmp_path, bound):
+    from fastapi import FastAPI, WebSocket
+    from loom_orchestration.stream_server import OpenedStream, serve_stream
+    from loom_orchestration.streams import TCPStream
+    from tests.support.asgi_server import running_asgi
+
+    package = _package(["/v1/stream"])
+    payload = package.model_dump(mode="json")
+    assert "version_ref" not in payload
+    export = payload["action_exports"][0]
+    export["runtime_binding"]["interaction"] = "byte-stream"
+    resource = "grip://loom.local/workspaces/workspace-default/resources/services/model"
+    activation = {"target_resource_ref": {"resource_id": resource} if bound else None}
+    seen = []
+
+    async def echo(reader, writer):
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    tcp = await asyncio.start_server(echo, "127.0.0.1", 0)
+    app = FastAPI()
+
+    @app.websocket("/v1/stream")
+    async def stream(websocket: WebSocket):
+        async def open_channel(request):
+            seen.append(request)
+            reader, writer = await asyncio.open_connection("127.0.0.1", tcp.sockets[0].getsockname()[1])
+            return OpenedStream(TCPStream(reader, writer), {"accepted": True})
+        await serve_stream(websocket, open_channel)
+
+    try:
+        async with running_asgi(app) as base:
+            runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="internal", instance_state_dir=tmp_path)
+            async def endpoint(*_args):
+                return "127.0.0.1", int(base.rsplit(":", 1)[1]), "/v1/stream", None, None
+            runtime._invocation_endpoint = endpoint
+            opened = await runtime.open_stream(payload, export, {"service_ref": resource},
+                activation=activation, request_id="serialized-package-stream")
+            async with opened:
+                await opened.write(b"model-request")
+                assert await opened.read() == b"model-request"
+            assert seen[0].target == (resource if bound else package.version_ref)
+            assert seen[0].input == {"service_ref": resource}
+    finally:
+        tcp.close()
+        await tcp.wait_closed()
 
 
 def test_instance_config_is_service_owned_json_with_a_runtime_owned_target(tmp_path):
@@ -500,8 +556,24 @@ async def test_egress_network_requires_operator_configuration_and_is_not_arbitra
         "--network",
         "loom-test-internal",
     ]
-    assert create.count("--network") == 2
-    assert "loom-egress" in create
+    assert create.count("--network") == 1
+    connect = next(args for args in runner.calls if args[:2] == ["network", "connect"])
+    assert connect[2:] == ["loom-egress", create[create.index("--name") + 1]]
+    assert runner.calls.index(create) < runner.calls.index(connect) < next(
+        i for i, args in enumerate(runner.calls) if args[0] == "start"
+    )
+
+    class FailedNetworkRunner(RecordingRunner):
+        async def run(self, args, *, timeout):
+            result = await super().run(args, timeout=timeout)
+            return DockerCommandResult(1) if args[:2] == ["network", "connect"] else result
+
+    failed = FailedNetworkRunner()
+    runtime.runner = failed
+    with pytest.raises(RuntimeError, match="service_container_network_failed"):
+        await runtime.provision(package.model_dump(mode="json"), command)
+    assert not any(args[0] == "start" for args in failed.calls)
+    assert any(args[0] == "rm" for args in failed.calls)
 
 
 def test_promoted_coordinate_reuses_digest_backed_container_identity() -> None:
@@ -646,6 +718,52 @@ async def test_one_package_selects_credentials_per_instance_and_reconcile(tmp_pa
     recreated = [args for args in runner.calls if args[0] == 'create']
     assert recreated == creates
     assert package.package_digest == digest
+
+
+async def test_restart_applies_persisted_config_before_marking_container_ready(tmp_path):
+    """A crash after saving revision 2 must not serve revision 1's container."""
+    class StatefulRunner(RecordingRunner):
+        container = None
+
+        async def run(self, args, *, timeout):
+            self.calls.append(list(args))
+            if args[:2] == ["image", "inspect"]:
+                return DockerCommandResult(0, json.dumps([IMAGE_REF]))
+            if args[0] == "inspect":
+                return DockerCommandResult(0, json.dumps([self.container])) if self.container else DockerCommandResult(1, stderr="No such container")
+            if args[0] == "create":
+                labels = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "--label")
+                self.container = {"Id": "a" * 64, "Config": {"Labels": labels, "Image": IMAGE_REF}, "State": {"Running": True}}
+            elif args[0] == "rm":
+                self.container = None
+            return DockerCommandResult(0)
+
+    package = _package(["/v1/echo"])
+    runner = StatefulRunner()
+    runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-test", network="internal", runner=runner,
+        instance_state_dir=tmp_path, http_transport=httpx.MockTransport(lambda request: httpx.Response(204)))
+    command = CapabilityProvisionCommand(command_id="initial", package_version_ref=package.version_ref,
+        package_digest=package.package_digest, target_slave="slave-test", instance_name="model",
+        idempotency_key="initial", activation_revision=1, instance_config={"service": "old"}).model_dump(mode="json")
+    assert (await runtime.provision(package.model_dump(mode="json"), command))["activation_state"] == "ready"
+    old_container = deepcopy(runner.container)
+    activation = {**command, "activation_key": "model", "activation_revision": 2,
+        "instance_config": {"service": "new"}, "desired_state": "running", "package_payload": package.model_dump(mode="json")}
+    health = await runtime.inspect(activation)
+    assert health["running"] and health["identity_match"]
+    assert not health["healthy"] and not health["configuration_match"]
+    with pytest.raises(RuntimeError, match="service_configuration_not_applied"):
+        await runtime.invoke(package.model_dump(mode="json"), package.action_exports[0].model_dump(mode="json"), {},
+            activation=activation, attempt_id="stale-config")
+    runner.calls.clear()
+    recovered = await runtime.reconcile([activation])
+    assert recovered["activations"][0]["activation_state"] == "ready"
+    assert [args[0] for args in runner.calls].count("rm") == 1
+    assert [args[0] for args in runner.calls].count("create") == 1
+    assert runner.container != old_container
+    assert (await runtime.inspect(activation))["healthy"]
+    config_path = runtime._instance_config_path("workspace-default", package.package_digest, "model")
+    assert json.loads(config_path.read_text())["service"] == "new"
 
 
 async def test_runtime_never_uses_historical_package_credential_selection():

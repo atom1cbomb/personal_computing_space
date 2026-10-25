@@ -13,6 +13,7 @@ from functools import wraps
 from datetime import datetime, timezone
 from copy import deepcopy
 import json
+import re
 import hashlib
 import hmac
 import shutil
@@ -136,6 +137,12 @@ class RunRecord:
     @property
     def draft_digest(self) -> str:
         return self.draft.snapshot_digest
+
+
+@dataclass
+class RunSummary:
+    run_id: str
+    state: str
 
 
 @dataclass
@@ -2412,6 +2419,34 @@ class ObserverRepository:
             records.append(record)
         return records
 
+    async def list_run_summaries(self, workspace_id: str, *, run_id: str | None = None) -> list[RunSummary]:
+        """Read directory state without loading closures, events or outcomes."""
+        if self.sessions is None:
+            return [RunSummary(record.run_id, record.state) for record in self.runs.values()
+                    if record.closure_contract is not None
+                    and record.closure_contract.workspace_id == workspace_id
+                    and (run_id is None or record.run_id == run_id)]
+        query = select(RunRow.run_id, RunRow.state).where(
+            RunRow.closure_contract["workspace_id"].as_string() == workspace_id,
+        ).order_by(RunRow.run_id)
+        if run_id is not None:
+            query = query.where(RunRow.run_id == run_id)
+        async with self.sessions() as session:
+            return [RunSummary(*row) for row in (await session.execute(query)).all()]
+
+    async def read_run_result(self, workspace_id: str, run_id: str) -> dict[str, Any]:
+        if self.sessions is None:
+            record = await self._assert_run_workspace(run_id, workspace_id)
+            return {"state": record.state, "outcome": record.outcome}
+        async with self.sessions() as session:
+            row = (await session.execute(select(RunRow.state, RunRow.outcome).where(
+                RunRow.run_id == run_id,
+                RunRow.closure_contract["workspace_id"].as_string() == workspace_id,
+            ))).one_or_none()
+        if row is None:
+            raise KeyError(run_id)
+        return {"state": row.state, "outcome": row.outcome}
+
     @staticmethod
     def _execution_request_from_row(row: RunExecutionRequestRow) -> ExecutionRequest:
         created = row.created_at
@@ -3200,6 +3235,48 @@ class ObserverRepository:
             packages = [package for package in packages if package.publication_state != "abandoned"]
         return packages
 
+    async def list_published_package_states(
+        self, workspace_id: str, *, package_ref: str | None = None,
+    ) -> list[tuple[CapabilityPackageVersion, list[CapabilityPackageActivation]]]:
+        """Request-local directory projection; never reload state per package.
+
+        Published versions can live in a Run or in the workspace package table.
+        Read only package/activation columns, not the execution/event histories.
+        """
+        def visible(package):
+            return (package.workspace_id == workspace_id and package.publication_state == "published"
+                    and (package_ref is None or package.version_ref == package_ref))
+
+        if self.sessions is None:
+            packages = [p for record in self.runs.values() for p in record.capability_packages if visible(p)]
+            packages.extend(p for (scope, _), p in self.workspace_packages.items() if scope == workspace_id and visible(p))
+            return [(p.model_copy(deep=True), deepcopy(self.workspace_package_activations.get(
+                (workspace_id, p.version_ref), [],
+            ))) for p in packages]
+
+        query = select(WorkspaceCapabilityPackageRow.package, WorkspaceCapabilityPackageRow.capability_activations).where(
+            WorkspaceCapabilityPackageRow.workspace_id == workspace_id,
+        )
+        if package_ref is not None:
+            query = query.where(WorkspaceCapabilityPackageRow.package_ref == package_ref)
+        async with self.sessions() as session:
+            run_packages = (await session.scalars(select(RunRow.capability_packages))).all()
+            rows = (await session.execute(query)).all()
+        activations = {}
+        packages = []
+        for values in run_packages:
+            for value in values or []:
+                if value.get("workspace_id") == workspace_id and value.get("publication_state") == "published":
+                    package = CapabilityPackageVersion.model_validate(value)
+                    if visible(package):
+                        packages.append(package)
+        for value, states in rows:
+            package = CapabilityPackageVersion.model_validate(value)
+            activations[package.version_ref] = [CapabilityPackageActivation.model_validate(a) for a in states or []]
+            if visible(package):
+                packages.append(package)
+        return [(package, activations.get(package.version_ref, [])) for package in packages]
+
     async def get_capability_package(self, package_ref: str | ResourceRef, *, run_id: str | None = None) -> CapabilityPackageVersion:
         if self.sessions is not None:
             await self._all_records()
@@ -3384,8 +3461,15 @@ class ObserverRepository:
         instance_config: dict[str, Any] | None = None,
         credential_profile: str | None = None,
         expected_revision: int | None = None,
+        dependencies: dict | None = None,
+        configure: bool = False,
     ) -> CapabilityPackageActivation:
         """Atomically assign the next desired-state revision for one activation."""
+        from loom_v2.contracts.types import ActivationDependency
+        if dependencies is not None:
+            if any(not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", key) for key in dependencies):
+                raise ValueError("activation_dependency_name_invalid")
+            dependencies = {key: ActivationDependency.model_validate(value) for key, value in dependencies.items()}
         if credential_profile is not None:
             credential_profile = TypeAdapter(CredentialProfile).validate_python(credential_profile)
         if desired_state not in {"running", "stopped"}:
@@ -3444,6 +3528,8 @@ class ObserverRepository:
                 ),
                 None,
             )
+            if configure and (current is None or current.desired_state != "running" or expected_revision is None):
+                raise ValueError("activation_revision_conflict")
             if current is not None and current.package_digest != package.package_digest:
                 raise ValueError("capability_package_identity_conflict")
             if desired_state == "running":
@@ -3457,11 +3543,14 @@ class ObserverRepository:
                 requested_target = target_resource_ref if target_resource_ref is not None else current.target_resource_ref
                 requested_config = dict(current.instance_config if instance_config is None else instance_config)
                 requested_profile = current.credential_profile if credential_profile is None else credential_profile
-                if (requested_target != current.target_resource_ref or requested_config != current.instance_config
-                        or requested_profile != current.credential_profile):
+                if (requested_target != current.target_resource_ref or (not configure and requested_config != current.instance_config)
+                        or requested_profile != current.credential_profile
+                        or (not configure and dependencies is not None and dependencies != current.dependencies)):
                     raise ValueError("activation_instance_binding_conflict")
             if current is not None and current.last_idempotency_key == idempotency_key:
-                if current.desired_state != desired_state:
+                if (current.desired_state != desired_state
+                        or (instance_config is not None and instance_config != current.instance_config)
+                        or (dependencies is not None and dependencies != current.dependencies)):
                     raise ValueError("idempotency_key_reused")
                 return current
             if expected_revision is not None and (current is None or current.activation_revision != expected_revision):
@@ -3469,7 +3558,7 @@ class ObserverRepository:
             if (
                 current is not None
                 and current.desired_state == desired_state
-                and not rebuild
+                and not rebuild and not configure
                 # A failed transition must be retryable with a new
                 # activation revision.  Keeping the old revision here leaves
                 # the Slave fenced on its failed projection and makes a
@@ -3531,6 +3620,8 @@ class ObserverRepository:
                 target_resource_ref=target_resource_ref if target_resource_ref is not None else (current.target_resource_ref if current is not None else None),
                 instance_config=dict(instance_config if instance_config is not None else (current.instance_config if current is not None else {})),
                 credential_profile=credential_profile if credential_profile is not None else (current.credential_profile if current else None),
+                dependencies=dependencies if dependencies is not None else (current.dependencies if current else {}),
+                applied_revision=current.applied_revision if current else None,
             )
             activation_list[:] = [
                 item
@@ -3681,6 +3772,7 @@ class ObserverRepository:
             activation = current.model_copy(
                 update={
                     "activation_state": report.activation_state,
+                    "applied_revision": report.activation_revision if report.activation_state == "ready" else current.applied_revision,
                     "evidence_refs": list(report.evidence_refs),
                     "runtime_profile": runtime_profile or current.runtime_profile,
                 }
@@ -4033,6 +4125,8 @@ class ObserverRepository:
                 except ValueError:
                     blockers.append({"code": "action_descriptor_mismatch", "action": action})
                 else:
+                    if action_export.runtime_binding.get("interaction") == "byte-stream":
+                        blockers.append({"code": "stream_action_not_task", "hole_id": hole.hole_id})
                     closure_contract_ref = snapshot.program.io_contract_ref
                     export_io_contract_ref = action_export.io_contract_ref
                     if (
@@ -5182,6 +5276,8 @@ class ObserverRepository:
             node_export = node_package.export_for(intent.action_descriptor_ref)
         except ValueError as exc:
             raise ValueError("node_action_export_not_found") from exc
+        if node_export.runtime_binding.get("interaction") == "byte-stream":
+            raise ValueError("stream_action_not_task")
 
         workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else "workspace-default"
         await self.refresh_slaves(workspace_id)
