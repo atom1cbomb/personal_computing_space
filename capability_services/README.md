@@ -20,7 +20,7 @@
 | [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
 | [embedding_http](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
 | [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
-| [grafana_http](grafana_http/README.md) | grafana-http/v4 | 6 | 本地浏览器扫码、实例会话持久化及自动令牌轮换；仪表盘、Prometheus 指标和节点/GPU 编号对应的实际利用率 |
+| [grafana_http](grafana_http/README.md) | grafana-http/v5 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
 | [outline_http](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
 | [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v5 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
 | [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v5 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |

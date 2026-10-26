@@ -2,7 +2,7 @@
 
 **把分散的计算资源和外部服务，组织成 AI 可以发现、调用和协作使用的个人计算工作空间。**
 
-你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，或生成完整执行计划提交给 Loom。Observer 负责校验、冻结计划并排队；Driver 负责领取和执行，再保存结果和执行证据。
+你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，或生成完整执行计划提交给 Loom。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由 Observer 校验、冻结计划并排队，Driver 领取执行，再保存结果和执行证据。
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
@@ -17,13 +17,20 @@
 
 仓库内已有的服务能力包如下。它们需要各自的镜像、网络、服务账号或凭据配置，不会随着 Loom 启动自动获得外部服务权限。
 
-| 能力包 | 提供的能力 |
-| --- | --- |
-| [Kubernetes](capability_services/kubernetes_http/README.md) | 接入集群，查询和操作包内声明的 Kubernetes 资源 |
-| [Suanli Cloud](capability_services/suanlicloud_http/README.md) | 查询区域、节点、镜像和实例，创建及管理 VM |
-| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
-| [普通 VM SSH](capability_services/vm_ssh_http/README.md) | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
-| [Outline](capability_services/outline_http/README.md) | 查询、检索、创建和更新文档等受限操作 |
+| 能力包 | 当前源码版本 | 提供的能力 |
+| --- | --- | --- |
+| [Kubernetes](capability_services/kubernetes_http/README.md) | `kubernetes-http/v8` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
+| [Embedding](capability_services/embedding_http/README.md) | `embedding-http/v1` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
+| [Volcano](capability_services/volcano_http/README.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
+| [Grafana](capability_services/grafana_http/README.md) | `grafana-http/v5` | 查询仪表盘、Prometheus 指标、GPU 利用率及 GPU Arena，按 namespace 统计 GPU 小时 |
+| [AutoPaper](capability_services/autopaper_http/README.md) | `autopaper-http/v1` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
+| [Suanli Cloud](capability_services/suanlicloud_http/README.md) | `suanlicloud-http/v5` | 查询区域、节点、镜像和实例，创建及管理 VM |
+| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | `suanli-vm-ssh-http/v4` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
+| [普通 VM SSH](capability_services/vm_ssh_http/README.md) | `vm-ssh-http/v5` | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
+| [Outline](capability_services/outline_http/README.md) | `outline-http/v3` | 查询、检索、创建和更新文档等受限操作 |
+
+表中版本对应仓库内的包模板；已部署实例的版本和可用动作以 GRIP DESCRIBE 为准。
+Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数据与完整性信息；它衡量资源分配，不能直接代表实际计算量或个人使用量。
 
 ## 带来什么好处
 
@@ -57,13 +64,13 @@
 内容：Observer / Driver / Slave → 共享的 MinIO / S3 内容存储
 ```
 
-**Observer 是唯一公共入口和状态权威。** 它保存 Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。
+**Observer 是公共控制入口和状态权威。** 它保存 Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。服务数据入口可由 operator 单独发布，调用方按 Observer 描述的 binding 和受限凭据访问。
 
 **外部 agent 负责编排，Driver 只负责执行。** Driver 仅领取 Observer 已冻结的执行队列项，并在沙箱中运行普通程序或 `container:python_orchestrator/1`。它不接收 prompt、不维护会话，也不持有模型 secret。
 
 **Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
 
-生产执行路径是 **Driver → Observer → Slave**。Driver 选择逻辑执行目标，不直接连接 Slave endpoint；Observer 根据已注册的节点信息中继。服务内部地址和容器端点由 Slave/runtime 管理，Observer 不需要认识 Kubernetes、Suanli Cloud 等业务协议。
+持久化任务的执行路径是 **Driver → Observer → Slave**。Driver 按计划选择逻辑执行目标，不直接连接 Slave endpoint；Observer 根据已注册的节点信息中继。直接服务调用与字节流按 offer 选择服务入口、Slave 数据入口或 Observer 中转，不经过 Driver。服务内部地址和容器端点由 Slave/runtime 管理，Observer 不需要认识 Kubernetes、Suanli Cloud 等业务协议。
 
 ### 从需求到结果
 
@@ -80,6 +87,18 @@
 
 Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` URI 发现。使用流程是 `DESCRIBE(target)` 获取动作与 binding，再 `INVOKE(target, action, input)`。例如对 Slave 调用 `run-package`，input 引用能力包与业务输入，结果返回可查询的任务资源。激活实例直接提供自身的业务动作。
 
+包导出的 `runtime_binding.interaction` 决定调用方式：
+
+| 交互类型 | 调用与结果 |
+| --- | --- |
+| `task` | 提交带业务输入、修订和幂等键的任务，返回 Run URI，再查询状态和结果 |
+| `request-reply` | 直接传入业务输入并返回业务结果，不创建 Run |
+| `byte-stream` | 使用 SDK `open_stream()` 建立通道，再读写二进制数据 |
+
+任务提交本身也使用 GRIP 的 request-reply mode，调用时应同时读取 offer 的 Schema，不能仅凭 mode 判断结果格式。需要执行记录时，可用 `run-package` 将普通服务动作作为任务运行；字节流动作不能作为任务节点。
+
+SDK 0.8 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_preference` 选择已发布路由。服务授权限定目标、动作、激活修订和有效期；请求发送后失败不会自动换路重放。协议和流限制见 [GRIP 服务 binding 与字节流](docs/grip-service-bindings.md)。
+
 所有资源引用都使用可读 GRIP 名称，包括包内 Schema、IoContract、descriptor 和程序内容。例如 `content/suanlicloud-http/schemas/instances-list-output/sha256/<摘要>`；摘要用于校验，不再单独充当整个资源名字。SDK 和资源目录使用相同 URI。
 
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
@@ -87,20 +106,10 @@ Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` UR
 
 配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
 
-AutoPaper 使用 `autopaper-http/v1` 连接 `paper.cs.ac.cn`，支持论文搜索、详情和会议/年份查询，
-通过统一浏览器登录后调用，见 [AutoPaper 接入说明](capability_services/autopaper_http/README.md)。
-
-Volcano 面板使用独立的 `volcano-http` 服务包，支持队列、PodGroup 和 GPU 分配查询。
-`computing/volcano` 资源的 MCUE 属性公开面板地址与对应 Kubernetes 的 GRIP 引用；
-不同面板使用同一包的不同激活实例，见 [Volcano 接入说明](capability_services/volcano_http/README.md)。
-
-Grafana 监控使用独立的 `grafana-http` 服务包，查询仪表盘、Prometheus 指标和按节点/
-GPU 数字编号区分的实际利用率。`computing/grafana` 关联对应 Kubernetes 与 Volcano，
-凭据由各激活实例独立选择，见 [Grafana 接入说明](capability_services/grafana_http/README.md)。
-
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
-同包不同实例可以使用不同账号或集群。现有部署需协调升级 Observer、Driver、Slave、runtime
-和 SDK 0.6.0，并执行 Alembic 007；见 [激活凭据升级说明](docs/activation-credentials-upgrade.md)。
+同包不同实例可以使用不同账号或集群。旧部署引入实例凭据时需执行 Alembic 007，见
+[激活凭据升级说明](docs/activation-credentials-upgrade.md)。使用当前服务 binding 时需匹配
+SDK 0.8、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部署说明](docs/service-bindings-deployment.md)。
 
 ## 能力包、资源和实例
 
@@ -130,20 +139,26 @@ GPU 数字编号区分的实际利用率。`computing/grafana` 关联对应 Kube
 
 同一个包可以在同一 Slave 上创建多个命名实例，每个实例绑定自己的目标资源和配置。因此可以为每台 VM 启动一个独立的 SSH 能力容器，分别保存认证状态和 `known_hosts`，不必为每台机器复制一份包版本。
 
-### 上传、安装、认证是不同步骤
+### 发布、检查、激活与认证
 
-包可以在 Run 内作为候选生成，也可以通过 `POST /api/v1/capability-packages` 直接发布到 Workspace。**发布不等于安装，安装也不等于外部服务已经可用。**
+包可以在 Run 内作为候选生成，也可以通过 `POST /api/v1/capability-packages` 直接发布到 Workspace。部署流程为：**构建并推送镜像 → 发布包 → 描述 Slave → `check-package` → 激活命名实例 → 认证 → 验证业务动作**。
 
-需要外部认证的包会报告 `pending_auth`；认证完成后才进入 `ready`，后台健康检查继续更新状态。服务凭据由 operator 通过受控 profile 提供，或由用户完成交互式登录，不应写入包内容、对话或任务输出。
+对目标 Slave 调用 `check-package`，传入包 URI 和实例名，可只读检查节点在线状态、runtime 支持、服务签名及所需路由，返回 `ready`、`required_interactions` 和逐项 `issues`。缺服务入口或签名时，服务端会在写入激活前拒绝请求；配置修复后可以重试原幂等键。
 
-通用认证机制不限定为设备码：具体包可以对接 API key、AK/SK、设备登录或浏览器回调，Loom 负责统一启动认证和跟踪状态。对于 VM SSH 的 localhost 回调，随包提供的助手运行在用户电脑上：
+检查通过只代表部署配置满足条件，镜像拉取、外部认证和实际网络仍需验证。实例描述中的 `runtime_state` 是节点报告状态；容器已 ready 但必需入口缺失时，公开 `state` 为 `degraded`、`available=false`。调用方应检查实例和所需动作的可用性。
+
+日常能力包部署通过镜像仓库和 Observer 公开接口完成，无需节点 SSH 账号。数据监听、TLS、签名密钥、路由及 egress network 由 operator 在节点接入时统一准备。操作步骤见 [服务包指南](capability_services/README.md)。
+
+需要外部认证的包会报告 `pending_auth`；认证和健康检查通过后才进入 `ready`，后台检查继续更新状态。服务凭据由 operator 通过受控 profile 提供，或由用户完成交互式登录，不应写入包内容、对话或任务输出。
+
+统一认证使用实例的 `auth-start` 与 SDK 的 `loom-auth`，支持设备登录、浏览器回调和隔离浏览器 Cookie 登录；API key、AK/SK 或 SSH 密钥由 credential profile 提供。浏览器助手运行在用户电脑上：
 
 ```text
-用户浏览器 ↔ 本地助手 ↔ Observer ↔ Slave ↔ VM SSH 能力容器
+用户浏览器 ↔ loom-auth ↔ Observer ↔ Slave ↔ 能力容器
                               认证转发不经过 Driver
 ```
 
-用户不需要 Observer 主机的 SSH 账号。助手只转发固定登录和回调消息，不是通用网络代理；会话 token 短期有效，过期后需要重新发起认证。公网部署应使用 HTTPS 保护这条链路。
+首次登录和凭据失效后的重新认证都从同一客户端发起，重新认证无需创建新激活。浏览器登录需安装 SDK 的 `auth` 可选依赖及 Chromium，详见 [统一认证说明](docs/authentication.md)。助手只转发固定认证消息，短期桥接 token 不进入 Run 或 ContentStore；公网部署应使用 HTTPS 保护这条链路。
 
 ## 示例：创建一台 VM 并使用它计算
 
@@ -157,7 +172,7 @@ GPU 数字编号区分的实际利用率。`computing/grafana` 关联对应 Kube
 6. 通过 VM SSH 包执行计算，取回输出并按任务标准验收。
 7. 不再需要时，通过云包终止 VM，停用对应访问实例并更新资源状态。
 
-云 API、SSH 和 OIDC 的专用逻辑都在能力包里；Driver 负责选择和组织这些动作，Observer 负责状态与中继，Slave 负责容器及执行。
+云 API、SSH 和 OIDC 的专用逻辑都在能力包里；外部 agent 选择并组织这些动作，Driver 执行提交的计划，Observer 负责状态与中继，Slave 负责容器及执行。
 
 当前已分别验证真实云端 VM 创建、浏览器认证和 SSH 执行链路；新本地助手也已验证到 `ready/authenticated`。这些验证**不等于**“coding agent 生成单个 Run 后，从创建、等待人工认证、恢复计算到失败自动清理”的完整无人值守闭环已验收。具体测试边界见 [VM 生产验证记录](docs/superpowers/reports/2026-09-22-vm-browser-ssh-production-validation.md)（其中记录的是早期 SSH 隧道方案）。
 
@@ -165,13 +180,17 @@ GPU 数字编号区分的实际利用率。`computing/grafana` 关联对应 Kube
 
 ### 本地启动
 
-需要 Docker Engine、Docker Compose，以及共享 ContentStore。先准备内部服务密钥；已有密钥请复用，不要在升级时覆盖：
+需要 Docker Engine 和 Docker Compose；本地栈提供共享的 MinIO ContentStore。先准备内部服务密钥和独立的 GRIP token；已有密钥请复用，不要在升级时覆盖：
 
 ```bash
 mkdir -p secrets
 if [ ! -s secrets/internal_api_secret ]; then
   (umask 077; openssl rand -hex 32 > secrets/internal_api_secret)
 fi
+if [ ! -s secrets/grip_token ]; then
+  (umask 077; openssl rand -hex 32 > secrets/grip_token)
+fi
+export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 ```
 
 检查 [Compose 配置](deploy/docker-compose.yml) 中 Observer、Driver、Slave 和 ContentStore 配置后启动：
@@ -182,9 +201,13 @@ fi
 
 打开 **http://localhost:18080**。该栈包含 Observer、Driver、两个 Slave、三个独立 PostgreSQL 和 MinIO；Driver 与 Slave 不发布公共端口。外部 agent 的使用流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。
 
+未配置 GRIP token 时，GRIP 接口拒绝访问。本地 SDK 连接 HTTP 入口需显式传入 `allow_insecure_grip=True`；使用当前 shell 中的 token，或让认证客户端读取 token 文件，避免把密钥复制进示例源码。`secrets/`、`.env` 和 `production/` 已被 Git 忽略，实际凭据应保留在这些本地位置或外部密钥存储中。
+
+默认 Compose 没有配置直接服务调用或字节流所需的数据入口与签名。部署包含这些交互类型的包前，按 [节点接入说明](docs/service-bindings-deployment.md) 配置，并通过 `check-package` 核验；仅启动容器不代表服务动作可用。
+
 ### 外部 agent 的 SDK 与 skill 分发
 
-`loom-orchestration` 是独立 Python 包，源码保留在 `loom_orchestration/`，
+`loom-orchestration` 当前版本为 **0.8.0**，是独立 Python 包，源码保留在 `loom_orchestration/`，
 不复制到 skill。发布时可将同版本 SDK wheel 附在 skill 中：
 
 ```bash
@@ -194,7 +217,7 @@ python scripts/build_agent_skill.py --output dist
 
 将生成的 `dist/personal-computing-space.zip` 交给外部 agent，解压后 skill 的
 `assets/wheels/` 包含可安装的 SDK；安装方式见其 `references/sdk.md`。
-agent 只需 Python 3.12+、该 wheel 及 Pydantic/httpx，无需 Loom 服务端源码。
+agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
 
 metadata 发布校验与发现已支持资源身份、readiness 映射和访问/清理引用检查。
@@ -231,6 +254,8 @@ python scripts/deploy_cluster.py --config deploy/deployment.example.toml
 
 远程部署在 `[cluster]` 配置 `grip_authority`、`public_base_url`、`grip_token_file`；token 文件仅作为 Observer secret 挂载，dry-run 会隐藏内容。
 
+服务直连和中转还需配置 `[cluster.service_access]` 的签名、验证公钥及 data/upstream bindings，并在对应 Slave 设置 `grip_data_port`。部署清单会拒绝已声明路由却缺少数据监听或签名密钥的配置；远端 TLS 和连通性仍需实际验证。配置模板与步骤见 [节点服务入口部署说明](docs/service-bindings-deployment.md)。
+
 `[driver]` 仅配置 `workspace_path`。Driver 执行已提交的任务，无需模型服务、Codex/Volcengine 配置或模型 API key；旧的模型配置字段会被拒绝。
 
 目标机需要 Docker/Compose，部署账号需要相应 SSH 和 Docker 权限。这是 **operator 的部署权限**，不是用户使用工作空间或认证外部服务所需的权限。Observer、Driver、Slave 和 MinIO 也可以用 `scripts/deploy_*.py` 分别更新。
@@ -261,16 +286,14 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
 ## 代码与文档导航
 
 - `loom_v2/observer/`：公共 API、权威状态、激活管理和 Slave 中继。
-- `loom_v2/driver/`：coding-agent 工具、计划执行与动态编排。
+- `loom_v2/driver/`：冻结计划的队列领取、沙箱执行与动态编排运行时。
 - `loom_v2/slave/`：执行请求、执行账本和 runtime plugin 宿主。
 - `loom_v2/contracts/`：三方共享的任务、资源、能力包及协议契约。
 - `runtime_plugins/`、`package_contracts/`：可安装运行时及其 contract schema。
 - `capability_services/`：业务能力服务、IO contract 和随包提供的客户端。
+- `loom_orchestration/`、`packages/loom-orchestration/`：独立 SDK、GRIP 客户端、认证助手与分发配置。
+- `skills/personal-computing-space/`：外部 agent 使用指南及 SDK、认证、服务 binding 参考。
 - `loom_v2/content_store.py`、`loom_v2/db/`、`migrations/`：内容存储、数据库模型和 Alembic 迁移。
 - `deploy/`、`scripts/`、`tests/`：部署配置、运维脚本与验证。
 
-进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。
-
-统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](docs/authentication.md)。
-
-服务动作、直连/中转与 K8s 字节流见 [GRIP 服务 binding](docs/grip-service-bindings.md)。
+进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。最新的 [能力包部署前检查验证记录](docs/superpowers/reports/2026-10-26-package-deployment-preflight-validation.md) 说明了本地回归范围与生产升级边界。
