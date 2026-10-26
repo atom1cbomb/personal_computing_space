@@ -127,7 +127,7 @@ class ServiceAccessConfig(ConfigModel):
     @model_validator(mode="after")
     def validate_bindings(self):
         from loom_orchestration.bindings import validate_endpoint
-        from loom_orchestration.grip import Binding, uri
+        from loom_orchestration.grip import Binding, GripError, uri
         for kid in [self.signing_key_id, *self.verification_keys]:
             if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", kid):
                 raise ValueError("invalid service key id")
@@ -138,7 +138,10 @@ class ServiceAccessConfig(ConfigModel):
                     binding = Binding.model_validate(raw)
                     if not binding.audience or not binding.endpoint:
                         raise ValueError("operator binding needs endpoint and audience")
-                    validate_endpoint(binding, allow_insecure=self.allow_insecure)
+                    try:
+                        validate_endpoint(binding, allow_insecure=self.allow_insecure)
+                    except GripError as exc:
+                        raise ValueError("invalid service binding: " + exc.code) from exc
         return self
 
 
@@ -207,6 +210,27 @@ class DeploymentInput(ConfigModel):
     cluster: ClusterConfig
     machines: tuple[MachineConfig, ...] = Field(min_length=1)
     driver: DriverConfig = Field(default_factory=DriverConfig)
+
+    @model_validator(mode="after")
+    def service_entry_prerequisites(self) -> Self:
+        access = self.cluster.service_access
+        routes = [(target, binding) for mapping in (access.data_bindings, access.upstream_bindings)
+                  for target, bindings in mapping.items() for binding in bindings]
+        if not routes:
+            return self
+        if not access.signing_key_file or access.signing_key_id not in access.verification_keys:
+            raise ValueError("service bindings require signing and matching verification key configuration")
+        names = Names(self.cluster.grip_authority, self.cluster.workspace_id)
+        for target, binding in routes:
+            if binding.get("audience") == names.root:
+                raise ValueError("service binding audience must not be the Observer relay itself")
+            for machine in self.machines:
+                if machine.role != "slave":
+                    continue
+                slave = names.name("slaves", machine.service_id)
+                if (target == slave or binding.get("audience") == slave) and machine.grip_data_port is None:
+                    raise ValueError(f"service bindings for {machine.service_id} require grip_data_port during node setup")
+        return self
 
 
 @dataclass(frozen=True)

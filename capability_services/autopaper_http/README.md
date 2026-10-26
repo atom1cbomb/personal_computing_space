@@ -34,10 +34,10 @@ PDF 链接、已有结构化摘要和相似度等字段；缺失的可选字段�
 `{"api_origin":"https://paper.example"}`，必须为无路径、查询串或内嵌凭据的 HTTPS origin。
 API 与浏览器登录使用同一 origin，业务输入不能覆盖地址。
 
-宿主 Slave 需要配置 GRIP 数据入口或 Observer 中转上游，五个 `request-reply` 查询
-才能出现在可调用 offers 中；仅能执行 task 并不足够。检查 DESCRIBE 中六个动作均为
-`available=true`，`binding_unavailable` 表示缺少服务入口配置。配置方法见
-[服务部署步骤](../../docs/service-bindings-deployment.md)。
+宿主 Slave 在节点接入时准备 GRIP 数据入口或 Observer 中转上游，供该节点所有服务包复用。
+部署 AutoPaper 时先调用 `check-package`；仅有 task 执行通道的节点会报告
+`binding_unavailable` 并拒绝激活，不应通过 SSH 临时修补节点。
+节点配置方法见[服务入口接入步骤](../../docs/service-bindings-deployment.md)。
 
 激活时省略 `credential_profile`，初始状态为 `pending_auth`。在用户浏览器所在机器
 安装 SDK 的 `auth` 可选依赖与 Chromium，然后使用[统一登录客户端](../../docs/authentication.md)：
@@ -77,6 +77,12 @@ python scripts/publish_service_package.py capability_services/autopaper_http \
 在已有 `LoomClient` 中激活（`slave_uri` 来自资源发现，`package_uri` 来自发布结果）：
 
 ```python
+check = await client.invoke(slave_uri, client.names.action("check-package"), {
+    "package": package_uri, "instance_name": "autopaper",
+})
+if not check["ready"]:
+    raise RuntimeError(check["issues"])
+
 activation = await client.invoke(slave_uri, client.names.action("activate-package"), {
     "package": package_uri,
     "instance_name": "autopaper",
@@ -91,6 +97,7 @@ target = activation["resource"]
 ```python
 description = await client.describe(target, refresh=True)
 metadata = description["resource"]["metadata"]
+assert metadata["available"] and all(a["available"] for a in metadata["actions"])
 offers = {offer["action"]["uri"] for offer in description["offers"]}
 actions = {a["name"]: a["uri"] for a in metadata["actions"] if a["uri"] in offers}
 
@@ -144,6 +151,9 @@ HTTPS 使用测试专用 CA，保持证书校验。默认测试不启用 Docker 
 生产账号的论文查询与检索验收结果见下节。
 
 ## 生产部署（2026-10-26）
+
+以下记录当时生产版本的验收。新的激活前检查需升级 Observer 后生效；
+其中手工补数据入口的操作属于节点接入修补，不是后续部署 AutoPaper 的步骤。
 
 代码已合并至主分支，合并提交 `d1cc0d4`。包通过 Observer 发布，在 `slave-a` 激活：
 

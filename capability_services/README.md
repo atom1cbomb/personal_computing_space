@@ -1,10 +1,14 @@
 # 通过 GRIP 使用能力服务包
 
-服务包使用同一套流程：发布包 → 描述 Slave → 激活命名实例 → 描述实例 → 按 offer 调用业务 action。
+服务包使用同一套流程：发布包 → 描述 Slave → check-package → 激活命名实例 → 描述实例 → 按 offer 调用业务 action。
 任务 action 返回 Run；请求回复 action 直接返回业务结果；字节流 action 用 SDK `open_stream` 建立通道。
 调用地址由 binding 决定，支持服务直连和 Observer 中转，见 [服务 binding](../docs/grip-service-bindings.md)。
 能力包是不可变资源，Slave 是执行资源，激活实例也是资源；外部调用方只使用返回的 GRIP URI。
 包内的 `/v1/...` 是 `container:http/1` runtime 到容器的内部绑定。
+
+能力包部署只需要镜像仓库和 Observer 公开接口，不需要目标节点的 SSH 账号。
+在开发机或 CI 构建并推送镜像，由 Slave 自动拉取和启动。数据入口、TLS、签名密钥、
+路由和 egress network 在[节点接入](../docs/service-bindings-deployment.md)时准备，供所有包复用。
 
 创建带认证的新能力包时，参照 skill 的
 [认证接入指南](../skills/personal-computing-space/references/authentication-authoring.md)。
@@ -67,6 +71,12 @@ Suanli Cloud 的创建 VM descriptor 引用 Suanli SSH 使用包。先发布 SSH
 可运行命令见 [GRIP 示例](../examples/grip/README.md)。SDK 使用方式：
 
 ```python
+check = await client.invoke(slave_uri, client.names.action("check-package"), {
+    "package": package_uri, "instance_name": "service-main",
+})
+if not check["ready"]:
+    raise RuntimeError(check["issues"])
+
 activation = await client.invoke(slave_uri, client.names.action("activate-package"), {
     "package": package_uri,
     "instance_name": "service-main",
@@ -76,6 +86,16 @@ activation = await client.invoke(slave_uri, client.names.action("activate-packag
 })
 description = await client.describe(activation["resource"])
 ```
+
+`check-package` 是只读配置检查，返回 required_interactions 和逐项 issues。
+缺服务签名为 `service_signing_unavailable`，缺数据入口为 `binding_unavailable`，
+入口不合法为 `binding_invalid`。检查失败时选择符合条件的节点或交给节点管理员处理，
+不要在能力包部署过程中 SSH 补配置。服务端激活前会重新检查，拒绝请求不创建实例或增加 revision。
+配置修复后可以重试原幂等 key；stop 不受这些条件限制。
+
+检查通过不代表镜像拉取、提供方认证或远端网络已通过验收。登录后检查实例
+`metadata.available` 和所需动作；`runtime_state` 是节点报告状态，公开 `state`
+会在容器 ready 但缺必需入口时显示 degraded。已有可用动作仍可调用。
 
 `activate-package` 自动创建或复用激活实例资源，`activation["resource"]` 就是其 GRIP URI。
 例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v5/slave-a/default`。

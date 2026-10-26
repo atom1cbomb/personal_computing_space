@@ -103,6 +103,23 @@ async def test_revision_change_prevents_reporting_a_new_activation_as_login_succ
         await login.authenticate()
 
 
+async def test_authenticated_provider_with_missing_binding_reports_node_setup_fault(monkeypatch):
+    observer = Observer()
+    observer.ready = True
+    describe = observer.describe
+
+    async def degraded(target):
+        result = await describe(target)
+        result["resource"]["metadata"].update(state="degraded", runtime_state="ready",
+            service_access={"issues": [{"code": "binding_unavailable", "interaction": "request-reply", "actions": []}]})
+        return result
+
+    monkeypatch.setattr(observer, "describe", degraded)
+    login = Login("resource", lambda: observer)
+    with pytest.raises(RuntimeError, match="activation_binding_unavailable"):
+        await login._state_from_observer(observer, 1)
+
+
 async def test_bridge_keeps_credentials_in_post_body_and_enforces_observer_origin():
     observer = Observer()
     calls = []

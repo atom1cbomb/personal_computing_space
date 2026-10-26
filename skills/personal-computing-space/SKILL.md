@@ -115,10 +115,17 @@ authentication → `exec`; retain the InstanceId for
    `driver_unavailable` if task execution is unavailable. Service bindings do not
    depend on Driver readiness. Discover their own availability and contracts.
 2. Discover compute with `await client.resources(mcue="computing/slave")` and inspect descriptions
-   for Slave `run-package` / `activate-package` offers. Select available leases
+   for Slave `run-package` / `check-package` / `activate-package` offers. Select available leases
    using `metadata.available` and inspect executor/runtime descriptors.
    Use exact returned action URIs and the deployed action schemas.
-3. Publish source/packages through the authoring data plane. Discover registered
+3. Publish source/packages through the authoring data plane. Before activation,
+   invoke the discovered `check-package` offer with the package URI and intended
+   instance_name. Report its issues when ready=false; activation repeats this
+   check before changing state. Node service entries, TLS and routing belong to
+   node onboarding: never SSH to repair them as part of package deployment.
+   Build/push images locally or in CI; the Slave pulls the immutable image_ref.
+   A missing check-package offer requires an Observer platform upgrade, not an
+   SSH fallback. Discover registered
    resources and activations through GRIP. A resource description lists the exact
    ready activation URIs bound to it; choose explicitly if more than one exists.
 4. Build one complete `ClosureContract` with `SubmissionBuilder` and submit it

@@ -11,11 +11,11 @@ from loom_v2.auth import InternalAuth
 from fastapi.responses import JSONResponse
 from pydantic import Field
 
-from loom_orchestration.bindings import stream_endpoint, timestamp, validate_endpoint
+from loom_orchestration.bindings import stream_endpoint, timestamp
 from loom_orchestration.grip import Binding, GripError, Model, Reply, Request, URI, decode
 from loom_orchestration.stream_server import OpenedStream, serve_stream
 from loom_orchestration.streams import STREAM_PROTOCOL, connect_stream
-from loom_v2.service_access import ServiceTokens, activation_uri, export_uri, interaction
+from loom_v2.service_access import activation_uri, export_uri, interaction
 
 
 class TokenInput(Model):
@@ -38,55 +38,19 @@ class DependencyRefresh(Model):
 class ObserverServiceAccess:
     def __init__(self, app, settings):
         self.app, self.settings = app, settings
-        self.tokens = ServiceTokens(settings)
+        self.routes = app.state.repo.service_routes
+        self.tokens = self.routes.tokens
         self.names = self.tokens.names
         self.http = httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=False)
 
-    def _routes(self, package, activation, *, upstream=False):
-        values = self.settings.grip_upstream_bindings if upstream else self.settings.grip_data_bindings
-        target = activation_uri(self.names, package, activation)
-        return [Binding.model_validate(b) for b in values.get(target, values.get(self.names.name("slaves", activation.target_slave), []))]
-
-    def _supports(self, binding, mode):
-        return binding.protocol == STREAM_PROTOCOL if mode == "byte-stream" else binding.protocol in {"https-json.v1", "loom-http-json.v1"}
-
     def upstream(self, package, activation, mode):
-        for binding in self._routes(package, activation, upstream=True) or self._routes(package, activation):
-            if self._supports(binding, mode):
-                validate_endpoint(binding, allow_insecure=self.settings.grip_allow_insecure_services)
-                if not binding.audience or binding.audience == self.names.root:
-                    raise GripError("untrusted_audience")
-                return binding
-        raise GripError("unsupported_binding")
+        binding = self.routes.upstream(activation.target_slave, activation_uri(self.names, package, activation), mode)
+        if binding is None:
+            raise GripError("unsupported_binding")
+        return binding
 
     def bindings(self, package, activation, mode):
-        if not self.tokens.enabled:
-            return []
-        result = []
-        for binding in self._routes(package, activation):
-            if self._supports(binding, mode):
-                validate_endpoint(binding, allow_insecure=self.settings.grip_allow_insecure_services)
-                if not binding.audience:
-                    raise GripError("untrusted_audience")
-                result.append(binding.model_dump(exclude_none=True))
-        embedded = self.app.state.slaves.get(activation.target_slave)
-        relay = embedded is not None
-        if not relay:
-            try:
-                self.upstream(package, activation, mode)
-                relay = True
-            except GripError as exc:
-                if exc.code != "unsupported_binding":
-                    raise
-        if relay:
-            base = self.settings.public_base_url.rstrip("/")
-            protocol = STREAM_PROTOCOL if mode == "byte-stream" else "https-json.v1" if base.startswith("https:") else "loom-http-json.v1"
-            binding = {"protocol": protocol, "audience": self.names.root}
-            if base:
-                binding["endpoint"] = stream_endpoint(base) if mode == "byte-stream" else base + "/.well-known/grip"
-            if binding not in result:
-                result.append(binding)
-        return result
+        return self.routes.bindings(activation.target_slave, activation_uri(self.names, package, activation), mode)
 
     def project(self, package, activation, offers):
         result = []
@@ -94,7 +58,8 @@ class ObserverServiceAccess:
             mode = interaction(export)
             if mode == "task":
                 result.append(offer)
-            elif bindings := self.bindings(package, activation, mode):
+            elif (not self.routes.problem(activation.target_slave, activation_uri(self.names, package, activation), mode)
+                  and (bindings := self.bindings(package, activation, mode))):
                 result.append({"action": offer["action"], "bindings": bindings})
         return result
 
@@ -103,7 +68,8 @@ class ObserverServiceAccess:
         if not actions:
             return {}
         return {"service_access": {"activation": activation_uri(self.names, package, activation),
-                                   "revision": activation.activation_revision, "actions": actions}}
+                                   "revision": activation.activation_revision, "actions": actions,
+                                   "issues": self.routes.issues(package, activation.target_slave, activation.instance_name)}}
 
     async def resolve(self, target, action):
         entry = await self.app.state.grip.resolve(target)

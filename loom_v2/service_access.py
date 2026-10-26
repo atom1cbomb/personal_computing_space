@@ -34,7 +34,8 @@ class ServiceTokens:
 
     @property
     def enabled(self):
-        return bool(self.settings.grip_signing_key_file and self.settings.grip_verification_keys)
+        return bool(self.settings.grip_signing_key_file
+                    and self.settings.grip_signing_key_id in self.settings.grip_verification_keys)
 
     def issue(self, *, subject, audience, target, action, activation, revision,
               expires_at=None, caller_revision=None):

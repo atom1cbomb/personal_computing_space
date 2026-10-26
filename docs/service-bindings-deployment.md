@@ -1,4 +1,8 @@
-# 服务 binding 部署与 AutoPaper 切换
+# 节点服务入口接入与 AutoPaper 切换记录
+
+本文件的监听端口、TLS、信任密钥和路由配置属于节点基础设施接入，应在节点承载
+服务能力包前准备，并供所有包复用。日常能力包部署使用公开接口发布、check-package、
+激活和认证，不执行 SSH，也不修改这些配置。操作流程见[服务包指南](../capability_services/README.md)。
 
 本文件是配套部署步骤；2026-10-24 的实际部署与 AutoPaper 切换结果见
 [生产记录](superpowers/reports/2026-10-24-grip-bindings-production.md)。SDK 0.8、Observer、Slave 和私有
@@ -53,7 +57,12 @@ Observer 验证现有服务 CA 签发的证书，`allow_insecure=false` 保持�
 本次已验证 HTTPS JSON 中转；WebSocket 路由已配置，未在 AutoPaper 查询验收中测试。
 
 未配置 data/upstream binding 的 Slave 仍可执行 task；其 `request-reply` / `byte-stream`
-业务导出会显示 `binding_unavailable`。认证 ready 后仍须检查所需动作的 offers。
+交互会在节点发现和 check-package 中显示 `binding_unavailable`，服务端在写入激活前拒绝
+包含这些导出的包。已有实例在运行状态 ready 但入口被撤销时，公开 state 为 degraded、
+available=false，runtime_state 保留 ready。修复节点配置后可复用原实例。
+
+部署清单加载会拒绝已声明服务路由却未配置 grip_data_port 或签名密钥的节点。
+这项检查不探测远端 TLS 或业务接口；节点上线时仍需验证证书信任和入口连通。
 
 在新增 Slave 的 `[[machines]]` 项中配置唯一 service_id，例如 `slave-autopaper`，
 以及 `grip_data_port=8091`、`grip_data_publish_host="127.0.0.1"`。新部署工具允许任意

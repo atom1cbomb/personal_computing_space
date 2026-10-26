@@ -123,6 +123,40 @@ verification_keys = { service-access-v1 = "verify.pem" }
         DeploymentConfig.from_file(path)
 
 
+@pytest.mark.parametrize("mapping", ["data_bindings", "upstream_bindings"])
+def test_service_node_prerequisites_are_validated_before_remote_deployment(mapping):
+    import tomllib
+    from pydantic import ValidationError
+    from loom_v2.deployment.config import DeploymentInput
+
+    raw = tomllib.loads(config_text())
+    slave = "grip://loom.local/workspaces/workspace-default/slaves/slave-a"
+    access = {mapping: {slave: [{"protocol": "https-json.v1", "endpoint": "https://node.example/.well-known/grip", "audience": slave}]}}
+    raw["cluster"]["service_access"] = access
+    with pytest.raises(ValidationError, match="require signing"):
+        DeploymentInput.model_validate(raw)
+    access.update(signing_key_file="sign.pem", verification_keys={"service-access-v1": "verify.pem"})
+    with pytest.raises(ValidationError, match="slave-a require grip_data_port"):
+        DeploymentInput.model_validate(raw)
+    raw["machines"][-1]["grip_data_port"] = 8091
+    assert DeploymentInput.model_validate(raw).machines[-1].grip_data_port == 8091
+    access[mapping][slave][0]["audience"] = "grip://loom.local/workspaces/workspace-default"
+    with pytest.raises(ValidationError, match="must not be the Observer"):
+        DeploymentInput.model_validate(raw)
+
+
+def test_insecure_service_binding_has_a_sanitized_configuration_error(tmp_path):
+    path = tmp_path / "deployment.toml"
+    path.write_text(config_text().replace("[driver]", '''[cluster.service_access.data_bindings]
+"grip://loom.local/workspaces/workspace-default/slaves/slave-a" = [
+  { protocol = "https-json.v1", endpoint = "http://private.example/path", audience = "grip://loom.local/workspaces/workspace-default/slaves/slave-a" }
+]
+[driver]'''))
+    with pytest.raises(DeploymentConfigError, match="invalid service binding: unsupported_binding") as caught:
+        DeploymentConfig.from_file(path)
+    assert "private.example" not in str(caught.value)
+
+
 @pytest.mark.parametrize("field,value", [
     ("codex_provider", "volcengine-agent-plan"),
     ("codex_base_url", "https://provider.example"),

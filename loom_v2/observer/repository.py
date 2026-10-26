@@ -312,6 +312,8 @@ class ObserverRepository:
         self.sessions = make_session_factory(engine) if engine is not None else None
         self.settings = settings or Settings()
         self.names = Names(self.settings.grip_authority, self.settings.workspace_id)
+        from .service_routes import ServiceRoutes
+        self.service_routes = ServiceRoutes(self.settings)
         if content_store is None:
             content_store = ContentStore.from_settings(self.settings)
         self.content_store = content_store
@@ -3507,6 +3509,8 @@ class ObserverRepository:
             await self.get_resource(record_workspace, target_resource_ref)
         if workspace_id is not None and workspace_id != record_workspace:
             raise ValueError("workspace_binding_mismatch")
+        if desired_state == "running":
+            self.service_routes.require(package, target_slave, instance_name)
         lock_key = (record_workspace, package.version_ref, "*", "*") if package.workspace_id else (record_workspace, package.version_ref, target_slave, instance_name)
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
