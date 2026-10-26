@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/venues-list",
+  "name": "venues_list",
+  "description": "List venues with papers currently stored in AutoPaper and their paper counts.",
+  "capability_kinds": [
+    "research.papers.read"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/instance-config/sha256/0d0d224460a31257c388237450e64985125f00a16daffde424cd9f0b8a2d6de5",
+    "identity_criterion": "content_digest"
+  }
+}

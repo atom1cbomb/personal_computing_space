@@ -1,0 +1,62 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "venues_catalog"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "venues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "abbrev": {
+                "type": "string"
+              },
+              "full_names": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ccf_category": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "ccf_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "aliases_source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "abbrev",
+              "full_names"
+            ]
+          }
+        }
+      },
+      "required": [
+        "total",
+        "venues"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

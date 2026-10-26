@@ -16,6 +16,7 @@ from loom_v2.digest import canonical_json_bytes, digest_bytes, digest_json
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = (
+    "autopaper_http",
     "embedding_http",
     "kubernetes_http",
     "outline_http",

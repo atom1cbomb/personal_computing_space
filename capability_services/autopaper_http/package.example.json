@@ -1,0 +1,147 @@
+{
+  "package_type": "service",
+  "package_id": "autopaper-http",
+  "package_version": "v1",
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
+  "body": {
+    "image_ref": "registry.example/loom/autopaper-gateway@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "network_profile": "egress",
+    "persistent_state": true,
+    "authentication": {
+      "start_path": "/v1/auth/start",
+      "status_path": "/v1/auth/status",
+      "browser_path": "/v1/auth/browser",
+      "interaction": {
+        "mode": "browser-cookie",
+        "cookie_name": "ap_sid"
+      }
+    }
+  },
+  "action_exports": [
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-search",
+        "version_or_digest": "490b3c6d9c6d30535fd3644cb6d41f3a1dd307c557febd4baad0b3bca01c1169",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "autopaper.search"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/papers/search",
+        "interaction": "task"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-search/sha256/bcc0de06c47dac54309a933bb4c9f54216c2ccc832b4e4f8d778b19d94530397",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-get",
+        "version_or_digest": "3e470de156a7b770002ba3923ec8a5d11040eafcb2282ac62d46fdfe5e7a2cca",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "autopaper.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/papers/get",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-get/sha256/b72acaf65ac005aef2ac6169169ebc28f7a9aeef8dcd5674b813e7ec901e72f9",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-list",
+        "version_or_digest": "5913dd144521abb635ab4aa63581857f58f62bca00ca3cc4041944be8daca896",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "autopaper.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/papers/list",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-list/sha256/4d3cb7f2a3592cd42c2bb285dab420b630eb10521130e5306744e7851cbba5b8",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/venues-list",
+        "version_or_digest": "60a82acd3153461459e3629617ee47de73d3acc291583e1a0476e3913bff46f0",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "autopaper.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/venues/list",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/venues-list/sha256/66c234c0f039971b3c98667883ca613c00f8e325d3ae5255e175a426ed574c7f",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/years-list",
+        "version_or_digest": "0c210517f99070e5c014f8978c52fbc779c13891e899f3a68ff4e2a318f23aeb",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "autopaper.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/years/list",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/years-list/sha256/f31e4470855932354ec82971d8f2e0eb11c2eaef85f74e423a0d676c9be14564",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/venues-catalog",
+        "version_or_digest": "279b54784c0ed30012b67be35dadabd42ec7879a8fc60f9759921ca5c4b473ea",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "autopaper.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/venues/catalog",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/venues-catalog/sha256/c9c4fd2af24e0179a918cb598668e494b1186f94f09bc5ac2f24b3227da84563",
+        "identity_criterion": "content_digest"
+      }
+    }
+  ]
+}

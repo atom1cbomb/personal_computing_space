@@ -12,6 +12,7 @@
 
 | 目录 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---:|---|
+| [autopaper_http](autopaper_http/README.md) | autopaper-http/v1 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
 | [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
 | [embedding_http](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
 | [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
@@ -155,6 +156,7 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest -q tests/capability_services tests/
 
 集成测试发布原有七个包的当前模板，经过 GRIP、Driver、Slave、
 真实 `container:http` runtime 和本机 HTTP gateway；另有 embedding 的真实 HTTP/WS 通道测试。
+AutoPaper 独立集成测试覆盖发布、激活、浏览器认证、六个业务动作和同实例重新认证。
 任务导出经 Driver 执行，服务导出直接回复或建立流。Docker、kubectl/SSH 可执行文件及外部 provider
 使用测试替身；这些结果不代表生产云、真实 Docker 或浏览器登录验收。
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用

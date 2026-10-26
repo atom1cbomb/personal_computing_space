@@ -85,7 +85,10 @@ Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` UR
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
 `metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。七个内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+
+AutoPaper 使用 `autopaper-http/v1` 连接 `paper.cs.ac.cn`，支持论文搜索、详情和会议/年份查询，
+通过统一浏览器登录后调用，见 [AutoPaper 接入说明](capability_services/autopaper_http/README.md)。
 
 Volcano 面板使用独立的 `volcano-http` 服务包，支持队列、PodGroup 和 GPU 分配查询。
 `computing/volcano` 资源的 MCUE 属性公开面板地址与对应 Kubernetes 的 GRIP 引用；

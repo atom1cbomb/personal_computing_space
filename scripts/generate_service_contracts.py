@@ -313,7 +313,67 @@ def embedding_definitions():
     }
 
 
+def autopaper_definitions():
+    """Auto-Papers API 0.2.0, https://paper.cs.ac.cn/openapi.json (2026-10-26)."""
+    text = {"type": "string", "minLength": 1, "maxLength": 256}
+    identity = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}
+    nullable_text = {"type": ["string", "null"]}
+    paper = obj(
+        ["id", "title"], id=string(), title=string(), authors=array(string()),
+        abstract=nullable_text, keywords=array(string()), doi=nullable_text,
+        venue=nullable_text, year={"type": ["integer", "null"]}, url=nullable_text,
+        pdf_url=nullable_text, source=string(), publisher=nullable_text,
+        summary={"type": ["object", "null"], "properties": {
+            "problem": string(), "method": string(), "impact": string()}},
+        link=nullable_text, has_pdf={"type": "boolean"},
+    )
+    search_paper = {**paper, "properties": {**paper["properties"],
+        "match_type": string(), "similarity": {"type": ["number", "null"]}}}
+    detail = {**paper, "properties": {**paper["properties"],
+        "visibility": string(), "owner_id": nullable_text}}
+    count = {"type": "integer", "minimum": 0}
+    definitions = {
+        "papers-search": {
+            "input": obj(
+                keywords={"type": "array", "items": text, "maxItems": 100},
+                description={"type": "string", "maxLength": 16000},
+                venues={"type": "array", "items": text, "maxItems": 100},
+                start_year={"type": ["integer", "null"], "minimum": 1000, "maximum": 9999},
+                end_year={"type": ["integer", "null"], "minimum": 1000, "maximum": 9999},
+                min_similarity={"type": "number", "minimum": 0, "maximum": 1},
+                top_k={"type": "integer", "minimum": 1, "maximum": 200},
+                session_id={**identity, "type": ["string", "null"]},
+            ),
+            "result": obj(["session_id", "total", "papers"], session_id=string(), total=count,
+                          papers=array(search_paper),
+                          messages=array(obj(["text"], level=string(), text=string()))),
+        },
+        "papers-get": {"input": obj(["paper_id"], paper_id=identity), "result": detail},
+        "papers-list": {
+            "input": obj(["venue", "year"], venue=text,
+                         year={"type": "integer", "minimum": 1000, "maximum": 9999}),
+            "result": array(detail),
+        },
+        "venues-list": {"input": obj(), "result": array(obj(["venue", "count"], venue=string(), count=count))},
+        "years-list": {"input": obj(["venue"], venue=text),
+                       "result": array(obj(["year", "count"], year={"type": "integer"}, count=count))},
+        "venues-catalog": {
+            "input": obj(),
+            "result": obj(["total", "venues"], total=count, venues=array(obj(
+                ["abbrev", "full_names"], abbrev=string(), full_names=array(string()),
+                ccf_category=nullable_text, ccf_type=nullable_text, aliases_source=string()))),
+        },
+    }
+    for action, definition in definitions.items():
+        definition["input"]["additionalProperties"] = False
+        definition["output"] = obj(["action", "result"],
+                                   action=string(const=action.replace("-", "_")),
+                                   result=definition.pop("result"))
+    return definitions
+
+
 DEFINITIONS = {
+    "autopaper_http": autopaper_definitions,
     "embedding_http": embedding_definitions,
     "kubernetes_http": k8s_definitions,
     "volcano_http": volcano_definitions,
