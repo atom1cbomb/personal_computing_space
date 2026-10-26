@@ -1,7 +1,9 @@
 # 能力包统一认证
 
 统一登录由 SDK 0.7 的 `loom-auth` 提供，适用于 `suanli-vm-ssh-http/v4`、
-`kubernetes-http/v6` 和 `grafana-http/v4`。使用匹配的 Observer 和 HTTP runtime。
+`kubernetes-http/v6`、`grafana-http/v4` 和 `autopaper-http/v1`。AutoPaper 还使用
+SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_services/autopaper_http/README.md)。
+使用匹配的 Observer 和 HTTP runtime。
 升级包按新版本发布，保留历史不可变包；重新认证本身不创建新激活。
 
 创建或修改能力包时，参照 skill 中的

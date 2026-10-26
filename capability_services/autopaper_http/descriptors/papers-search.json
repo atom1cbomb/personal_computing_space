@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-search",
+  "name": "papers_search",
+  "description": "Search existing AutoPaper papers using keywords and a semantic description, with optional venues, year range and similarity threshold. Returns ranked papers, summaries, links and a search session ID. Persists search history; auto_ingest is always false. Defaults: top_k=50, min_similarity=0.5. At least keywords or a nonblank description is required.",
+  "capability_kinds": [
+    "research.papers.search"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/instance-config/sha256/0d0d224460a31257c388237450e64985125f00a16daffde424cd9f0b8a2d6de5",
+    "identity_criterion": "content_digest"
+  }
+}

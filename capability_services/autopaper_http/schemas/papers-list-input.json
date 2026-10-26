@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "venue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "year": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 9999
+    }
+  },
+  "required": [
+    "venue",
+    "year"
+  ],
+  "additionalProperties": false
+}

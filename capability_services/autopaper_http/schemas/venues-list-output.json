@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "venues_list"
+    },
+    "result": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "venue": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "venue",
+          "count"
+        ]
+      }
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}
