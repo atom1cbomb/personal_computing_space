@@ -1,0 +1,112 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "no_data"
+      ]
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "time_range": {
+      "type": "object",
+      "properties": {}
+    },
+    "dashboard_uid": {
+      "type": "string",
+      "const": "gpu-arena"
+    },
+    "dashboard_version": {
+      "type": "integer"
+    },
+    "dashboard_url": {
+      "type": "string"
+    },
+    "panel_id": {
+      "type": "integer"
+    },
+    "panel_title": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "ok"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "datasource_uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "queried_at": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        },
+        "result_type": {
+          "type": "string",
+          "enum": [
+            "vector",
+            "matrix",
+            "scalar",
+            "string"
+          ]
+        },
+        "result": {
+          "type": "array",
+          "items": {}
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "infos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "complete",
+        "datasource_uid",
+        "queried_at",
+        "query",
+        "parameters",
+        "result_type",
+        "result",
+        "warnings",
+        "infos"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "complete",
+    "time_range",
+    "dashboard_uid",
+    "dashboard_version",
+    "dashboard_url",
+    "panel_id",
+    "panel_title",
+    "data"
+  ]
+}

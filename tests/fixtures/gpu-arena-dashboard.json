@@ -1,0 +1,1363 @@
+{
+  "uid": "gpu-arena",
+  "title": "GPU Arena",
+  "description": "GPU allocation history, namespace GPU-hour rankings, utilization, SM activity, memory, temperature, power and current allocation. Filter by node, model and full GPU UUID.",
+  "version": 2,
+  "time": {
+    "to": "now",
+    "from": "now-7d"
+  },
+  "templating": {
+    "list": [
+      {
+        "hide": 0,
+        "name": "node",
+        "sort": 1,
+        "type": "query",
+        "label": "Node",
+        "multi": true,
+        "query": {
+          "query": "label_values(kube_node_status_capacity{resource=\"nvidia_com_gpu\"}, node)",
+          "refId": "var-node"
+        },
+        "regex": "",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 2,
+        "allValue": ".*",
+        "datasource": {
+          "uid": "prometheus",
+          "type": "prometheus"
+        },
+        "definition": "label_values(kube_node_status_capacity{resource=\"nvidia_com_gpu\"}, node)",
+        "includeAll": true,
+        "skipUrlSync": false,
+        "regexApplyTo": "value",
+        "allowCustomValue": true
+      },
+      {
+        "hide": 0,
+        "name": "model",
+        "sort": 1,
+        "type": "query",
+        "label": "GPU Model",
+        "multi": true,
+        "query": {
+          "query": "label_values(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",hostname=~\"${node:regex}\"}, modelName)",
+          "refId": "var-model"
+        },
+        "regex": "",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 2,
+        "allValue": ".*",
+        "datasource": {
+          "uid": "prometheus",
+          "type": "prometheus"
+        },
+        "definition": "label_values(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",hostname=~\"${node:regex}\"}, modelName)",
+        "includeAll": true,
+        "skipUrlSync": false,
+        "regexApplyTo": "value",
+        "allowCustomValue": true
+      },
+      {
+        "hide": 0,
+        "name": "gpu_uuid",
+        "sort": 1,
+        "type": "query",
+        "label": "GPU UUID",
+        "multi": true,
+        "query": {
+          "query": "label_values(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}, UUID)",
+          "refId": "var-gpu_uuid"
+        },
+        "regex": "",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 2,
+        "allValue": ".*",
+        "datasource": {
+          "uid": "prometheus",
+          "type": "prometheus"
+        },
+        "definition": "label_values(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}, UUID)",
+        "includeAll": true,
+        "skipUrlSync": false,
+        "regexApplyTo": "value",
+        "allowCustomValue": true
+      },
+      {
+        "hide": 2,
+        "name": "accounting_step_seconds",
+        "type": "constant",
+        "label": "Accounting step (seconds)",
+        "query": "30",
+        "current": {
+          "text": "30",
+          "value": "30"
+        },
+        "skipUrlSync": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Observed GPUs",
+      "description": "Distinct physical GPUs with healthy telemetry, deduplicated by full UUID.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))))",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No data",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Allocated",
+      "description": "GPUs allocated to a workload Pod, deduplicated by full UUID. Idle allocated GPUs are included.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(count(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) or (0 * count(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))))))",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "noValue": "No data",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Unallocated",
+      "description": "Observed GPUs without a workload Pod association. This does not imply schedulability.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) - (count(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) or (0 * count(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))))))",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "noValue": "No data",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Average GPU Utilization",
+      "description": "Arithmetic mean utilization across the selected GPUs.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "avg(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))))",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "unit": "percent",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No data",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Memory Utilization",
+      "description": "Used framebuffer memory divided by used plus free memory, weighted by capacity.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) / (sum(max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) + sum(max by (UUID) (((DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))))",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "unit": "percent",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No data",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "GPU Usage History",
+      "description": "One row per full GPU UUID, labeled Node/Model/UUID8 and sorted ascending. Metadata uses the latest observation in the selected range. Blocks show namespaces; Pod changes within a namespace remain continuous. Namespace colors are automatic and may change when the selected namespace set changes. Unallocated intervals are transparent; unknown intervals are gray; both have blank labels. Purple indicates multiple namespaces sharing a GPU. Boundaries are sampled and become coarser over longer ranges. Available history depends on Prometheus retention.",
+      "datasource": {
+        "uid": "-- Mixed --",
+        "type": "mixed"
+      },
+      "targets": [
+        {
+          "expr": "((max by (UUID, occupant) (label_replace((group by (UUID, exported_namespace) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) unless on(UUID) (count by (UUID) (group by (UUID, exported_namespace) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) > 1), \"occupant\", \"$1\", \"exported_namespace\", \"(.+)\"))) or (label_replace((count by (UUID) (group by (UUID, exported_namespace) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) > 1), \"occupant\", \"Shared namespaces\", \"UUID\", \".+\")) or (label_replace((group by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) unless on(UUID) (group by (UUID, exported_namespace) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))), \"occupant\", \"Unallocated\", \"UUID\", \".+\")) or (label_replace((group by (UUID) (max_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end()))) unless on(UUID) (group by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))), \"occupant\", \"Unknown\", \"UUID\", \".+\"))) * on(UUID) group_left(gpu_identity) (0 * (label_join(topk by (UUID) (1, (max by (UUID, hostname, modelName) (max_over_time(timestamp(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"})[$__range:$__interval] @ end()))) or (group by (UUID, hostname, modelName) (last_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end())))), \"gpu_identity\", \"|\", \"hostname\", \"modelName\", \"UUID\")) + 1)",
+          "range": true,
+          "refId": "A",
+          "format": "table",
+          "instant": false,
+          "interval": "15s",
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "group by (occupant) (label_replace((present_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"}[$__range]) or DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} offset $__range), \"occupant\", \"$1\", \"exported_namespace\", \"(.+)\")) or label_replace(vector(1), \"occupant\", \"Unallocated\", \"__name__\", \".*\") or label_replace(vector(1), \"occupant\", \"Unknown\", \"__name__\", \".*\") or label_replace(vector(1), \"occupant\", \"Shared namespaces\", \"__name__\", \".*\")",
+          "range": false,
+          "refId": "C",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "type": "sql",
+          "refId": "B",
+          "datasource": {
+            "uid": "__expr__",
+            "type": "__expr__"
+          },
+          "expression": "WITH states AS (\n  SELECT DISTINCT occupant FROM C\n), namespaces AS (\n  SELECT occupant AS namespace FROM states\n  WHERE occupant NOT IN ('Unallocated', 'Unknown', 'Shared namespaces')\n), namespace_colors AS (\n  SELECT namespace,\n    CONCAT('hsl(', CAST(MOD((DENSE_RANK() OVER (ORDER BY namespace) - 1) * 137.508, 360) AS CHAR), ',65%,60%)') AS color\n  FROM namespaces\n)\nSELECT states.occupant,\n  CASE WHEN states.occupant IN ('Unallocated', 'Unknown') THEN '' ELSE states.occupant END AS text,\n  CASE\n    WHEN states.occupant = 'Unallocated' THEN '#00000000'\n    WHEN states.occupant = 'Unknown' THEN '#808080'\n    WHEN states.occupant = 'Shared namespaces' THEN '#B877D9'\n    ELSE namespace_colors.color\n  END AS color\nFROM states\nLEFT JOIN namespace_colors ON namespace_colors.namespace = states.occupant\nORDER BY states.occupant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#808080"
+          },
+          "custom": {
+            "hideFrom": {
+              "viz": false,
+              "legend": false,
+              "tooltip": false
+            },
+            "axisWidth": 355,
+            "lineWidth": 1,
+            "spanNulls": false,
+            "fillOpacity": 85,
+            "insertNulls": false,
+            "axisPlacement": "left"
+          },
+          "noValue": "",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Namespace Ranking · A100 80GB Equivalent Hours",
+      "description": "Allocated GPU hours × installed VRAM / 80GB, summed by namespace over the selected time range. A 40GB GPU allocated for 2 hours equals 1 A100 80GB hour. This is VRAM-based accounting, not compute-performance equivalence. Allocation is counted even at 0% utilization; multiple Pods in one namespace are deduplicated, and cross-namespace sharing splits one GPU equally. Sampling interval: ${accounting_step_seconds} seconds. Telemetry gaps are excluded.",
+      "datasource": {
+        "uid": "-- Mixed --",
+        "type": "mixed"
+      },
+      "targets": [
+        {
+          "expr": "sum_over_time(((group by (UUID, exported_namespace) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\",exported_namespace!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\",exported_namespace!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) / on(UUID) group_left() (count by (UUID) (group by (UUID, exported_namespace) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\",exported_namespace!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\",exported_namespace!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))))))[$__range:${accounting_step_seconds}s]) * ${accounting_step_seconds} / 3600",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "round(quantile_over_time(0.5, ((max by (UUID) ((((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)) + ((DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)) + ((DCGM_FI_DEV_FB_RESERVED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_RESERVED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))) / 1024)) > 0)[$__range:${accounting_step_seconds}s]))",
+          "range": false,
+          "refId": "C",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "type": "sql",
+          "refId": "B",
+          "datasource": {
+            "uid": "__expr__",
+            "type": "__expr__"
+          },
+          "expression": "WITH totals AS (\n  SELECT A.exported_namespace AS namespace,\n    SUM(A.__value__) AS gpu_hours,\n    SUM(CASE WHEN C.__value__ IS NOT NULL THEN A.__value__ * C.__value__ / 80.0 ELSE 0 END) AS a100_hours,\n    SUM(CASE WHEN C.__value__ IS NULL THEN A.__value__ ELSE 0 END) AS unrated_hours\n  FROM A LEFT JOIN C ON A.UUID = C.UUID\n  GROUP BY A.exported_namespace\n), ranked AS (\n  SELECT *, ROW_NUMBER() OVER (ORDER BY CASE WHEN unrated_hours > 0 THEN 1 ELSE 0 END, a100_hours DESC, namespace) AS rank_number\n  FROM totals\n)\nSELECT\n  CASE WHEN unrated_hours > 0 THEN NULL ELSE rank_number END AS `Rank`,\n  namespace AS Namespace,\n  CASE WHEN unrated_hours > 0 THEN NULL ELSE a100_hours END AS a100_hours,\n  gpu_hours\nFROM ranked\nORDER BY CASE WHEN unrated_hours > 0 THEN 1 ELSE 0 END, a100_hours DESC, namespace"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "—",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Rank"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 75
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Namespace"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 300
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "A100 80GB h"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Allocated GPU h"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "title": "GPU Allocation and Live Metrics",
+      "description": "All observed GPUs, including unallocated devices. Workload columns identify the consuming Pod and container. Memory capacity is used plus free framebuffer memory, excluding driver reservations.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (UUID, hostname, modelName, exported_namespace, exported_pod, exported_container) ((((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod!=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)) * 0 + 1) or (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod=\"\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\",exported_pod=\"\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)) * 0))",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))",
+          "range": false,
+          "refId": "B",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "(max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) * 1048576",
+          "range": false,
+          "refId": "C",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "((max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) + (max by (UUID) (((DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1))))) * 1048576",
+          "range": false,
+          "refId": "D",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "100 * (max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) / ((max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) + (max by (UUID) (((DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_FREE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))))",
+          "range": false,
+          "refId": "E",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "max by (UUID) (((DCGM_FI_DEV_GPU_TEMP{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_TEMP{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))",
+          "range": false,
+          "refId": "F",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        },
+        {
+          "expr": "max by (UUID) (((DCGM_FI_DEV_POWER_USAGE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_POWER_USAGE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))",
+          "range": false,
+          "refId": "G",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "width": 130,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "—",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Allocation"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Unallocated",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "Allocated",
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU Utilization"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory Utilization"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Used Memory"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory Capacity"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Temperature"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Power"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Node"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 205
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU UUID"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 350
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Namespace"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 175
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pod"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 310
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Container"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 135
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "title": "GPU Utilization",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(max by (UUID) (((DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) * on(UUID) group_left(gpu_identity) (0 * (label_join(topk by (UUID) (1, (max by (UUID, hostname, modelName) (max_over_time(timestamp(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"})[$__range:$__interval] @ end()))) or (group by (UUID, hostname, modelName) (last_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end())))), \"gpu_identity\", \"|\", \"hostname\", \"modelName\", \"UUID\")) + 1)",
+          "range": true,
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "{{gpu_identity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "viz": false,
+              "legend": false,
+              "tooltip": false
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "showValues": false,
+            "fillOpacity": 10,
+            "insertNulls": false,
+            "barAlignment": 0,
+            "gradientMode": "none",
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "barWidthFactor": 0.6,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisCenteredZero": false,
+            "lineInterpolation": "linear",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "GPU Memory Usage",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "((max by (UUID) (((DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_FB_USED{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) * 1048576) * on(UUID) group_left(gpu_identity) (0 * (label_join(topk by (UUID) (1, (max by (UUID, hostname, modelName) (max_over_time(timestamp(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"})[$__range:$__interval] @ end()))) or (group by (UUID, hostname, modelName) (last_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end())))), \"gpu_identity\", \"|\", \"hostname\", \"modelName\", \"UUID\")) + 1)",
+          "range": true,
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "{{gpu_identity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "viz": false,
+              "legend": false,
+              "tooltip": false
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "showValues": false,
+            "fillOpacity": 10,
+            "insertNulls": false,
+            "barAlignment": 0,
+            "gradientMode": "none",
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "barWidthFactor": 0.6,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisCenteredZero": false,
+            "lineInterpolation": "linear",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "GPU Temperature",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(max by (UUID) (((DCGM_FI_DEV_GPU_TEMP{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_GPU_TEMP{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) * on(UUID) group_left(gpu_identity) (0 * (label_join(topk by (UUID) (1, (max by (UUID, hostname, modelName) (max_over_time(timestamp(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"})[$__range:$__interval] @ end()))) or (group by (UUID, hostname, modelName) (last_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end())))), \"gpu_identity\", \"|\", \"hostname\", \"modelName\", \"UUID\")) + 1)",
+          "range": true,
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "{{gpu_identity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "celsius",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "viz": false,
+              "legend": false,
+              "tooltip": false
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "showValues": false,
+            "fillOpacity": 10,
+            "insertNulls": false,
+            "barAlignment": 0,
+            "gradientMode": "none",
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "barWidthFactor": 0.6,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisCenteredZero": false,
+            "lineInterpolation": "linear",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "GPU Power",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(max by (UUID) (((DCGM_FI_DEV_POWER_USAGE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_DEV_POWER_USAGE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) * on(UUID) group_left(gpu_identity) (0 * (label_join(topk by (UUID) (1, (max by (UUID, hostname, modelName) (max_over_time(timestamp(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"})[$__range:$__interval] @ end()))) or (group by (UUID, hostname, modelName) (last_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end())))), \"gpu_identity\", \"|\", \"hostname\", \"modelName\", \"UUID\")) + 1)",
+          "range": true,
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "{{gpu_identity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "watt",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "viz": false,
+              "legend": false,
+              "tooltip": false
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "showValues": false,
+            "fillOpacity": 10,
+            "insertNulls": false,
+            "barAlignment": 0,
+            "gradientMode": "none",
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "barWidthFactor": 0.6,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisCenteredZero": false,
+            "lineInterpolation": "linear",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "GPU SM Active",
+      "description": "SM activity: the fraction of cycles with at least one active warp, averaged across SMs. Aggregated by full GPU UUID. Devices without this metric have no curve.",
+      "datasource": {
+        "uid": "prometheus",
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "((max by (UUID) (((DCGM_FI_PROF_SM_ACTIVE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} >= 0 and DCGM_FI_PROF_SM_ACTIVE{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"} < 1000000000) and on(instance) (up{job=\"nvidia-dcgm-exporter\"} == 1)))) * 100) * on(UUID) group_left(gpu_identity) (0 * (label_join(topk by (UUID) (1, (max by (UUID, hostname, modelName) (max_over_time(timestamp(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"})[$__range:$__interval] @ end()))) or (group by (UUID, hostname, modelName) (last_over_time(DCGM_FI_DEV_GPU_UTIL{job=\"nvidia-dcgm-exporter\",UUID!=\"\",UUID=~\"${gpu_uuid:regex}\",hostname=~\"${node:regex}\",modelName=~\"${model:regex}\"}[$__range] @ end())))), \"gpu_identity\", \"|\", \"hostname\", \"modelName\", \"UUID\")) + 1)",
+          "range": true,
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "datasource": {
+            "uid": "prometheus",
+            "type": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "{{gpu_identity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "viz": false,
+              "legend": false,
+              "tooltip": false
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "spanNulls": false,
+            "showPoints": "never",
+            "showValues": false,
+            "fillOpacity": 10,
+            "insertNulls": false,
+            "barAlignment": 0,
+            "gradientMode": "none",
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "barWidthFactor": 0.6,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisCenteredZero": false,
+            "lineInterpolation": "linear",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

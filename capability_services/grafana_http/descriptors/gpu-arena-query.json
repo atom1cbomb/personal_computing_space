@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-query",
+  "name": "gpu_arena_query",
+  "description": "Query an actual GPU Arena Prometheus panel target with node/model/full UUID filters and up to a 90-day window. Supports current allocation, historical occupancy, GPU/memory utilization, SM activity, temperature and power; preserves unknown states, samples and warnings.",
+  "capability_kinds": [
+    "compute.grafana.read"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/d859994489ad25ca3aafd48442a4b3babf4aed9a745c3b40ab56eb05c3d3e3a9",
+    "identity_criterion": "content_digest"
+  }
+}

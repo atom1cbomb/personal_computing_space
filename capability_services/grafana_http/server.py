@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 
@@ -23,6 +23,26 @@ MAX_PAGES = 100
 UID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 METRIC_RE = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]*\Z")
 LABEL_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+ARENA_MAX_RANGE = 90 * 86400
+ARENA_VARIABLE = re.compile(r"\$\{([^}]+)\}|\$([A-Za-z_]\w*)")
+ARENA_RANKING_SQL = """WITH totals AS (
+  SELECT A.exported_namespace AS namespace,
+    SUM(A.__value__) AS gpu_hours,
+    SUM(CASE WHEN C.__value__ IS NOT NULL THEN A.__value__ * C.__value__ / 80.0 ELSE 0 END) AS a100_hours,
+    SUM(CASE WHEN C.__value__ IS NULL THEN A.__value__ ELSE 0 END) AS unrated_hours
+  FROM A LEFT JOIN C ON A.UUID = C.UUID
+  GROUP BY A.exported_namespace
+), ranked AS (
+  SELECT *, ROW_NUMBER() OVER (ORDER BY CASE WHEN unrated_hours > 0 THEN 1 ELSE 0 END, a100_hours DESC, namespace) AS rank_number
+  FROM totals
+)
+SELECT
+  CASE WHEN unrated_hours > 0 THEN NULL ELSE rank_number END AS `Rank`,
+  namespace AS Namespace,
+  CASE WHEN unrated_hours > 0 THEN NULL ELSE a100_hours END AS a100_hours,
+  gpu_hours
+FROM ranked
+ORDER BY CASE WHEN unrated_hours > 0 THEN 1 ELSE 0 END, a100_hours DESC, namespace"""
 
 
 class GatewayError(Exception):
@@ -429,6 +449,192 @@ class GrafanaGateway:
                 "query_time": iso(result["parameters"]["time"]), "samples": sorted(samples, key=lambda x: x["gpu_index"]),
                 "warnings": result["warnings"], "infos": result["infos"]}
 
+    def _arena_dashboard(self):
+        dashboard = self.handle("/v1/dashboards/get", {"uid": "gpu-arena"})["dashboard"]
+        panels = {}
+
+        def collect(values):
+            for panel in values:
+                identity = panel.get("id")
+                if not isinstance(identity, int) or isinstance(identity, bool) or identity in panels:
+                    raise GatewayError("gpu_arena_dashboard_invalid")
+                panels[identity] = panel
+                collect(panel.get("panels", []))
+
+        collect(dashboard.get("panels", []))
+        return dashboard, panels
+
+    @staticmethod
+    def _arena_target(panel, ref_id):
+        matches = [t for t in panel.get("targets", []) if t.get("refId") == ref_id]
+        if len(matches) != 1:
+            raise GatewayError("gpu_arena_target_not_found", 404)
+        target = matches[0]
+        source = target.get("datasource", panel.get("datasource", {}))
+        if (not isinstance(source, dict) or source.get("type") != "prometheus"
+                or not isinstance(target.get("expr"), str) or target.get("hide")):
+            raise GatewayError("gpu_arena_prometheus_target_required", 400)
+        uid(source.get("uid"))
+        return target, source["uid"]
+
+    @staticmethod
+    def _arena_window(payload):
+        last = round(timestamp(payload.get("end", time.time())), 3)
+        first = round(timestamp(payload.get("start", last - 7 * 86400)), 3)
+        duration = last - first
+        step = payload.get("step", max(30, math.ceil(duration / 1000)))
+        if (duration <= 0 or duration > ARENA_MAX_RANGE or isinstance(step, bool)
+                or not isinstance(step, int) or step < 1 or duration / step + 1 > 11000):
+            raise GatewayError("gpu_arena_range_invalid", 400)
+        filters = {}
+        for name in ("node", "model", "gpu_uuid"):
+            values = payload.get(name, ["$__all"])
+            if (not isinstance(values, list) or not 1 <= len(values) <= 64
+                    or any(not isinstance(v, str) or not 1 <= len(v) <= 1024
+                           or any(ord(c) < 32 for c in v) for v in values)
+                    or "$__all" in values and values != ["$__all"]):
+                raise GatewayError("gpu_arena_filter_invalid", 400)
+            filters[name] = values
+        return {"start": first, "end": last, "step": step, "filters": filters}
+
+    @staticmethod
+    def _arena_render(expression, dashboard, window):
+        variables = {v.get("name"): v for v in dashboard.get("templating", {}).get("list", [])}
+        duration_ms = round((window['end'] - window['start']) * 1000)
+        duration = f"{duration_ms // 1000}s" if duration_ms % 1000 == 0 else f"{duration_ms}ms"
+        replacements = {"__range": duration,
+                        "__range_s": f"{duration_ms / 1000:.3f}",
+                        "__interval": f"{window['step']}s", "__interval_ms": str(window['step'] * 1000)}
+        for name, values in window["filters"].items():
+            variable = variables.get(name, {})
+            if variable.get("type") != "query" or variable.get("allValue") != ".*":
+                raise GatewayError("gpu_arena_variable_unsupported")
+            # Literal values become RE2 alternatives, then PromQL string contents.
+            pattern = ".*" if values == ["$__all"] else "(" + "|".join(
+                re.sub(r"([\\.^$|?*+()\[\]{}])", r"\\\1", value) for value in values) + ")"
+            replacements[name + ":regex"] = json.dumps(pattern, ensure_ascii=False)[1:-1]
+        accounting = variables.get("accounting_step_seconds", {})
+        if accounting.get("type") == "constant" and re.fullmatch(r"[1-9][0-9]{0,3}", str(accounting.get("query", ""))):
+            replacements["accounting_step_seconds"] = str(accounting["query"])
+
+        def replace(match):
+            name = match.group(1) or match.group(2)
+            if name not in replacements:
+                raise GatewayError("gpu_arena_variable_unsupported")
+            return replacements[name]
+
+        return ARENA_VARIABLE.sub(replace, expression)
+
+    def _arena_identity(self, dashboard, window=None):
+        params = {"orgId": 1, "from": "now-7d", "to": "now", "timezone": "Asia/Shanghai",
+                  "var-node": "$__all", "var-model": "$__all", "var-gpu_uuid": "$__all", "refresh": "30s"}
+        if window:
+            params.update({"from": int(window["start"] * 1000), "to": int(window["end"] * 1000)})
+            params.update({"var-" + k: v for k, v in window["filters"].items()})
+        return {"dashboard_uid": "gpu-arena", "dashboard_version": dashboard.get("version", 0),
+                "dashboard_url": self.browser_origin + "/d/gpu-arena/gpu-arena?" + urlencode(params, doseq=True)}
+
+    def _arena_describe(self, payload):
+        self._parameters(payload, set())
+        dashboard, panels = self._arena_dashboard()
+        return {"status": "ok", **self._arena_identity(dashboard), "title": dashboard.get("title", "GPU Arena"),
+                "description": dashboard.get("description", ""), "max_range_days": 90,
+                "default_range": dashboard.get("time", {"from": "now-7d", "to": "now"}),
+                "variables": dashboard.get("templating", {}).get("list", []),
+                "panels": [{"id": p["id"], "title": p.get("title", ""), "description": p.get("description", ""),
+                            "field_config": p.get("fieldConfig", {}),
+                            "targets": [{"ref_id": t.get("refId", ""), "datasource": t.get("datasource", p.get("datasource", {})),
+                                         "expression": t.get("expr", t.get("expression", "")),
+                                         "mode": "range" if t.get("range") else "instant",
+                                         "queryable": bool(t.get("expr")) and not t.get("hide", False)
+                                         and t.get("datasource", p.get("datasource", {})).get("type") == "prometheus"}
+                                        for t in p.get("targets", [])]} for p in panels.values()],
+                "notes": ["History availability depends on upstream retention and telemetry gaps.",
+                          "GPU hours are grouped by namespace; a namespace is not a verified person identity.",
+                          "A100 80GB equivalence uses installed VRAM, not compute throughput.",
+                          "Unallocated telemetry does not establish Volcano schedulability."]}
+
+    def _arena_execute(self, dashboard, panel, ref_id, window, mode=None):
+        target, datasource = self._arena_target(panel, ref_id)
+        mode = mode or ("range" if target.get("range") else "instant")
+        if mode not in {"range", "instant"}:
+            raise GatewayError("parameters_invalid", 400)
+        expression = self._arena_render(target["expr"], dashboard, window)
+        parameters = {k: window[k] for k in ("start", "end", "step")} if mode == "range" else {"at": window["end"]}
+        result = self._query(expression, datasource_uid=datasource, **parameters)
+        return {"ref_id": ref_id, "mode": mode, **result}
+
+    def _arena_query(self, payload):
+        self._parameters(payload, {"panel_id", "ref_id", "mode", "start", "end", "step", "node", "model", "gpu_uuid"}, {"panel_id", "ref_id"})
+        if (isinstance(payload["panel_id"], bool) or not isinstance(payload["panel_id"], int)
+                or not isinstance(payload["ref_id"], str) or payload.get("mode", "instant") not in {"instant", "range"}):
+            raise GatewayError("parameters_invalid", 400)
+        window = self._arena_window(payload)
+        dashboard, panels = self._arena_dashboard()
+        panel = panels.get(payload["panel_id"])
+        if panel is None:
+            raise GatewayError("gpu_arena_panel_not_found", 404)
+        data = self._arena_execute(dashboard, panel, payload["ref_id"], window, payload.get("mode"))
+        return {"status": "ok" if data["result"] else "no_data", "complete": data["complete"],
+                **self._arena_identity(dashboard, window), "panel_id": panel["id"], "panel_title": panel.get("title", ""),
+                "time_range": window, "data": data}
+
+    def _arena_gpu_hours(self, payload):
+        self._parameters(payload, {"start", "end", "step", "node", "model", "gpu_uuid"})
+        window = self._arena_window(payload)
+        dashboard, panels = self._arena_dashboard()
+        matches = [p for p in panels.values() if p.get("title") == "Namespace Ranking · A100 80GB Equivalent Hours"]
+        if len(matches) != 1:
+            raise GatewayError("gpu_arena_accounting_unsupported")
+        panel = matches[0]
+        sql = [t for t in panel.get("targets", []) if t.get("refId") == "B" and t.get("type") == "sql"]
+        if len(sql) != 1 or " ".join(sql[0].get("expression", "").split()) != " ".join(ARENA_RANKING_SQL.split()):
+            raise GatewayError("gpu_arena_accounting_unsupported")
+        evidence = [self._arena_execute(dashboard, panel, ref, window, "instant") for ref in ("A", "C")]
+        capacities, allocations = {}, {}
+        for result, destination, keys in ((evidence[0], allocations, ("UUID", "exported_namespace")),
+                                           (evidence[1], capacities, ("UUID",))):
+            if result["result_type"] != "vector":
+                raise GatewayError("gpu_arena_accounting_sample_invalid")
+            for sample in result["result"]:
+                try:
+                    identity = tuple(sample["metric"][key] for key in keys)
+                    point = sample["value"]
+                    if len(point) != 2 or not all(isinstance(v, str) and v for v in identity):
+                        raise ValueError()
+                    timestamp(point[0])
+                    value = float(point[1])
+                    if not math.isfinite(value) or value < 0 or (len(keys) == 1 and value == 0) or identity in destination:
+                        raise ValueError()
+                    destination[identity] = value
+                except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                    raise GatewayError("gpu_arena_accounting_sample_invalid") from exc
+        totals = {}
+        for (gpu_uuid, namespace), hours in allocations.items():
+            row = totals.setdefault(namespace, {"namespace": namespace, "gpu_hours": 0.0,
+                                               "a100_80gb_hours": 0.0, "unrated_gpu_hours": 0.0})
+            row["gpu_hours"] += hours
+            capacity = capacities.get((gpu_uuid,))
+            if capacity is None:
+                row["unrated_gpu_hours"] += hours
+            else:
+                row["a100_80gb_hours"] += hours * capacity / 80
+        rows = sorted(totals.values(), key=lambda r: (r["unrated_gpu_hours"] > 0, -r["a100_80gb_hours"], r["namespace"]))
+        warnings = [warning for result in evidence for warning in result["warnings"]]
+        for rank, row in enumerate(rows, 1):
+            if any(not math.isfinite(row[key]) for key in ("gpu_hours", "a100_80gb_hours", "unrated_gpu_hours")):
+                raise GatewayError("gpu_arena_accounting_sample_invalid")
+            row["rank"] = rank if row["unrated_gpu_hours"] == 0 else None
+            if row["unrated_gpu_hours"] > 0:
+                row["a100_80gb_hours"] = None
+                warnings.append("missing_gpu_capacity:" + row["namespace"])
+        accounting_step = next(v["query"] for v in dashboard["templating"]["list"] if v["name"] == "accounting_step_seconds")
+        return {"status": "ok" if rows else "no_data", "complete": not warnings,
+                **self._arena_identity(dashboard, window), "time_range": window, "group_by": "namespace",
+                "accounting_step_seconds": int(accounting_step), "reference_vram_gib": 80,
+                "normalization": "allocated_gpu_hours * installed_vram_gib / 80",
+                "rows": rows, "warnings": warnings, "evidence": evidence}
+
     def handle(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path == "/v1/auth/start":
             return self.auth_start(payload)
@@ -479,6 +685,12 @@ class GrafanaGateway:
                                start=payload["start"], end=payload["end"], step=payload["step"])
         if path == "/v1/gpu/utilization":
             return self._gpu_utilization(payload)
+        if path == "/v1/gpu-arena/describe":
+            return self._arena_describe(payload)
+        if path == "/v1/gpu-arena/query":
+            return self._arena_query(payload)
+        if path == "/v1/gpu-arena/gpu-hours":
+            return self._arena_gpu_hours(payload)
         raise GatewayError("action_not_allowed", 404)
 
 

@@ -1,6 +1,6 @@
 # Grafana monitoring capability package
 
-`grafana-http/v4` reads Grafana dashboards and queries their Prometheus data
+`grafana-http/v5` reads Grafana dashboards and queries their Prometheus data
 sources. GPU queries identify the node and the host GPU's numeric index, retain
 an available UUID, and report actual sampled utilization. Publish and invoke
 through Observer GRIP using the [shared service workflow](../README.md).
@@ -13,12 +13,76 @@ through Observer GRIP using the [shared service workflow](../README.md).
 | metrics_query | query; optional datasource_uid, time |
 | metrics_query_range | query, start, end, step; optional datasource_uid |
 | gpu_utilization | hostname; optional gpu_index, time, datasource_uid, gpu_metric |
+| gpu_arena_describe | none; returns the live GPU Arena panel IDs, target refs, units, expressions and filters |
+| gpu_arena_query | panel_id, ref_id; optional mode, start, end, step, node, model, gpu_uuid |
+| gpu_arena_gpu_hours | optional start, end, step, node, model, gpu_uuid; returns namespace GPU-hour rankings |
 
-All six exports are SafeRead with `grafana.read`. Metrics actions use Grafana's
+All nine exports are SafeRead with `grafana.read`. Metrics actions use Grafana's
 Prometheus data source proxy; callers cannot provide an arbitrary URL, HTTP
 method or upstream path. The package uses the existing `/api` endpoints
 supported by the deployed Grafana. No Grafana dashboards or data sources are
 created or modified.
+
+## GPU Arena
+
+The three Arena actions read the actual `gpu-arena` dashboard on each call. They
+use its Prometheus datasource UID and expressions, preserving UUID deduplication,
+healthy-telemetry filtering, unknown/unallocated/shared occupancy and sampling
+timestamps. They never infer metric names or user identity from a GPU allocation.
+`gpu_arena_describe` returns the public dashboard link using the instance's
+`browser_origin`; the original URLs select seven days and refresh every 30 seconds.
+
+`gpu_arena_query` executes one Prometheus target, with raw series, query provenance,
+warnings and completeness. Discover panel IDs and target refs first. The deployed
+dashboard currently includes:
+
+| Panel / target | Meaning |
+|---|---|
+| 1–5 / A | Observed, allocated, unallocated GPUs; average GPU and memory utilization |
+| 6 / A–G | Current UUID/Pod/namespace allocation; GPU utilization, used/capacity memory, memory utilization, temperature, power |
+| 7 / A, 8 / A | GPU utilization and used memory history |
+| 9 / A, 10 / A, 11 / A | Temperature, power and SM activity history |
+| 12 / A | Historical occupancy by full UUID, including Unknown and Shared namespaces |
+| 13 | Namespace accounting; use `gpu_arena_gpu_hours` for the joined ranking |
+
+Time boundaries accept Unix seconds or timezone-qualified RFC3339 and are rounded
+to milliseconds, matching Grafana links. The default window is seven days ending
+now; the maximum selected window is 90 days. Available data depends on upstream
+retention, telemetry and query limits. `step` is the range-query sampling interval
+in seconds (default at least 30 seconds, about 1000 intervals); at most 11000 points
+per series are allowed. It also controls `$__interval` in dashboard expressions.
+Instant targets evaluate at `end`; range targets sample the selected window.
+An explicit `mode` can request either operation, including historical sampling of
+the current memory-utilization target 6/E.
+
+`node`, `model` and `gpu_uuid` are arrays of literal values, safely escaped as
+Prometheus regex alternatives. Omission or `["$__all"]` means all; raw regexes and
+empty selections are not accepted. Empty results are `no_data`, not zero. Query
+warnings are retained and make `complete=false`; completeness does not assert
+continuous 90-day retention. SQL/display transformations are not executed by
+`gpu_arena_query`; unsupported targets and unknown dashboard variables fail explicitly.
+
+`gpu_arena_gpu_hours` uses the dashboard's allocation-hours and installed-memory
+queries and its verified SQL join/ranking semantics. It groups by namespace and
+computes `allocated GPU hours × installed VRAM GiB / 80`. Thus a 40 GiB GPU
+allocated for two hours contributes one A100 80GB-equivalent hour. The dashboard
+counts allocated idle time, deduplicates Pods within a namespace, splits a shared
+GPU across namespaces, and excludes telemetry gaps. Its accounting sampling
+constant (currently 30 seconds) is retained independently of the output step.
+Missing capacity produces null normalized hours/rank, explicit unrated hours and
+`complete=false`. This measures VRAM-weighted allocation, not theoretical FLOPS or
+verified individual student usage. A changed SQL accounting formula is rejected
+until the adapter is updated. Both underlying queries are returned as evidence.
+
+Example business arguments after discovering the current panel/target:
+
+```json
+{"panel_id": 11, "ref_id": "A", "node": ["node-from-dashboard"], "start": "2026-10-25T00:00:00+08:00", "end": "2026-10-26T00:00:00+08:00", "step": 120}
+```
+
+For Volcano submissions, combine occupancy/monitoring with the cluster's queue,
+quota and scheduling information. Unallocated telemetry alone does not establish
+that a device can be scheduled.
 
 ## Instance configuration
 
@@ -104,7 +168,7 @@ Missing or expired login keeps the activation pending_auth. Start a new browser
 login for a browser-managed activation. For a private profile, replace the file
 and let the normal health probe verify it; this mode does not start an
 interactive browser login. The original cookie-file-only v1 package is retained
-as immutable publication history; use v4 for unified login and automatic rotation.
+as immutable publication history; use v5 for GPU Arena, unified login and automatic rotation.
 
 ## Query results
 

@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-gpu-hours",
+  "name": "gpu_arena_gpu_hours",
+  "description": "Rank allocated GPU hours by namespace using the live GPU Arena accounting queries and installed-VRAM / 80 GiB normalization. Missing capacity stays unranked. Namespace identity is not verified person identity; normalized hours are not compute-performance equivalence.",
+  "capability_kinds": [
+    "compute.grafana.read"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/d859994489ad25ca3aafd48442a4b3babf4aed9a745c3b40ab56eb05c3d3e3a9",
+    "identity_criterion": "content_digest"
+  }
+}

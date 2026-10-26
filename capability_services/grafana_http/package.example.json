@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "grafana-http",
-  "package_version": "v4",
+  "package_version": "v5",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -135,6 +135,63 @@
       "replay_safety": "SafeRead",
       "runtime_binding": {
         "path": "/v1/gpu/utilization"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-describe",
+        "version_or_digest": "a25a6c5a558e31fd32fac479eaea47d2ee6da1a9d150c3e1a9f97e167327de28",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-describe/sha256/1de484f8f83887f95bed85b1b1c84021d7c3c15c1e1e35e33a6a396d518e5787",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/gpu-arena/describe"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-query",
+        "version_or_digest": "e98c8a1bf975b5e8ddc38a8be73a159a0925fd413c8f4031bcf2508fd7a4ce2c",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-query/sha256/99c30d47bfc4d3e76784546469214c456ddefd9eb966d2ec269d81b3abb718fb",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/gpu-arena/query"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-gpu-hours",
+        "version_or_digest": "283a8b36e1c37232dc87e08d4879b4cee81a66f001e66cfd878a2751277f891f",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-gpu-hours/sha256/e198cf16d94ff6923d92a172e4d5f74131284a1a37516a1a44c8d50232323c25",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "grafana.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/gpu-arena/gpu-hours"
       }
     }
   ]

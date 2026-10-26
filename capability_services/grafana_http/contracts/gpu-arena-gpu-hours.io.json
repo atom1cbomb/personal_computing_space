@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-arena-gpu-hours-input/sha256/838c47cc20a1fec0ebb2d3a124f791f303ff027579349b073322583ef09ac2ad",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-arena-gpu-hours-output/sha256/e89e6995fe6eccbd45c39e27964b59a02222485498283989b8b6840b7f1505df",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

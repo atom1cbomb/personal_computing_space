@@ -227,7 +227,43 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
         utilization_percent={"type": "number", "minimum": 0, "maximum": 100},
         sampled_at=string(), labels=obj(),
     )
+    arena_filters = {name: {"type": "array", "minItems": 1, "maxItems": 64,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 1024}}
+                     for name in ("node", "model", "gpu_uuid")}
+    arena_window = {"start": at, "end": at, "step": {"type": "integer", "minimum": 1}, **arena_filters}
+    arena_identity = {"dashboard_uid": string(const="gpu-arena"),
+                      "dashboard_version": {"type": "integer"}, "dashboard_url": string()}
+    arena_common = {"status": string(enum=["ok", "no_data"]), "complete": boolean,
+                    "time_range": obj(), **arena_identity}
     return {
+        "gpu-arena-describe": {
+            "input": obj(),
+            "output": obj(["status", *arena_identity, "title", "description", "max_range_days", "default_range", "variables", "panels", "notes"],
+                          status=string(const="ok"), **arena_identity, title=string(), description=string(),
+                          max_range_days={"const": 90}, default_range=obj(), variables=array(obj()),
+                          panels=array(obj(["id", "title", "description", "field_config", "targets"],
+                                           id={"type": "integer"}, title=string(), description=string(),
+                                           field_config=obj(), targets=array(obj()))), notes=strings),
+        },
+        "gpu-arena-query": {
+            "input": obj(["panel_id", "ref_id"], panel_id={"type": "integer", "minimum": 1},
+                         ref_id=identity, mode=string(enum=["instant", "range"]), **arena_window),
+            "output": obj([*arena_common, "panel_id", "panel_title", "data"], **arena_common,
+                          panel_id={"type": "integer"}, panel_title=string(), data=query_output),
+        },
+        "gpu-arena-gpu-hours": {
+            "input": obj(**arena_window),
+            "output": obj([*arena_common, "group_by", "accounting_step_seconds", "reference_vram_gib", "normalization", "rows", "warnings", "evidence"],
+                          **arena_common, group_by=string(const="namespace"),
+                          accounting_step_seconds={"type": "integer", "minimum": 1}, reference_vram_gib={"const": 80},
+                          normalization=string(), rows=array(obj(
+                              ["namespace", "rank", "gpu_hours", "a100_80gb_hours", "unrated_gpu_hours"],
+                              namespace=string(), rank={"type": ["integer", "null"], "minimum": 1},
+                              gpu_hours={"type": "number", "minimum": 0},
+                              a100_80gb_hours={"type": ["number", "null"], "minimum": 0},
+                              unrated_gpu_hours={"type": "number", "minimum": 0})),
+                          warnings=strings, evidence=array(query_output)),
+        },
         "datasources-list": {
             "input": obj(),
             "output": obj(["status", "items", "complete"], status=string(const="ok"),

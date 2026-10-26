@@ -1,0 +1,173 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "no_data"
+      ]
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "time_range": {
+      "type": "object",
+      "properties": {}
+    },
+    "dashboard_uid": {
+      "type": "string",
+      "const": "gpu-arena"
+    },
+    "dashboard_version": {
+      "type": "integer"
+    },
+    "dashboard_url": {
+      "type": "string"
+    },
+    "group_by": {
+      "type": "string",
+      "const": "namespace"
+    },
+    "accounting_step_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reference_vram_gib": {
+      "const": 80
+    },
+    "normalization": {
+      "type": "string"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "namespace": {
+            "type": "string"
+          },
+          "rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "gpu_hours": {
+            "type": "number",
+            "minimum": 0
+          },
+          "a100_80gb_hours": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "unrated_gpu_hours": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "namespace",
+          "rank",
+          "gpu_hours",
+          "a100_80gb_hours",
+          "unrated_gpu_hours"
+        ]
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "datasource_uid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "queried_at": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32768
+          },
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          },
+          "result_type": {
+            "type": "string",
+            "enum": [
+              "vector",
+              "matrix",
+              "scalar",
+              "string"
+            ]
+          },
+          "result": {
+            "type": "array",
+            "items": {}
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "infos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "complete",
+          "datasource_uid",
+          "queried_at",
+          "query",
+          "parameters",
+          "result_type",
+          "result",
+          "warnings",
+          "infos"
+        ]
+      }
+    }
+  },
+  "required": [
+    "status",
+    "complete",
+    "time_range",
+    "dashboard_uid",
+    "dashboard_version",
+    "dashboard_url",
+    "group_by",
+    "accounting_step_seconds",
+    "reference_vram_gib",
+    "normalization",
+    "rows",
+    "warnings",
+    "evidence"
+  ]
+}

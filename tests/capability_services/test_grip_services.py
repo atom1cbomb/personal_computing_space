@@ -172,14 +172,21 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
             if external["invalid"]:
                 return httpx.Response(200, json={"invalid": True})
             if request.url.path == "/api/datasources":
-                return httpx.Response(200, json=[{"uid": "prom", "name": "Prometheus", "type": "prometheus", "isDefault": True}])
+                return httpx.Response(200, json=[{"uid": "prom", "name": "Prometheus", "type": "prometheus", "isDefault": True},
+                                                {"uid": "prometheus", "name": "Arena metrics", "type": "prometheus"}])
             if request.url.path == "/api/search":
                 return httpx.Response(200, json=[{"uid": "gpu", "title": "GPU"}])
             if request.url.path == "/api/dashboards/uid/gpu":
                 return httpx.Response(200, json={"dashboard": {"uid": "gpu", "title": "GPU", "panels": []}})
+            if request.url.path == "/api/dashboards/uid/gpu-arena":
+                return httpx.Response(200, json={"dashboard": json.loads((ROOT / "tests/fixtures/gpu-arena-dashboard.json").read_text())})
             range_query = request.url.path.endswith("/query_range")
             data = {"metric": {"Hostname": "node-a", "gpu": "0", "UUID": "GPU-fixture"},
                     "values" if range_query else "value": [[10, "42"], [20, "50"]] if range_query else [10, "42"]}
+            if request.url.params.get("query", "").startswith("sum_over_time"):
+                data = {"metric": {"UUID": "GPU-fixture", "exported_namespace": "test"}, "value": [20, "2"]}
+            elif request.url.params.get("query", "").startswith("round(quantile_over_time"):
+                data = {"metric": {"UUID": "GPU-fixture"}, "value": [20, "40"]}
             return httpx.Response(200, json={"status": "success", "data": {
                 "resultType": "matrix" if range_query else "vector", "result": [data]}})
         gateway = module.GrafanaGateway(instance_path=instance, credential_root=credentials,
@@ -261,6 +268,10 @@ def arguments(directory, action_name):
         value = {"manifest": {"apiVersion": "batch.volcano.sh/v1alpha1", "kind": "Job", "metadata": {"name": "fixture-job", "namespace": "test"}, "spec": {}}}
     if action_name == "instances-run":
         value = {"ProjectId": "project-test", "RegionId": "region-test", "ZoneId": "zone-test", "Count": 1, "Cpu": 2, "Mem": 4, "DiskSize": 20, "ImageId": "image-test", "Name": "fixture-vm", "TagSpecifications": [], "ClientToken": "fixture-create"}
+    if action_name == "gpu-arena-query":
+        value = {"panel_id": 1, "ref_id": "A", "start": 10, "end": 20, "step": 10}
+    if action_name == "gpu-arena-gpu-hours":
+        value = {"start": 10, "end": 20, "step": 10}
     return value
 
 
@@ -403,6 +414,10 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     assert await client.invoke(target, action["uri"], data) == submitted
                     result = await wait_result(app, client, submitted["run"])
                     assert result["state"] == "completed", (action_name, result)
+                    if action_name == "gpu-arena-gpu-hours":
+                        row, = result["outcome"]["value"]["rows"]
+                        assert row["namespace"] == "test" and row["rank"] == 1
+                        assert row["gpu_hours"] == 2 and row["a100_80gb_hours"] == 1
                 business_paths = {e["runtime_binding"]["path"] for e in bundle.manifest["action_exports"] if e["runtime_binding"].get("interaction") != "byte-stream"}
                 calls = [p for _, p, _ in transport.calls if p in business_paths]
                 assert sorted(calls) == sorted(business_paths), "each export runs once despite repeated GRIP invocation"

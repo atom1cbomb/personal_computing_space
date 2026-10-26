@@ -1,0 +1,93 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "ok"
+    },
+    "dashboard_uid": {
+      "type": "string",
+      "const": "gpu-arena"
+    },
+    "dashboard_version": {
+      "type": "integer"
+    },
+    "dashboard_url": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "max_range_days": {
+      "const": 90
+    },
+    "default_range": {
+      "type": "object",
+      "properties": {}
+    },
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "panels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "field_config": {
+            "type": "object",
+            "properties": {}
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "field_config",
+          "targets"
+        ]
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "status",
+    "dashboard_uid",
+    "dashboard_version",
+    "dashboard_url",
+    "title",
+    "description",
+    "max_range_days",
+    "default_range",
+    "variables",
+    "panels",
+    "notes"
+  ]
+}

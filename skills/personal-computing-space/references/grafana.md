@@ -12,8 +12,9 @@ idempotency_key, then read the returned Run until terminal.
 
 ## Discover and query metrics
 
-The six exports are datasources_list, dashboards_list, dashboard_get,
-metrics_query, metrics_query_range and gpu_utilization. All are read-only.
+The base exports are datasources_list, dashboards_list, dashboard_get,
+metrics_query, metrics_query_range and gpu_utilization. v5 additionally exports
+gpu_arena_describe, gpu_arena_query and gpu_arena_gpu_hours. All are read-only.
 Use dashboard_get to inspect panel expressions and variable definitions and
 datasources_list to obtain actual Prometheus data source UIDs. Generic metric
 queries accept PromQL and an optional data source UID, never an arbitrary URL.
@@ -31,9 +32,35 @@ physical device identity, sum percentages from multiple series, or call GPU busy
 percentage theoretical FLOPS utilization. Pod GPU requests alone do not map a
 Pod to a numeric device index.
 
+## GPU Arena (grafana-http/v5)
+
+Use gpu_arena_describe first to discover the actual `gpu-arena` dashboard's
+panels, Prometheus target refs, units, variables and public link. Use
+gpu_arena_query with panel_id/ref_id and optional start/end/step, mode
+(`instant` or `range`), and literal node/model/gpu_uuid arrays. Omitted filters or
+["$__all"] select all. The default window is seven days; selected windows are
+bounded to 90 days and at most 11000 range samples per series. Upstream retention
+and telemetry determine available history. Empty data is no_data, and warnings
+make complete=false. SQL display targets are explicitly unsupported by this
+generic panel query; actual Prometheus expressions and samples remain in results.
+
+The current dashboard covers live/historical allocation, per-GPU utilization,
+memory usage/utilization, SM activity, temperature and power. Do not treat unknown
+history as unallocated or infer Volcano schedulability from idle telemetry.
+
+gpu_arena_gpu_hours implements the dashboard's verified namespace ranking:
+allocated GPU hours × installed VRAM GiB / 80. The underlying queries deduplicate
+same-namespace Pods and split cross-namespace sharing. The dashboard's accounting
+step (currently 30 seconds) stays independent of the range sampling step. Missing
+capacity stays unranked with null normalized hours and explicit unrated hours.
+The response retains both Prometheus queries as evidence. Namespace is not a
+verified student identity; A100 80GB-equivalent hours are VRAM-weighted allocation,
+not compute-performance equivalence. A changed SQL formula is an explicit adapter
+compatibility error, never permission to guess a new normalization rule.
+
 ## Credentials and activation
 
-Use grafana-http/v4 for unified login and automatic session token rotation.
+Use grafana-http/v5 for GPU Arena, unified login and automatic session token rotation.
 For QR login, activate without credential_profile, then
 use the [unified authentication client](authentication.md). The SDK opens an
 isolated visible browser on the user's machine and follows Grafana's original
