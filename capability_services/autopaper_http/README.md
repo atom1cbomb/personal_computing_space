@@ -34,6 +34,11 @@ PDF 链接、已有结构化摘要和相似度等字段；缺失的可选字段�
 `{"api_origin":"https://paper.example"}`，必须为无路径、查询串或内嵌凭据的 HTTPS origin。
 API 与浏览器登录使用同一 origin，业务输入不能覆盖地址。
 
+宿主 Slave 需要配置 GRIP 数据入口或 Observer 中转上游，五个 `request-reply` 查询
+才能出现在可调用 offers 中；仅能执行 task 并不足够。检查 DESCRIBE 中六个动作均为
+`available=true`，`binding_unavailable` 表示缺少服务入口配置。配置方法见
+[服务部署步骤](../../docs/service-bindings-deployment.md)。
+
 激活时省略 `credential_profile`，初始状态为 `pending_auth`。在用户浏览器所在机器
 安装 SDK 的 `auth` 可选依赖与 Chromium，然后使用[统一登录客户端](../../docs/authentication.md)：
 
@@ -136,4 +141,33 @@ HTTPS 使用测试专用 CA，保持证书校验。默认测试不启用 Docker 
 `/var/lib/loom/service` 并设置 UID/GID 65534，使 Docker 新卷继承正确的目录所有者。
 修复后真实容器验收通过。容器内公网检查也通过：公开目录返回 95 个会议并符合输出契约，
 受保护的会议接口未登录返回 401，登录入口返回 HTTPS 307 跳转。
-生产账号的论文搜索仍需发布镜像、激活并完成真实浏览器登录后验收。
+生产账号的论文查询与检索验收结果见下节。
+
+## 生产部署（2026-10-26）
+
+代码已合并至主分支，合并提交 `d1cc0d4`。包通过 Observer 发布，在 `slave-a` 激活：
+
+```text
+grip://loom.local/workspaces/workspace-default/packages/autopaper-http/v1
+grip://loom.local/workspaces/workspace-default/activations/autopaper-http/v1/slave-a/autopaper
+```
+
+镜像为 `localhost:5000/loom/autopaper-gateway@sha256:538fe875e4d2a6e3624726f3228236b23b9acd521b497f3050162226e2308137`。
+用户完成统一浏览器登录后，实例为 `ready/authenticated`，revision 为 1，六个动作均可调用。
+
+本次补齐了 slave-a 的数据监听和 HTTPS 上游，查询通过 Observer 中转。
+仅重新配置 Observer 和 Slave 主进程，未更换核心镜像；原有能力容器和认证卷保持不变。
+配置及回退副本在部署主机 `/opt/loom-production/releases/autopaper-capability-20261026/`，
+TLS 代理配置在 `/opt/loom-production/slave-a-grip-tls/`。
+
+| 验收项 | 实测结果 |
+|---|---|
+| 合并后回归 | 317 passed、1 skipped；跳过项为需显式设置镜像的 Docker 验收，之前已单独通过 |
+| 会议目录 / 已入库会议 | 95 / 37 |
+| 年份与论文列表 | ACL 2025，3,379 篇 |
+| 论文详情 | 成功读取 GraphNarrator 的标题、作者、摘要等已有字段 |
+| RAG 检索 | Run `run-757269a17256` completed，共 46 条匹配，本次返回前 5 篇，包括 MultiRAG、RAG-Critic |
+| 生产容器重启 | 原激活 URI 和 revision 保持不变，会话复用，重启后查询返回 37 个会议 |
+| 会话文件 | UID 65534，权限 0600 |
+
+本次传入 `top_k=5`；响应中的 `total=46` 是匹配总数，`papers` 包含实际返回的 5 篇论文。

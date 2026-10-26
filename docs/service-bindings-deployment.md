@@ -34,6 +34,27 @@ Upgrade 和长连接，代理空闲超时大于 ping 周期。不要把 Worker �
 若 Observer 需要不同的后端地址，另设同结构的 `upstream_bindings`；该地址不会
 覆盖 DESCRIBE 已显式给出的 endpoint。只发布 Observer 中转时可仅配置 upstream。
 
+2026-10-26 为 `slave-a` 的 AutoPaper 直接查询启用了 Observer 中转。
+生产配置保留原有 `slave-autopaper` data bindings，另增加：
+
+```toml
+[cluster.service_access.upstream_bindings]
+"grip://loom.local/workspaces/workspace-default/slaves/slave-a" = [
+  { protocol = "https-json.v1", endpoint = "https://9.0.16.66:8092/.well-known/grip", audience = "grip://loom.local/workspaces/workspace-default/slaves/slave-a" },
+  { protocol = "loom-wss-stream.v1", endpoint = "wss://9.0.16.66:8092/grip/stream", audience = "grip://loom.local/workspaces/workspace-default/slaves/slave-a" }
+]
+```
+
+`slave-a` machine 设置 `grip_data_port=8091`、`grip_data_publish_host="127.0.0.1"`。
+TLS 代理在 `9.0.16.66:8092` 接收请求，只代理 GRIP JSON/stream 两条路径到回环数据端口。
+Observer 验证现有服务 CA 签发的证书，`allow_insecure=false` 保持不变。代理由
+`/opt/loom-production/slave-a-grip-tls/docker-compose.yml` 管理；只读容器的 `/tmp` 和
+`/var/cache/nginx` 使用 tmpfs。证书有效期至 2027-10-26，按部署者流程续签。
+本次已验证 HTTPS JSON 中转；WebSocket 路由已配置，未在 AutoPaper 查询验收中测试。
+
+未配置 data/upstream binding 的 Slave 仍可执行 task；其 `request-reply` / `byte-stream`
+业务导出会显示 `binding_unavailable`。认证 ready 后仍须检查所需动作的 offers。
+
 在新增 Slave 的 `[[machines]]` 项中配置唯一 service_id，例如 `slave-autopaper`，
 以及 `grip_data_port=8091`、`grip_data_publish_host="127.0.0.1"`。新部署工具允许任意
 符合 `slave-...` 命名规则的 ID。数据监听独立于内部服务端口；TLS 由该回环入口前的
