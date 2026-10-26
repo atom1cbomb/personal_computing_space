@@ -156,7 +156,9 @@ grip://loom.local/workspaces/workspace-default/activations/autopaper-http/v1/sla
 用户完成统一浏览器登录后，实例为 `ready/authenticated`，revision 为 1，六个动作均可调用。
 
 本次补齐了 slave-a 的数据监听和 HTTPS 上游，查询通过 Observer 中转。
-仅重新配置 Observer 和 Slave 主进程，未更换核心镜像；原有能力容器和认证卷保持不变。
+仅重新配置 Observer 和 Slave 主进程，未更换核心镜像；有效激活的容器和认证卷保持不变。
+Slave 恢复时清理了此前已经标记 `stopped` 的六个历史容器（Grafana v4、Kubernetes v6
+各三个）；原先所有 `ready` 激活仍为 `ready`。
 配置及回退副本在部署主机 `/opt/loom-production/releases/autopaper-capability-20261026/`，
 TLS 代理配置在 `/opt/loom-production/slave-a-grip-tls/`。
 
