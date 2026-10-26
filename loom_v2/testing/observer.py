@@ -126,6 +126,7 @@ def create_embedded_app(
     app.state.repo.orchestrator_runtime_available = True
     app.state.provider = provider
     app.state.slaves = slaves
+    repository.service_routes.embedded = lambda slave: slave in app.state.slaves
     app.state.workers = workers
     app.state.driver = DriverService(
         app.state.repo,

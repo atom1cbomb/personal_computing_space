@@ -19,7 +19,18 @@ python examples/grip/invoke.py --action list-resources --input list.json
 将 mcue 改为 `capability/package`、`capability/activation`、`computing/vm` 或 `execution/run` 可查相应资源。
 使用 `grip/mcue-type` 查询类型定义，再对返回的定义 URI 调用 read 取得属性 Schema。
 服务包发布方法见 [服务包指南](../../capability_services/README.md)。
-复制返回的 Slave URI 和包 URI，创建 `activate.json`：
+复制返回的 Slave URI 和包 URI，先创建 `check.json`：
+
+```json
+{"package":"<package URI>","instance_name":"example"}
+```
+
+```sh
+python examples/grip/invoke.py --target "$SLAVE_URI" --action check-package --input check.json
+```
+
+只有返回 ready=true 后才继续；否则按 issues 选择合适的节点或由节点管理员完成接入。
+能力包部署不通过 SSH 修改数据入口、TLS 或 Observer 配置。然后创建 `activate.json`：
 
 ```json
 {"package":"<package URI>","instance_name":"example","instance_config":{},"credential_profile":"<operator 配置的 profile 名称>","idempotency_key":"example-activate-1"}

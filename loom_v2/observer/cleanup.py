@@ -132,7 +132,10 @@ async def ensure_program_activation(repository: Any, run_id: str, *, execution_i
     if previous:
         if previous["arguments"] != arguments:
             raise ValueError("program_step_conflict")
-        return ResourceRef.model_validate(previous["activation_ref"])
+        package = await repository.get_capability_package(package_ref, run_id=run_id)
+        existing = ResourceRef.model_validate(previous["activation_ref"])
+        repository.service_routes.require(package, existing.access_binding["target_slave"], instance_name)
+        return existing
     orchestrator = await repository.get_capability_package(record.committed.snapshot.program_systems.package_ref, run_id=run_id)
     if package_ref not in [ResourceRef.model_validate(value) for value in orchestrator.body["allowed_node_package_refs"]]:
         raise ValueError("node_package_not_allowed")

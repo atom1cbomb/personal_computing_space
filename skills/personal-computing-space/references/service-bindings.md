@@ -9,6 +9,21 @@ trusted route. Supply operator routes via `LoomClient(trusted_bindings=[...])`;
 Observer binding into a Slave address. No replay or route fallback occurs after
 sending a request.
 
+Before activating a package, call the Slave's discovered `check-package` with
+`{package: package_uri, instance_name: instance}`. It returns `ready`,
+`required_interactions` and `issues` (code, interaction, affected action URIs).
+Missing keys/entries or invalid bindings stop activation before state changes.
+Node DESCRIBE includes `service_interactions` as a general configuration summary;
+check-package also accounts for activation-specific routes. This does not probe
+network reachability, pull an image or authenticate the provider. Node setup is
+separate from package deployment and must not become an SSH fallback.
+
+Activation metadata distinguishes `runtime_state` from public `state` and
+`available`. A runtime-ready instance with missing service bindings is publicly
+degraded; inspect `service_access.issues` and each action's availability. Existing
+usable actions remain offered. Restoring routes restores availability without
+recreating the instance. Stop remains available during a binding outage.
+
 Read the offer's mode and schemas. Package `runtime_binding.interaction` controls
 its exported interface:
 

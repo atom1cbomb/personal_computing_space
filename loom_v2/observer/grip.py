@@ -94,6 +94,23 @@ class ActivateInput(Model):
     dependencies: dict[str, ActivationDependency] = Field(default_factory=dict)
 
 
+class CheckPackageInput(Model):
+    package: URI
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+class ActivationIssue(Model):
+    code: str
+    interaction: str | None
+    actions: list[URI]
+
+
+class CheckPackageOutput(Model):
+    ready: bool
+    required_interactions: list[str]
+    issues: list[ActivationIssue]
+
+
 class CallInput(Model):
     arguments: dict[str, Any]
     expected_revision: int = Field(ge=1)
@@ -122,8 +139,8 @@ class ConfigureOutput(ResourceOutput):
 
 INPUTS = {"read": Empty, "cancel": Empty, "list-resources": ListInput,
           "publish-mcue-type": McueDefinition, "update-attributes": UpdateAttributesInput,
-          "register-resource": RegisterInput, "run-package": RunInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
-OUTPUTS = {"configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
+          "register-resource": RegisterInput, "run-package": RunInput, "check-package": CheckPackageInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
+OUTPUTS = {"check-package": CheckPackageOutput, "configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
            "update-attributes": AttributesOutput}
 OBJECT = {"type": "object"}
 RUN_RESULT = {"type": "object", "properties": {"run": {"type": "string"}},
@@ -314,7 +331,8 @@ class GripService:
                     "term_support": caps.get("term_support", []),
                     "executor_descriptors": caps.get("executor_descriptors", []),
                     "runtime_plugin_descriptors": caps.get("runtime_plugin_descriptors", []),
-                }, [builtin["run-package"], builtin["activate-package"]], slave)
+                    "service_interactions": self.repo.service_routes.node_metadata(slave),
+                }, [builtin["run-package"], builtin["check-package"], builtin["activate-package"]], slave)
 
         states = []
         if resources or any(source(t) for t in ("capability/package", "capability/activation", "grip/action", "grip/schema")):
@@ -368,7 +386,7 @@ class GripService:
                 metadata = {"package": package_uri, "host": n.name("slaves", activation.target_slave),
                             "name": package.package_id + ":" + activation.instance_name,
                             "description": f"Activated {package.package_id} {package.package_version} on {activation.target_slave}.",
-                            "instance_name": activation.instance_name, "state": activation.activation_state,
+                            "instance_name": activation.instance_name, **self.repo.service_routes.status(package, activation),
                             "desired_state": activation.desired_state, "revision": activation.activation_revision,
                             "applied_revision": activation.applied_revision,
                             "target": bound_target,
@@ -558,6 +576,17 @@ class GripService:
             export = self._export(package, payload.action)
             return await self._submit(target=request.target, slave=entry.value, package=package,
                                       export=export, arguments=payload.arguments, key=payload.idempotency_key)
+        if request.action == n.action("check-package"):
+            payload = CheckPackageInput.model_validate(data)
+            package = await self._package(payload.package)
+            await self.repo.refresh_slaves(self.settings.workspace_id)
+            issues = self.repo.service_routes.issues(package, entry.value, payload.instance_name)
+            if not self.repo._slave_is_active(entry.value):
+                issues.append({"code": "slave_unavailable", "interaction": None, "actions": []})
+            elif not self.repo._slave_supports_package(entry.value, package):
+                issues.append({"code": "package_runtime_unsupported", "interaction": None, "actions": []})
+            return {"ready": not issues,
+                    "required_interactions": sorted({interaction(e) for e in package.action_exports}), "issues": issues}
         if request.action == n.action("activate-package"):
             payload = ActivateInput.model_validate(data)
             package = await self._package(payload.package)
@@ -579,7 +608,7 @@ class GripService:
                                  dependencies=payload.dependencies if "dependencies" in payload.model_fields_set else None)
             activations = await self.repo.list_package_activations(package)
             activation = next(a for a in activations if a.target_slave == entry.value and a.instance_name == payload.instance_name)
-            return {"resource": self.activation_uri(package, activation), "state": activation.activation_state,
+            return {"resource": self.activation_uri(package, activation), "state": self.repo.service_routes.status(package, activation)["state"],
                     "revision": activation.activation_revision}
         package, activation = entry.value
         if request.action == n.action("configure"):
@@ -595,7 +624,7 @@ class GripService:
             current = next(a for a in await self.repo.list_package_activations(package)
                 if a.target_slave == activation.target_slave and a.instance_name == activation.instance_name)
             return {"resource": request.target, "desired_revision": current.activation_revision,
-                    "applied_revision": current.applied_revision, "state": current.activation_state}
+                    "applied_revision": current.applied_revision, "state": self.repo.service_routes.status(package, current)["state"]}
         if request.action not in {n.action("stop"), n.action("auth-start")}:
             export = self._export(package, request.action)
             if interaction(export) != "task":
@@ -637,6 +666,8 @@ class GripService:
                                   export=export, arguments=data["arguments"], key=data["idempotency_key"], activation=activation)
 
     async def _activate(self, package, slave, state, key, instance, target, config, *, credential_profile=None, expected_revision=None, dependencies=None, configure=False):
+        if state == "running":
+            self.repo.service_routes.require(package, slave, instance)
         if dependencies is not None:
             await self.app.state.service_access.validate_dependencies(dependencies)
         reports = await execute_activation_targets(
@@ -703,8 +734,8 @@ class GripService:
             code = "invalid_input" if request_id else "invalid_message"
         except (KeyError, FileNotFoundError):
             code = "not_found"
-        except DomainError:
-            code = "invalid_input"
+        except DomainError as exc:
+            code = "unsupported_binding" if exc.envelope.code == "activation_preflight_failed" else "invalid_input"
         except Exception:
             # Never include credentials, runtime details or exception payloads.
             log.error("GRIP action failed (request_id=%s)", request_id)

@@ -5,7 +5,7 @@ Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `o
 | 对象 | 作为资源的含义 |
 |---|---|
 | 能力包 | 不可变的程序与契约，可以作为 action 的输入传递 |
-| Slave | 承载执行的资源，提供 run-package 和 activate-package |
+| Slave | 承载执行的资源，提供 run-package、check-package 和 activate-package |
 | 激活实例 | 一个包在某 Slave 上运行的命名实例，提供业务动作、stop，必要时提供 auth-start |
 | VM 等登记资源 | 提供 update-attributes，并通过显式绑定的激活实例提供业务动作 |
 | Run | 一次异步执行的任务资源，提供 read 和 cancel |

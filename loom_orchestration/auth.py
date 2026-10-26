@@ -20,6 +20,7 @@ from .client import LoomClient
 CALLBACK = "http://localhost:3000/login-callback"
 METHODS = {"redirect", "browser-cookie", "device-code", "credential-profile"}
 ERRORS = {"authentication_expired", "authentication_failed", "activation_changed",
+          "activation_binding_unavailable",
           "login_window_closed", "login_method_unsupported", "browser_dependency_missing",
           "observer_bridge_failed", "browser_login_location_invalid", "login_cancelled", "operator_credentials_required"}
 
@@ -79,6 +80,8 @@ class Login:
         if metadata["revision"] != revision or metadata["desired_state"] != "running":
             raise RuntimeError("activation_changed")
         authentication = metadata.get("authentication", {})
+        if metadata.get("service_access", {}).get("issues"):
+            raise RuntimeError("activation_binding_unavailable")
         if authentication.get("status") == "auth_failed" or metadata["state"] in {"failed", "lost", "stopped"}:
             raise RuntimeError("authentication_failed")
         return metadata["state"] == "ready" and authentication.get("status") == "authenticated", authentication
@@ -287,7 +290,7 @@ article{border-bottom:1px solid #ddd;padding:20px 0}p{overflow-wrap:anywhere}but
 <h1>Loom 资源登录</h1><p>选择实例，在弹出的窗口完成登录。入口过期或登录失败后，可以直接重新认证。</p>
 <main id="logins"></main><script>
 const phases={idle:'待开始',starting:'正在发起登录',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
-const errors={authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
+const errors={activation_binding_unavailable:'节点服务入口未就绪，请联系节点管理员',authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
 async function refresh(){try{const values=await(await fetch('/status',{cache:'no-store'})).json();
 const root=document.getElementById('logins');root.replaceChildren();for(const x of values){
 const row=document.createElement('article'),name=document.createElement('p'),state=document.createElement('p'),button=document.createElement('button');
