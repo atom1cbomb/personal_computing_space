@@ -158,7 +158,7 @@ SDK 0.8、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部�
                               认证转发不经过 Driver
 ```
 
-首次登录和凭据失效后的重新认证都从同一客户端发起，重新认证无需创建新激活。浏览器登录需安装 SDK 的 `auth` 可选依赖及 Chromium，详见 [统一认证说明](docs/authentication.md)。助手只转发固定认证消息，短期桥接 token 不进入 Run 或 ContentStore；公网部署应使用 HTTPS 保护这条链路。
+首次登录和凭据失效后的重新认证都从同一客户端发起，重新认证无需创建新激活。助手运行在有浏览器的本机即可；认证绑定远端资源实例，其他机器上的 agent 通过公开接口调用同一已认证实例，无需复制 Cookie 或在测试机重新登录。以实例 DESCRIBE 的当前状态判断是否就绪，助手旧会话过期不等于资源认证失效。浏览器登录需安装 SDK 的 `auth` 可选依赖及 Chromium，详见 [统一认证说明](docs/authentication.md)。助手只转发固定认证消息，短期桥接 token 不进入 Run 或 ContentStore；公网部署应使用 HTTPS 保护这条链路。
 
 ## 示例：创建一台 VM 并使用它计算
 
@@ -207,7 +207,7 @@ export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 
 ### 外部 agent 的 SDK 与 skill 分发
 
-`loom-orchestration` 当前版本为 **0.8.0**，是独立 Python 包，源码保留在 `loom_orchestration/`，
+`loom-orchestration` 当前版本为 **0.8.1**，是独立 Python 包，源码保留在 `loom_orchestration/`，
 不复制到 skill。发布时可将同版本 SDK wheel 附在 skill 中：
 
 ```bash
@@ -217,6 +217,8 @@ python scripts/build_agent_skill.py --output dist
 
 将生成的 `dist/personal-computing-space.zip` 交给外部 agent，解压后 skill 的
 `assets/wheels/` 包含可安装的 SDK；安装方式见其 `references/sdk.md`。
+
+普通 Python 计算的完整发布契约见 [函数包指南](skills/personal-computing-space/references/function-packages.md)。GRIP `mode=request-reply` 表示协议交互方式，业务是否创建 Run 应结合 `interaction` 与输出 Schema 判断。使用已有命名实例时，直接调用该实例，或通过 SDK 0.8.1 的只读 `activation_ref()` 构造编排引用；不要把 Slave 的默认实例调用当作已认证命名实例，详见 [已有实例编排](skills/personal-computing-space/references/existing-activations.md)。
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
 
@@ -276,7 +278,7 @@ python -m venv .venv
 
 部分集成和 E2E 测试需要运行中的数据库或 Compose 栈。`./scripts/test-e2e.sh` 仅检查已启动栈的基础健康和节点发现，不代表完整任务验收。HTTP 能力包和多节点执行可分别参考 `scripts/accept-container-http.py`、`tests/e2e/`。
 
-外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与源码上下文，按资源发现、远端计算、服务调用及生命周期分别核验。[2026-10-27 实测报告](docs/validation/2026-10-27-skill-only-live.md) 记录了实际通过项、失败项及独立复核证据。
+外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与源码上下文，按资源发现、远端计算、服务调用及生命周期分别核验。[初轮报告](docs/validation/2026-10-27-skill-only-live.md) 保留原始失败，[修复后完整用例复测](docs/validation/2026-10-27-skill-only-rerun.md) 记录各轮独立结果、认证状态及当前部署限制。
 
 不依赖真实模型服务的测试栈使用 Fake coding agent：
 

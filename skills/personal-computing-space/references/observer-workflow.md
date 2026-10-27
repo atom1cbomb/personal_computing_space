@@ -16,14 +16,20 @@ request and never receives prompts, messages, or source uploads.
    resource, DESCRIBE lists explicitly bound ready activations. Select the exact
    returned activation URI; do not infer bindings from package availability.
 
-For a single action, invoke the Slave's `run-package` action with the package
-URI, exported action URI, arguments and stable idempotency key. Long-lived services
-use `activate-package` and then invoke the ready activation with its revision.
+For a single task, invoke the Slave's `run-package` action with the package
+URI, exported action URI, arguments and stable idempotency key. Its returned
+`run` URI identifies a Run resource with `read` and `cancel` actions. If you need
+to publish a new Python computation first, use [function-packages.md](function-packages.md).
+
+Long-lived services use `activate-package`; invoke their ready activation with
+the selected export's declared interaction and offered schemas. Task exports use
+`{arguments, expected_revision, idempotency_key}` and return a Run; direct exports
+take business input and return business output. GRIP `mode=request-reply` applies
+to both and does not distinguish them. Stream exports use `open_stream`.
 Select its credentials with top-level `credential_profile`, alongside
 `instance_config`, using a name supplied by the Slave operator. Different named
 instances can use different profiles. The selection is not in the package or
 DESCRIBE; confirm the deployed input schema supports it (see [sdk.md](sdk.md)).
-The returned `run` URI identifies a Run resource with `read` and `cancel` actions.
 
 ## Build and Submit
 
@@ -89,6 +95,15 @@ Repair uses one complete replacement `ClosureContract` with
 explicit user request with `POST /api/v1/runs/{run_id}/cancel`.
 Use `await client.cancel(run_id)`; if including `request_id`, it must be the
 original submission's id, not a new cancellation id.
+
+A GRIP `run-package`/task action's `idempotency_key` is **not** the
+`request_id` of `client.submit`. For a Run returned by GRIP, omit `request_id`
+when cancelling, or invoke the Run's discovered GRIP `cancel` offer with its
+declared input. Passing a GRIP idempotency key as `request_id` can return
+`run_not_found` even though the Run exists; do not diagnose that as a race.
+`client.run(run_id)` and `client.cancel(run_id)` take the opaque Run ID
+(the final path component of the returned Run URI); GRIP `describe`/`invoke`
+take the full URI. Preserve both forms in reports, without inventing IDs.
 
 Use only the documented public Observer data-plane and submission paths; do
 not call internal control-plane or worker endpoints.

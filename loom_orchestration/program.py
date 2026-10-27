@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
-from .contracts import ResourceRef
+# Runtime programs exchange JSON mappings. The client-side Pydantic model is
+# only for publication/submission code outside the orchestration sandbox.
+ResourceRef: TypeAlias = Mapping[str, object]
 
 
 class OrchestrationContext(Protocol):

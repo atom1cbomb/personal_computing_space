@@ -181,6 +181,10 @@ python run_skill_validation.py \
 
 浏览器认证必须由人通过统一认证入口完成；标准无交互容器不会自动完成扫码。需要有人在场的用例应单独安排会话并记录 intervention，不能因任务退出而声称恢复已通过。不得向被测 Codex补入业务实现或修复方案；如确需提示，应将该轮标记为 assisted，另开干净会话复测。
 
+统一登录助手可以运行在操作员有浏览器的本机，不必从测试机下载文件或在测试容器中运行。认证绑定资源实例，隔离 agent 只需自己的 Observer 访问凭据即可调用已认证实例；不复制服务 Cookie。T6 必须在真实 `awaiting_auth` 出现后再登录，保留等待和恢复事件。若提交时实例已经 ready，可以验证已认证调用，但不能据此认定等待恢复通过，也不能撤销已有生产登录来补造前提。旧登录助手会话的过期状态与实例当前认证状态应分别核对。
+
+每轮修复都重新构建 ZIP 并记录摘要；只复跑受修改影响的用例时，应报告这是跨轮次覆盖，不能声称最终 ZIP 在全部用例中完成了一次统一运行。容器准备失败与 agent 业务失败分别记录，网络创建超时等隔离预检失败不能计作业务用例已执行。
+
 ## 结果判定与报告模板
 
 | 状态 | 判定 |
@@ -212,5 +216,6 @@ Observer 公开入口 / authority / workspace / 已知服务版本：
 出现阻塞时，保留真实失败阶段，先完成不依赖该条件的准备与文档。连测试机 SSH 握手都未完成时，结论只能是环境阻塞，不能记录“外部 Codex 已测试”。
 
 实测示例见 [2026-10-27 验证报告](2026-10-27-skill-only-live.md)：包含 agent 自报通过但独立复核失败、公开契约阻塞、真实服务调用通过三种结果。
+后续 [修复与完整用例复测](2026-10-27-skill-only-rerun.md) 保留各次失败及新轮次证据，并单独判定已认证调用、等待登录后恢复和包部署。
 
 实现依据：[项目 skill](../../skills/personal-computing-space/SKILL.md)、[SDK 分发与用法](../../skills/personal-computing-space/references/sdk.md)、[服务 binding](../grip-service-bindings.md)、[能力包预检验证](../superpowers/reports/2026-10-26-package-deployment-preflight-validation.md)。Codex 的 skill 搜索位置与配置参考 [官方 skill 文档](https://learn.chatgpt.com/docs/build-skills) 和 [配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)；运行时以锁定版本的实际目录检查为准。

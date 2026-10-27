@@ -49,7 +49,12 @@ methods have been removed. Use resource descriptions and actions instead.
 Select exact returned URIs; do not infer an action from its suffix. Slave
 `run-package` input is `{package, action, arguments, idempotency_key}`. It
 returns `{run: <Run URI>}`. Query Run with the built-in `read` action.
-An activated instance uses that wrapper only for `interaction=task` exports.
+For REST helpers, `client.run`/`client.cancel` take the opaque final Run ID,
+not the full GRIP URI. A GRIP `idempotency_key` is not a submit `request_id`;
+omit `request_id` when cancelling a GRIP-created Run. See
+[observer-workflow.md](observer-workflow.md) for polling and cancellation.
+An activated instance's `interaction=task` export instead uses
+`{arguments, expected_revision, idempotency_key}` and returns a Run.
 `request-reply` exports take business input and return business output directly;
 `byte-stream` exports use `open_stream`. Read [service-bindings.md](service-bindings.md)
 for trusted routes, scoped credentials, `configure`, and dependency contexts.
@@ -95,6 +100,9 @@ readiness or permission by itself.
 
 ## Mapping and Program Rules
 
+For ordinary Python computation, [function-packages.md](function-packages.md)
+contains the complete public authoring contract and a generic publication example.
+
 `function + process:json_stdio/1` packages have exactly one export. For a
 synthetic lifecycle test, publish separate single-export packages (create,
 status, use, cleanup), or use one action with an explicit action input.
@@ -124,8 +132,27 @@ rejected on schema upload. MCUE attribute schemas have their own contract.
 - Wait between polls with `await ctx.sleep(seconds)` (0–3600 seconds, bounded
   by the Run deadline). The sandbox does not permit `asyncio`/`time` imports.
 - Use existing context primitives in an externally authored
-  `async orchestrate(ctx, input_ref)` program. No Observer renderer, plan DSL,
+  `async orchestrate(ctx: "OrchestrationContext", input_ref: "ResourceRef") -> "ResourceRef"`
+  program. The quoted annotations are required by the published typecheck contract.
+  No Observer renderer, plan DSL,
   internal API or Python server-module imports are needed.
+- Inside the orchestrator, refs are JSON mappings supplied by `ctx` or read from
+  input. Do not import the external SDK's Pydantic `ResourceRef` or call
+  `model_validate`/`model_dump` there: that class is different from the sandbox's
+  `ResourceRef` mapping type. Convert SDK models to JSON only in the external
+  authoring client before uploading inputs.
+- `emit_node.target_resource_ref` identifies a registered domain resource, not a
+  Slave placement address. For ordinary functions omit it and let runtime select
+  eligible Slaves; verify actual attempt targets for multi-node requirements.
+  To use a particular existing instance, pass its resolved `activation_ref`, which
+  carries the server-observed Slave and instance binding.
+- `emit_node(..., input_refs=[ref])` passes that content's JSON value unchanged.
+  Zero or multiple refs produce `{"inputs": [value_for_each_ref]}` in the same
+  order. The node's input schema and source must accept that exact shape;
+  passing several result refs does not automatically merge their fields or
+  select a different action. Use a separately authored merge function and its
+  descriptor, or a single function whose declared contract supports both forms.
+  Validate representative node inputs locally before spending a Run budget.
 - Return a completed node's `ctx.result(handle)` ref. `materialize_json`
   creates inputs; returning an unrelated materialized ref fails lineage validation.
   Raise `OrchestrationFailure({"code": "..."})` for an explicit program failure;
@@ -171,6 +198,11 @@ These guarantees require the matching server release, not just an updated wheel.
 Configuration and public attributes are separate: the MCUE schema determines
 which descriptive fields may be published, and a description update does not
 change the activation's actual connection settings.
+
+For an existing named instance, SDK 0.8.1 provides the read-only
+`await client.activation_ref(activation_uri)`. It preserves discovered package,
+host, name and revision for `wait_activation` and `emit_node`; it does not start,
+replace or authenticate the instance. See [existing-activations.md](existing-activations.md).
 
 ## Publish a service artifact directory
 

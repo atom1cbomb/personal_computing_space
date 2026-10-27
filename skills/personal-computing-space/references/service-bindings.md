@@ -24,8 +24,10 @@ degraded; inspect `service_access.issues` and each action's availability. Existi
 usable actions remain offered. Restoring routes restores availability without
 recreating the instance. Stop remains available during a binding outage.
 
-Read the offer's mode and schemas. Package `runtime_binding.interaction` controls
-its exported interface:
+Read the offer's mode and schemas together with the selected declaration's
+`resource.metadata.actions[].interaction`. GRIP `mode=request-reply` alone does
+not mean direct business execution or no Run: task admission uses the same wire
+mode. Package `runtime_binding.interaction` controls its exported interface:
 
 - `task` (default): request-reply with `{arguments, expected_revision,
   idempotency_key}` and `{run: URI}`. Poll that Run.
@@ -34,6 +36,13 @@ its exported interface:
   ordered bytes. Use `await client.open_stream(target, action, input)` as an
   async context manager with `read`, `write`, `aclose`. No half-close, stream ID,
   transparent reconnection, or replay. A new channel is a new invocation.
+
+For example, a Volcano task offer can have `mode=request-reply` and an output
+schema `schemas/run-output/v1`; it returns a Run, requires Driver execution, and
+is not complete until that Run succeeds. A direct embedding export with
+`interaction=request-reply` returns its business output without an implicit Run.
+If declarations and schemas disagree, report the conflicting evidence rather
+than choosing an interpretation from the mode alone.
 
 A business request can still be explicitly submitted with `run-package` for
 persistent task execution. A stream export cannot become a persistent task node.

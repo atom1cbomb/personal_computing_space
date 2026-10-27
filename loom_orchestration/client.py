@@ -173,6 +173,30 @@ class LoomClient:
             self._descriptions[target] = deepcopy(body)
         return body
 
+    async def activation_ref(self, target: str) -> ResourceRef:
+        """Resolve an existing instance for orchestration without activating it.
+
+        Preserve the Observer's package digest, host, instance and revision.
+        This reference does not imply readiness; use ctx.wait_activation before
+        emitting a node, and resolve again if the instance revision changes.
+        """
+        resource = (await self.describe(target, refresh=True))["resource"]
+        if resource["mcue"] != "capability/activation":
+            raise ValueError("activation_resource_required")
+        metadata = resource["metadata"]
+        package = (await self.describe(metadata["package"]))["resource"]
+        host = (await self.describe(metadata["host"], refresh=True))["resource"]
+        binding = {
+            "package_version_ref": package["uri"],
+            "target_slave": host["metadata"]["slave_id"],
+            "instance_name": metadata["instance_name"],
+            "activation_revision": metadata["revision"],
+        }
+        if metadata.get("target"):
+            binding["target_resource_ref"] = ResourceRef(resource_id=metadata["target"]).model_dump(mode="json")
+        return ResourceRef(resource_id=resource["uri"],
+                           version_or_digest=package["metadata"]["digest"], access_binding=binding)
+
     def _select_binding(self, offer, requested=None) -> Binding:
         protocols = {STREAM_PROTOCOL} if offer.action.mode == "byte-stream" else {"https-json.v1", "loom-http-json.v1"}
         candidates = list(offer.bindings)

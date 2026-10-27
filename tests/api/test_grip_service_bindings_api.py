@@ -62,6 +62,11 @@ async def service_setup(tmp_path):
 async def test_service_returns_business_result_without_run_and_scopes_token(service_setup):
     app,repo,slave,package,target,actions,calls = service_setup
     async with LoomClient('http://observer',token='owner',transport=httpx.ASGITransport(app=app),allow_insecure_grip=True) as c:
+        description = await c.describe(target)
+        action = next(a for a in description['resource']['metadata']['actions'] if a['uri'] == actions[0])
+        assert action['mode'] == 'request-reply'
+        assert action['interaction'] == 'request-reply'
+        assert action['output_schema'] != c.names.schema('run-output')
         assert await c.invoke(target,actions[0],{'value':7}) == {'value':7}
         assert calls == [{'value':7}] and not repo.runs
         with pytest.raises(GripError,match='invalid_input'):

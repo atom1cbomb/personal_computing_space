@@ -11,6 +11,30 @@ or Observer relay may implement a binding. The external agent owns orchestration
 Driver executes frozen task submissions. For service calls, streams, activation
 configuration and dependency grants, read [references/service-bindings.md](references/service-bindings.md).
 
+## Decide how an action executes
+
+GRIP `offer.action.mode` describes the wire exchange, not whether the business
+action creates a Run. Both a durable task and a direct business call can have
+`mode=request-reply`. Read `resource.metadata.actions[].interaction` for the
+selected action and its offered input/output schemas before calling or reporting:
+
+- `task`: submit the declared wrapper and follow the returned `run` URI to its
+  terminal state and result. This includes task exports of service packages.
+- `request-reply`: pass business input and verify the direct business result.
+- `byte-stream`: use the offered stream contract and `open_stream`.
+
+The package's `runtime_binding.interaction` defaults to `task` when omitted.
+Do not infer interaction from a package name, an HTTP endpoint, or wire mode.
+If metadata is incomplete, read the output schema and retain uncertainty instead
+of declaring that no Run or Driver is involved. Driver availability is required
+for task execution, including service exports that return a Run.
+
+For an existing named service, target that activation's URI. Slave `run-package`
+does not select a named instance and falls back to `default`; it must not be used
+as a substitute when that instance's action is unavailable. For a persistent Run
+that waits for authentication on an existing instance, read
+[references/existing-activations.md](references/existing-activations.md).
+
 ## Public SDK
 
 Use Python 3.12+ and the independent `loom-orchestration` package. A release
@@ -18,6 +42,10 @@ skill archive includes its wheel under `assets/wheels/`; install that wheel
 in the external agent's environment, not in the orchestration sandbox.
 See [references/sdk.md](references/sdk.md) for installation, discovery, and
 source-checkout fallback. Do not assume the package is published on PyPI.
+For a new Python computation on a Slave, read
+[references/function-packages.md](references/function-packages.md): publish a
+single-export `process:json_stdio/1` function through public content/package APIs,
+then use its discovered action. A pre-existing application package is not required.
 
 ## Resource types and public attributes
 
@@ -112,8 +140,9 @@ authentication → `exec`; retain the InstanceId for
 ## Workflow
 
 1. For task submission, check `GET /healthz` and `GET /api/v1/runtime`; report
-   `driver_unavailable` if task execution is unavailable. Service bindings do not
-   depend on Driver readiness. Discover their own availability and contracts.
+   `driver_unavailable` if task execution is unavailable. Direct request-reply and
+   byte-stream business interactions use their own availability and contracts;
+   task exports of service packages still require Driver execution.
 2. Discover compute with `await client.resources(mcue="computing/slave")` and inspect descriptions
    for Slave `run-package` / `check-package` / `activate-package` offers. Select available leases
    using `metadata.available` and inspect executor/runtime descriptors.

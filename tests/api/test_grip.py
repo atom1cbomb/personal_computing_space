@@ -63,6 +63,29 @@ async def test_describe_run_package_and_read_real_result(setup):
     assert "instance_config" not in json.dumps(activations)
 
 
+async def test_resolve_existing_activation_preserves_named_binding_without_mutation(setup):
+    app, repo, client, _ = setup
+    slave, package, _ = await identities(client)
+    activated = await client.invoke(slave, client.names.action("activate-package"), {
+        "package": package, "instance_name": "existing-instance", "idempotency_key": "start-existing",
+    })
+    before = await client.resources(mcue="capability/activation")
+    ref = await client.activation_ref(activated["resource"])
+    assert ref.resource_id == activated["resource"]
+    assert ref.access_binding["instance_name"] == "existing-instance"
+    assert ref.access_binding["target_slave"] == "slave-a"
+    assert ref.access_binding["activation_revision"] == activated["revision"]
+    assert ref.digest == (await client.describe(package))["resource"]["metadata"]["digest"]
+    assert await client.resources(mcue="capability/activation") == before
+    await client.invoke(activated["resource"], client.names.action("stop"), {
+        "expected_revision": activated["revision"], "idempotency_key": "stop-existing",
+    })
+    refreshed = await client.activation_ref(activated["resource"])
+    assert refreshed.access_binding["activation_revision"] == activated["revision"] + 1
+    with pytest.raises(ValueError, match="activation_resource_required"):
+        await client.activation_ref(slave)
+
+
 async def test_named_activation_invocation_keeps_instance_and_revision(setup, monkeypatch):
     app, repo, client, _ = setup
     slave, package, action = await identities(client)
