@@ -305,7 +305,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
             async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
                 dependencies = {}
                 if directory == "suanlicloud_http":
-                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
+                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v5"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
                 package = await bundle.publish(client, image_ref=IMAGE, dependencies=dependencies)
                 raw = await client.invoke(package, client.names.action("read"), {})
                 assert raw["publication_state"] == "published"
@@ -358,6 +358,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     # Simulate the external browser client finishing and installing
                     # its key; the real runtime probes SSH and emits health reports.
                     gateway.close()
+                    gateway.private_key.write_text("fixture-key-after-login")
                     worker = app.state.slaves["slave-a"]
                     for _ in range(2):
                         for report in await worker.inspect_activation_health():
@@ -521,7 +522,7 @@ async def test_service_publisher_rejects_mutable_image_and_unresolved_access_pac
     async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
         with pytest.raises(ValueError, match="immutable_image_ref_required"):
             await bundle.publish(client, image_ref="registry.example/cloud:latest")
-        with pytest.raises(ValueError, match="service_artifact_dependency_missing:grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4"):
+        with pytest.raises(ValueError, match="service_artifact_dependency_missing:grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v5"):
             await bundle.publish(client, image_ref=IMAGE)
         assert await client.resources(mcue="capability/package") == []
 

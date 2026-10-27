@@ -21,7 +21,8 @@ OpenSSH uses `StrictHostKeyChecking=accept-new`, a per-instance
 `known_hosts`, and a stable resource-derived `HostKeyAlias` (TOFU on first
 connection, strict thereafter). A changed key fails the command.
 
-The container starts the official `opkssh login` client with the configured
+The container starts `loom-opkssh`, a small renewal worker using pinned official
+OpenPubkey 0.23.0 and opkssh 0.14.0 libraries, with the configured
 Suanli provider. The runtime supplies the one fixed Observer callback URI for
 the short-lived browser session; callers cannot override it with environment
 variables or request fields. The exact localhost callback is already
@@ -29,11 +30,36 @@ registered with the OIDC client. The package does not invent a device-code
 protocol.
 
 Use the [unified SDK login portal](../../docs/authentication.md) with
-`suanli-vm-ssh-http/v4`. The package declares `interaction.mode=redirect`.
+`suanli-vm-ssh-http/v5`. The package declares `interaction.mode=redirect`.
 The client opens an isolated browser, captures the registered localhost callback,
-and forwards it to the Observer's one-time bridge. Login expiry and SSH
-Permission denied require authentication again; connection and host-key errors
-remain failures. Reuse the same activation and portal to retry.
+and forwards it to the Observer's one-time bridge. The worker stays alive after
+login and refreshes one minute before ID-token expiry. It verifies the renewed
+identity and rebuilds the SSH certificate using the official opkssh code.
+Private state, including rotating refresh tokens, is atomically saved with 0600
+permissions in the activation volume before publishing the new certificate.
+Restart resumes this state without a browser. A provider-config change cannot
+reuse an unrelated checkpoint.
+
+Transient renewal failures retain credentials and retry with 2–60 second
+backoff. Explicit OAuth `invalid_grant` requires login; network and host-key
+errors remain `auth_failed`. Readiness always includes a real SSH access check.
+An explicit new login stops the old worker and removes its credentials and
+challenge before starting another attempt. Reuse the same activation to retry.
+
+The SSH server must permit refreshed ID tokens (`oidc_refreshed` in its opkssh
+provider policy). A fixed `24h`/`oidc` policy still enforces its original login
+deadline; client refresh cannot change that policy. This package does not modify
+the VM's SSH authorization policy. The IdP must issue a usable refresh token.
+Plain SSH-key capability `vm-ssh-http` is unrelated and remains unchanged.
+
+The package is now v5. Its new digest has a separate credential volume, so the
+first activation needs its own login; subsequent same-version restarts resume
+automatically. The `suanlicloud-http/v6` creation descriptor selects this version.
+
+Run the worker tests with `cd capability_services/suanli_vm_ssh_http/renewal &&
+go test -race ./...`; Python gateway lifecycle tests are in
+`tests/capability_services/test_suanli_vm_ssh_gateway.py`. The Dockerfile builds
+the worker in a separate Go stage and includes only the binary in the runtime.
 
 Build and publish an immutable digest image, then replace the placeholder in
 `package.example.json`.

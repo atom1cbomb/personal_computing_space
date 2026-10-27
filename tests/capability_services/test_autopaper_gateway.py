@@ -262,6 +262,85 @@ def test_implicit_cookie_jar_cannot_override_verified_session(gateway):
     assert gateway.auth_status() == {"status": "authenticated"}
 
 
+@pytest.mark.parametrize("action", ["health", "business", "callback"])
+def test_rotated_cookie_is_persisted_and_used_after_restart(tmp_path, action):
+    calls = []
+    def upstream(request):
+        calls.append(request.headers.get("Cookie"))
+        if request.headers.get("Cookie") == "ap_sid=rotated-session":
+            request.headers["Cookie"] = "ap_sid=private-session"
+        response = provider(request)
+        if action == "callback" or len(calls) > 1:
+            response.headers["Set-Cookie"] = "ap_sid=rotated-session; Path=/; HttpOnly; Secure"
+        return response
+    service = make_gateway(tmp_path, upstream)
+    try:
+        login(service)
+        if action == "health":
+            assert service.auth_status()["status"] == "authenticated"
+        elif action == "business":
+            service.handle("/v1/papers/get", {"paper_id": "paper-1"})
+        assert json.loads(service.state_path.read_text())["cookie"] == "rotated-session"
+    finally:
+        service.close()
+    restarted = make_gateway(tmp_path, upstream)
+    try:
+        assert restarted.auth_status()["status"] == "authenticated"
+        assert calls[-1] == "ap_sid=rotated-session"
+    finally:
+        restarted.close()
+
+
+def test_refresh_outage_keeps_session_and_recovers_automatically(gateway):
+    stored = gateway.state_path.read_bytes()
+    gateway.client.close()
+    gateway.client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
+    assert gateway.auth_status() == {"status": "auth_failed"}
+    assert gateway.state_path.read_bytes() == stored
+    gateway.client.close()
+    gateway.client = httpx.Client(transport=httpx.MockTransport(provider))
+    assert gateway.auth_status() == {"status": "authenticated"}
+
+
+def test_old_request_cannot_restore_cookie_after_reauthentication(gateway):
+    def delayed(request):
+        response = provider(request)
+        response.headers["Set-Cookie"] = "ap_sid=stale-rotation; Path=/; Secure"
+        begin(gateway, "b" * 43)
+        return response
+    gateway.client.close()
+    gateway.client = httpx.Client(transport=httpx.MockTransport(delayed))
+    gateway.handle("/v1/papers/get", {"paper_id": "paper-1"})
+    assert gateway._cookie is None and not gateway.state_path.exists()
+
+
+def test_cookie_rotation_survives_temporary_persistence_failure(gateway, monkeypatch):
+    persist = gateway._persist_session
+    def unavailable(_):
+        raise GatewayError("credential_state_unavailable", 503)
+    monkeypatch.setattr(gateway, "_persist_session", unavailable)
+    with pytest.raises(GatewayError, match="credential_state_unavailable"):
+        gateway._update_cookie("private-session", "rotated-session")
+    assert gateway._cookie == "rotated-session" and gateway._cookie_dirty
+    monkeypatch.setattr(gateway, "_persist_session", persist)
+    gateway._update_cookie("rotated-session", "rotated-session")
+    assert json.loads(gateway.state_path.read_text())["cookie"] == "rotated-session"
+    assert not gateway._cookie_dirty
+
+
+@pytest.mark.parametrize("domain,expected", [("", "rotated"), ("; Domain=unrelated.example", "private-session")])
+def test_host_only_cookie_rotation_supports_private_origins(tmp_path, domain, expected):
+    def upstream(_):
+        return httpx.Response(200, json=[{"venue": "ACL", "count": 1}],
+                              headers={"Set-Cookie": "ap_sid=rotated; Path=/" + domain})
+    service = make_gateway(tmp_path, upstream, {"api_origin": "https://paper:8443"})
+    try:
+        login(service)
+        assert service._cookie == expected
+    finally:
+        service.close()
+
+
 async def test_http_health_and_input_errors(tmp_path):
     from tests.capability_services.test_grip_services import serve
     service = make_gateway(tmp_path)

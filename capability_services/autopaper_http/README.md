@@ -1,6 +1,6 @@
 # AutoPaper 论文查询能力包
 
-`autopaper-http/v1` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
+`autopaper-http/v2` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
 会议/年份浏览和会议目录。接口按 2026-10-26 读取的
 [Auto-Papers API 0.2.0 OpenAPI](https://paper.cs.ac.cn/openapi.json) 实现。
 发布与激活遵循[通用服务包流程](../README.md)。
@@ -58,6 +58,31 @@ SDK 从它自己的隔离浏览器上下文读取 `ap_sid`，经认证桥交给�
 同时绑定 API origin。同版本重启后重新验证会话，修改 origin 后需要重新登录。
 凭据失效或登录跳转返回 `auth_required`；网络、权限、限流和异常响应返回 `auth_failed`。
 实际会话失效时在统一登录页重新认证同一实例即可。
+
+### 自动续期（v2）
+
+继续使用原有六个 REST API 动作和 `browser-cookie` 登录，不迁移 MCP。
+`ap_sid` 指向 AutoPaper 后端会话；后端保存 OAuth refresh token，并在访问令牌
+到期前五分钟自动刷新。网关健康检查会触发这条访问路径。v2 另外会保存成功响应中
+同源、有效的 `Set-Cookie: ap_sid=...`，用于后续调用和容器重启；新登录开始后，
+旧请求的结果不能覆盖新会话。网络错误、503 和权限错误保留本地会话，业务搜索不重放。
+
+AutoPaper 当前生产源码存在两个后端问题：刷新异常一律删除会话，并发请求可重复使用
+同一个轮换中的 refresh token。因此仅升级网关不能修复提前掉线。配套补丁
+[`upstream/auth-refresh.patch`](upstream/auth-refresh.patch) 基于提交见同目录
+[`BASE_COMMIT`](upstream/BASE_COMMIT)，包含后端实现、依赖及回归测试：
+
+- 网络/上游服务/配置故障返回 503，保留会话；后续调用自动重试。
+- 只有明确 `invalid_grant` 或实际过期且不可刷新的凭据进入 401。
+- 同一主机的后端进程使用按会话分组的文件锁，取得锁后重新读取数据库，避免并发
+  消耗同一枚 refresh token；部署在多台主机时需要共享锁存储或数据库锁。
+- 刷新结果连同轮换后的 refresh token 写回数据库；上游省略 refresh token 时保留旧值。
+
+在 AutoPaper 源码检出中先运行 `git apply --check /path/to/auth-refresh.patch`，再应用，
+安装新增的 `filelock` 依赖，并运行
+`python -m pytest tests/test_auth_refresh.py tests/test_api/test_auth.py -q`。
+本补丁不修改正在运行的 AutoPaper 服务；后端发布和网关 v2 发布需要分别完成。
+既有已删除的上游会话不能凭空恢复，仍需重新登录一次。
 
 ## 构建、发布和调用
 

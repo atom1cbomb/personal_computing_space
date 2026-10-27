@@ -1,14 +1,18 @@
+FROM golang:1.27.3 AS renewal
+WORKDIR /build
+COPY capability_services/suanli_vm_ssh_http/renewal/go.mod capability_services/suanli_vm_ssh_http/renewal/go.sum ./
+RUN go mod download
+COPY capability_services/suanli_vm_ssh_http/renewal/*.go ./
+RUN CGO_ENABLED=0 go build -trimpath -o /loom-opkssh .
+
 FROM python:3.12-slim
 
 WORKDIR /app
 RUN pip install --no-cache-dir httpx==0.28.1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && ARCH="$(dpkg --print-architecture)" \
-    && case "$ARCH" in amd64) OPK_ARCH=amd64 ;; arm64) OPK_ARCH=arm64 ;; *) echo "unsupported architecture" >&2; exit 1 ;; esac \
-    && curl -fsSL "https://github.com/openpubkey/opkssh/releases/download/v0.14.0/opkssh-linux-${OPK_ARCH}" -o /usr/local/bin/opkssh \
-    && chmod 0755 /usr/local/bin/opkssh
+    && apt-get install -y --no-install-recommends openssh-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=renewal /loom-opkssh /usr/local/bin/loom-opkssh
 COPY capability_services/suanli_vm_ssh_http/server.py /app/server.py
 COPY capability_services/suanli_vm_ssh_http/opkssh.yml /app/opkssh.yml
 COPY capability_services/ssh_execution.py /app/capability_services/ssh_execution.py

@@ -72,3 +72,99 @@ def test_vm_gateway_never_accepts_request_target(tmp_path: Path, monkeypatch) ->
     assert result["exit_code"] == 0
     assert any("10.0.0.7" in item for item in captured[0])
     assert "10.0.0.8" not in captured[0]
+
+
+def test_login_worker_is_configured_for_activation_local_durable_renewal(tmp_path, monkeypatch):
+    calls = []
+    def start(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr(subprocess, "Popen", start)
+    gateway = VmSshGateway(state_root=tmp_path)
+    gateway._start_login()
+    args, options = calls[0]
+    assert args[:2] == ["loom-opkssh", "login"]
+    assert args[args.index("--state-dir") + 1] == str(tmp_path)
+    assert options["env"]["HOME"] == str(tmp_path)
+    assert options["start_new_session"]
+
+
+def test_restart_resumes_renewal_once_and_verifies_real_ssh_access(tmp_path, monkeypatch):
+    (tmp_path / "renewal.json").write_text("{}")
+    (tmp_path / "renewal-status.json").write_text('{"status":"authenticated"}')
+    gateway = VmSshGateway(state_root=tmp_path)
+    starts = []
+    def start(mode):
+        starts.append(mode)
+        gateway._login_process = SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr(gateway, "_start_login", start)
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: "authenticated")
+    for _ in range(3):
+        assert gateway.auth_status() == {"status": "authenticated"}
+    assert starts == ["resume"]
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: "auth_failed")
+    assert gateway.auth_status() == {"status": "auth_failed"}
+
+
+def test_refresh_failure_recovers_but_revocation_requires_login(tmp_path, monkeypatch):
+    (tmp_path / "renewal.json").write_text("{}")
+    status = tmp_path / "renewal-status.json"
+    gateway = VmSshGateway(state_root=tmp_path)
+    gateway._login_process = SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: "authenticated")
+    status.write_text('{"status":"auth_failed"}')
+    assert gateway.auth_status() == {"status": "auth_failed"}
+    status.write_text('{"status":"authenticated"}')
+    assert gateway.auth_status() == {"status": "authenticated"}
+    status.write_text('{"status":"auth_required"}')
+    gateway._login_process = None
+    monkeypatch.setattr(gateway, "_start_login", lambda *_: pytest.fail("revoked token retried"))
+    assert gateway.auth_status() == {"status": "auth_required"}
+
+
+def test_expired_access_token_does_not_prompt_while_refresh_is_available(tmp_path, monkeypatch):
+    (tmp_path / "renewal.json").write_text(json.dumps({"expires_at": time.time() - 1}))
+    (tmp_path / "renewal-status.json").write_text('{"status":"authenticated"}')
+    gateway = VmSshGateway(state_root=tmp_path)
+    gateway._login_process = SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: "auth_required")
+    assert gateway.auth_status() == {"status": "auth_failed"}
+
+
+def test_explicit_login_clears_stale_refresh_state_and_keys(tmp_path):
+    gateway = VmSshGateway(state_root=tmp_path)
+    gateway.ssh_dir.mkdir()
+    files = [tmp_path / "renewal.json", tmp_path / "renewal-status.json",
+             gateway.private_key, Path(str(gateway.private_key) + "-cert.pub")]
+    for path in files:
+        path.write_text("stale")
+    try:
+        gateway.auth_start({"session_id": "a" * 43, "callback_uri": "http://localhost:3000/login-callback",
+                            "expires_at": time.time() + 200})
+        assert all(not path.exists() for path in files)
+    finally:
+        gateway.close()
+
+
+def test_successful_callback_keeps_renewal_worker_running(tmp_path, monkeypatch):
+    import httpx
+    gateway = VmSshGateway(state_root=tmp_path)
+    context = {"session_id": "a" * 43, "callback_uri": "http://localhost:3000/login-callback",
+               "expires_at": time.time() + 200}
+    gateway.auth_start(context)
+    gateway._browser_session["phase"] = "bound"
+    process = SimpleNamespace(poll=lambda: None, wait=lambda **_: pytest.fail("waited for worker exit"))
+    gateway._login_process = process
+    def callback(*args, **kwargs):
+        (tmp_path / "renewal.json").write_text("{}")
+        (tmp_path / "renewal-status.json").write_text('{"status":"authenticated"}')
+        return httpx.Response(200)
+    monkeypatch.setattr(gateway, "_local_request", callback)
+    try:
+        assert gateway.browser({"action": "callback", "session_id": context["session_id"],
+                                "query": {"code": ["code"], "state": ["state"]}}) == {"status": "accepted"}
+        assert gateway._login_process is process
+        assert gateway._browser_session is None
+    finally:
+        gateway._login_process = None
+        gateway.close()

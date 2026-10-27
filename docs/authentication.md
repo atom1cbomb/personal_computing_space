@@ -1,7 +1,7 @@
 # 能力包统一认证
 
-统一登录由 SDK 0.7 的 `loom-auth` 提供，适用于 `suanli-vm-ssh-http/v4`、
-`kubernetes-http/v6`、`grafana-http/v4` 和 `autopaper-http/v1`。AutoPaper 还使用
+统一登录由 SDK 0.7 的 `loom-auth` 提供，适用于 `suanli-vm-ssh-http/v5`、
+`kubernetes-http/v6`、`grafana-http/v4` 和 `autopaper-http/v2`。AutoPaper 还使用
 SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_services/autopaper_http/README.md)。
 使用匹配的 Observer 和 HTTP runtime。
 升级包按新版本发布，保留历史不可变包；重新认证本身不创建新激活。
@@ -84,10 +84,21 @@ Kubernetes 定期重新执行权限检查，允许 kubelogin 使用自身刷新�
 Grafana 使用 operator credential_profile 的实例由操作员更新凭据文件，不能混用
 交互式 cookie 登录。
 
+AutoPaper v2 保留 REST API 和浏览器 Cookie 登录。上游后端负责 OAuth token 刷新，
+网关保存上游轮换的 Cookie。配套后端补丁区分临时故障（503，保留会话）和凭据
+失效（401），并序列化并发刷新；详见
+[AutoPaper 自动续期](../capability_services/autopaper_http/README.md#自动续期v2)。
+只升级网关不能修复后端已经删除的会话。
+
+算力云 SSH v5 使用 OpenPubkey/opkssh 库实现持久刷新：提前一分钟更新令牌及 SSH
+证书，重启复用私有检查点，网络失败退避重试，`invalid_grant` 才要求重新登录。
+VM 的 opkssh 过期策略需要支持 `oidc_refreshed`；固定登录时限仍由服务端执行。
+详见 [SSH 包说明](../capability_services/suanli_vm_ssh_http/README.md)。
+
 ## 升级
 
 更新 Observer、Slave HTTP runtime 与 SDK，再发布新版服务镜像/包。历史包的
 client 字段仅保留读取和摘要验证，新的发布必须声明 interaction。已有历史包
 不能原地改摘要；为新版本创建绑定同一目标资源的新激活，认证并验证后再停旧激活。
 业务资源 URI 可以保持不变，新包版本的激活 URI 会随包版本变化。
-算力云创建描述符随 suanlicloud-http/v5 更新，引用 suanli-vm-ssh-http/v4。
+算力云创建描述符随 suanlicloud-http/v6 更新，引用 suanli-vm-ssh-http/v5。

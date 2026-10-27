@@ -38,7 +38,7 @@ class VmSshGateway:
         *,
         instance_path: Path = Path("/run/loom/instance.json"),
         state_root: Path = Path("/var/lib/loom/service"),
-        opkssh: str = "opkssh",
+        opkssh: str = "loom-opkssh",
         ssh: str = "ssh",
     ) -> None:
         self.instance_path = instance_path
@@ -54,6 +54,7 @@ class VmSshGateway:
         self._browser_session: dict[str, Any] | None = None
         self._expiry_timer: threading.Timer | None = None
         self._auth_failed = False
+        self._next_resume_at = 0.0
 
     def _target(self) -> dict[str, Any]:
         try:
@@ -186,6 +187,9 @@ class VmSshGateway:
         with self._lock:
             self._clear_login(stop_process=True)
             self._auth_failed = False
+            for path in (self.state_root / "renewal.json", self.state_root / "renewal-status.json",
+                         self.private_key, Path(str(self.private_key) + "-cert.pub")):
+                path.unlink(missing_ok=True)
             self._browser_session = {**payload, "phase": "created"}
             self._expiry_timer = threading.Timer(expires_at - time.time(), self._expire, args=(session_id,))
             self._expiry_timer.daemon = True
@@ -208,12 +212,13 @@ class VmSshGateway:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
             raise GatewayError("oidc_discovery_failed", 503) from exc
 
-    def _start_login(self) -> None:
+    def _start_login(self, mode: str = "login") -> None:
         self.ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
             self._login_process = subprocess.Popen(
-                [self.opkssh, "login", "--disable-browser-open",
+                [self.opkssh, mode,
                  "--config-path", str(Path(__file__).with_name("opkssh.yml")),
+                 "--state-dir", str(self.state_root),
                  "--private-key-file", str(self.private_key)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -222,6 +227,28 @@ class VmSshGateway:
             )
         except OSError as exc:
             raise GatewayError("opkssh_unavailable", 503) from exc
+
+    def _renewal_status(self) -> str | None:
+        try:
+            value = json.loads((self.state_root / "renewal-status.json").read_text())
+            status = value.get("status")
+            return status if status in {"authenticated", "auth_required", "auth_failed"} else "auth_failed"
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, AttributeError):
+            return "auth_failed"
+
+    def _resume_renewal(self) -> None:
+        if self._browser_session or not (self.state_root / "renewal.json").is_file():
+            return
+        if self._renewal_status() == "auth_required":
+            return
+        if self._login_process is not None and self._login_process.poll() is None:
+            return
+        if time.monotonic() < self._next_resume_at:
+            return
+        self._next_resume_at = time.monotonic() + 5
+        self._start_login("resume")
 
     def _local_request(self, path: str, *, params=None) -> httpx.Response:
         # Bound even a compromised localhost response; cookies stay in this jar.
@@ -289,13 +316,15 @@ class VmSshGateway:
                 if response.status_code != 200:
                     raise GatewayError("browser_callback_rejected", 409)
                 self._clear_login(stop_process=False)
-                # Allow the official process to finish writing credentials.
-                try:
-                    self._login_process.wait(timeout=10)
-                except subprocess.TimeoutExpired as exc:
-                    raise GatewayError("browser_login_incomplete", 503) from exc
-                if self._login_process.returncode != 0:
-                    raise GatewayError("browser_login_failed", 409)
+                # The worker remains alive to refresh credentials. Wait for its
+                # durable checkpoint, never for the renewal process to exit.
+                deadline = time.monotonic() + 10
+                while not (self.state_root / "renewal.json").is_file() or self._renewal_status() != "authenticated":
+                    if self._login_process.poll() is not None:
+                        raise GatewayError("browser_login_failed", 409)
+                    if time.monotonic() >= deadline:
+                        raise GatewayError("browser_login_incomplete", 503)
+                    time.sleep(0.05)
                 return {"status": "accepted"}
             except (GatewayError, httpx.HTTPError, ValueError) as exc:
                 self._clear_login(stop_process=True)
@@ -310,13 +339,34 @@ class VmSshGateway:
                 return {"status": "auth_required", "poll_after_seconds": 2}
             if self._auth_failed:
                 return {"status": "auth_failed"}
-            process = self._login_process
-            if process is not None and process.poll() != 0:
-                return {"status": "auth_required" if process.poll() is None else "auth_failed"}
-            return {"status": self._ssh_probe()}
+            try:
+                self._resume_renewal()
+            except GatewayError:
+                return {"status": "auth_failed"}
+            status = self._renewal_status()
+            if status in {"auth_required", "auth_failed"}:
+                return {"status": status}
+            if (self.state_root / "renewal.json").exists() and (
+                    self._login_process is None or self._login_process.poll() is not None):
+                return {"status": "auth_failed"}
+            verified = self._ssh_probe()
+            if verified == "auth_required" and (self.state_root / "renewal.json").exists():
+                try:
+                    expiry = json.loads((self.state_root / "renewal.json").read_text()).get("expires_at")
+                    if isinstance(expiry, (int, float)) and expiry <= time.time():
+                        # The durable worker can still refresh an expired access
+                        # token. Only its explicit revocation result needs login.
+                        return {"status": "auth_failed"}
+                except (OSError, ValueError, AttributeError):
+                    return {"status": "auth_failed"}
+            return {"status": verified}
 
     def exec(self, command: Any, timeout_seconds: Any = DEFAULT_TIMEOUT) -> dict[str, Any]:
         timeout = validate_exec(command, timeout_seconds)
+        with self._lock:
+            self._resume_renewal()
+            if self._renewal_status() == "auth_required":
+                raise GatewayError("ssh_authentication_required", 401)
         return execute_ssh(self._ssh_args(), command, timeout)
 
     def handle(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -370,7 +420,10 @@ def main() -> None:
         instance_path=Path(os.getenv("LOOM_INSTANCE_CONFIG", "/run/loom/instance.json")),
         state_root=Path(os.getenv("LOOM_SERVICE_STATE", "/var/lib/loom/service")),
     )
-    ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler).serve_forever()
+    try:
+        ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler).serve_forever()
+    finally:
+        Handler.gateway.close()
 
 
 if __name__ == "__main__":

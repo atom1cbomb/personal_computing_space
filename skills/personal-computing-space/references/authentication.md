@@ -5,7 +5,7 @@ For creating a capability package, read
 contract and implementation workflow. This reference covers using a package.
 
 Requires SDK 0.7, the matching Observer/HTTP runtime, and a package declaring
-authentication.interaction. Current packages: suanli-vm-ssh-http/v4 (redirect),
+authentication.interaction. Current packages: suanli-vm-ssh-http/v5 (redirect),
 kubernetes-http/v6 (device-code), grafana-http/v4 (browser-cookie, automatic token
 rotation). Grafana v3 supports unified login but needs the gateway upgrade to
 handle normal short-lived token rotation. Discover actual
@@ -42,3 +42,11 @@ stopped or its revision changes, obtain a new description before proceeding.
 For operator-managed Grafana credential profiles, update the mounted credential
 through the operator workflow and wait for health verification; do not start
 interactive cookie login on the same profile-bound instance.
+
+Suanli SSH v5 persists its OpenPubkey refresh state and resumes renewal after
+container restart; the VM must allow `oidc_refreshed` certificates. Fixed SSH
+login deadlines and revoked refresh tokens still require reauthentication.
+AutoPaper v2 keeps browser-cookie login and REST actions. Its backend refreshes
+OAuth tokens; the accompanying backend fix preserves sessions on temporary
+refresh errors and serializes rotation. Upgrading only the gateway is insufficient
+when the backend still deletes sessions on network failures.

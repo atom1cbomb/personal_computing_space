@@ -16,15 +16,15 @@
 
 | 目录 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---:|---|
-| [autopaper_http](autopaper_http/README.md) | autopaper-http/v1 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
+| [autopaper_http](autopaper_http/README.md) | autopaper-http/v2 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
 | [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
 | [embedding_http](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
 | [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
 | [grafana_http](grafana_http/README.md) | grafana-http/v5 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
 | [outline_http](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
-| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v5 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v6 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
 | [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v5 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
-| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v4 | 1 | `{host,port,user}`；opkssh 浏览器认证 |
+| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v5 | 1 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
 
 ## 发布
 
@@ -58,7 +58,7 @@ python scripts/publish_service_package.py capability_services/outline_http \
 Suanli Cloud 的创建 VM descriptor 引用 Suanli SSH 使用包。先发布 SSH 包，再创建依赖映射文件：
 
 ```json
-{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v4": "<刚发布的 SSH 包完整 GRIP URI>"}
+{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v5": "<刚发布的 SSH 包完整 GRIP URI>"}
 ```
 
 发布 Suanli Cloud 时用 `--dependencies dependencies.json`，发布工具会校验引用的包坐标和真实 digest。
@@ -98,7 +98,7 @@ description = await client.describe(activation["resource"])
 会在容器 ready 但缺必需入口时显示 degraded。已有可用动作仍可调用。
 
 `activate-package` 自动创建或复用激活实例资源，`activation["resource"]` 就是其 GRIP URI。
-例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v5/slave-a/default`。
+例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v6/slave-a/default`。
 仅手工启动 Docker 容器不会向 Observer 注册实例；应通过 Slave 的激活动作使用服务包。
 
 `credential_profile` 是激活实例的字段，与 `instance_config` 并列；填 Slave operator 已配置的

@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanlicloud-http",
-  "package_version": "v5",
+  "package_version": "v6",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -137,7 +137,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-run",
-        "version_or_digest": "54a284abcd126e34965f385ef901623aa31ca945d4de7c3be1e465b1345d5dc0",
+        "version_or_digest": "cbcd6497d53bf5431e9e66a52168f002ab7f1dc8c5dddd66c803ba2722b32515",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {

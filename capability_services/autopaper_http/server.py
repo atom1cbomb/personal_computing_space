@@ -85,6 +85,7 @@ class AutoPaperGateway:
         }
         self.state_path = state_root / "autopaper-session.json"
         self._cookie: str | None = None
+        self._cookie_dirty = False
         self._browser_session: dict[str, Any] | None = None
         self._lock = threading.RLock()
         try:
@@ -139,7 +140,17 @@ class AutoPaperGateway:
                     raw.extend(chunk)
                     if len(raw) > MAX_RESPONSE:
                         raise GatewayError("autopaper_response_too_large")
-                return json.loads(raw, parse_constant=reject_constant, parse_float=finite_float)
+                value = json.loads(raw, parse_constant=reject_constant, parse_float=finite_float)
+                updated_cookie = cookie
+                for candidate in response.cookies.jar:
+                    if (candidate.name == COOKIE_NAME and candidate.value
+                            and (not candidate.domain_specified
+                                 or candidate.domain.lstrip(".") == urlsplit(self.origin).hostname)
+                            and candidate.path in {"/", "/api"}):
+                        if not valid_cookie(candidate.value):
+                            raise GatewayError("autopaper_response_invalid")
+                        updated_cookie = candidate.value
+                return value, updated_cookie
             finally:
                 response.close()
         except httpx.TimeoutException as exc:
@@ -150,8 +161,21 @@ class AutoPaperGateway:
             raise GatewayError("autopaper_response_invalid") from exc
 
     def _verify(self, cookie: str):
-        value = self._request_json("GET", "/api/papers/venues", {}, cookie, timeout=10)
+        value, updated_cookie = self._request_json("GET", "/api/papers/venues", {}, cookie, timeout=10)
         self._result("venues-list", value)
+        return updated_cookie
+
+    def _update_cookie(self, previous: str, updated: str):
+        with self._lock:
+            # A completed old request must not restore credentials after a new
+            # auth-start, or overwrite a newer response's session.
+            if self._cookie == previous:
+                if updated != previous:
+                    self._cookie = updated
+                    self._cookie_dirty = True
+                if self._cookie_dirty:
+                    self._persist_session(self._cookie)
+                    self._cookie_dirty = False
 
     def auth_status(self) -> dict[str, Any]:
         with self._lock:
@@ -162,7 +186,7 @@ class AutoPaperGateway:
             if not self._cookie:
                 return {"status": "auth_required", "poll_after_seconds": 5}
             try:
-                self._verify(self._cookie)
+                self._update_cookie(self._cookie, self._verify(self._cookie))
                 return {"status": "authenticated"}
             except GatewayError as exc:
                 if exc.code == "autopaper_authentication_required":
@@ -185,6 +209,7 @@ class AutoPaperGateway:
             except OSError as exc:
                 raise GatewayError("credential_state_unavailable", 503) from exc
             self._cookie = None
+            self._cookie_dirty = False
             self._browser_session = {**payload, "phase": "created"}
         return {"status": "auth_required", "poll_after_seconds": 2}
 
@@ -211,9 +236,10 @@ class AutoPaperGateway:
                 raise GatewayError("browser_callback_invalid", 400)
             session["phase"] = "verifying"
             try:
-                self._verify(values[0])
-                self._persist_session(values[0])
-                self._cookie = values[0]
+                cookie = self._verify(values[0])
+                self._cookie = cookie
+                self._cookie_dirty = True
+                self._update_cookie(cookie, cookie)
             except GatewayError:
                 raise GatewayError("browser_login_verification_failed", 409) from None
             finally:
@@ -259,8 +285,10 @@ class AutoPaperGateway:
             if not self._cookie or self._browser_session:
                 raise GatewayError("autopaper_authentication_required", 401)
             cookie = self._cookie
-        value = self._request_json(method, upstream, arguments, cookie, timeout=self.timeout)
-        return self._result(action, value)
+        value, updated_cookie = self._request_json(method, upstream, arguments, cookie, timeout=self.timeout)
+        result = self._result(action, value)
+        self._update_cookie(cookie, updated_cookie)
+        return result
 
 
 class Handler(BaseHTTPRequestHandler):
