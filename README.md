@@ -276,6 +276,8 @@ python -m venv .venv
 
 部分集成和 E2E 测试需要运行中的数据库或 Compose 栈。`./scripts/test-e2e.sh` 仅检查已启动栈的基础健康和节点发现，不代表完整任务验收。HTTP 能力包和多节点执行可分别参考 `scripts/accept-container-http.py`、`tests/e2e/`。
 
+外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与源码上下文，按资源发现、远端计算、服务调用及生命周期分别核验。[2026-10-27 实测报告](docs/validation/2026-10-27-skill-only-live.md) 记录了实际通过项、失败项及独立复核证据。
+
 不依赖真实模型服务的测试栈使用 Fake coding agent：
 
 ```bash
