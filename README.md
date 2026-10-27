@@ -280,6 +280,8 @@ python -m venv .venv
 
 外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与源码上下文，按资源发现、远端计算、服务调用及生命周期分别核验。[初轮报告](docs/validation/2026-10-27-skill-only-live.md) 保留原始失败，[修复后完整用例复测](docs/validation/2026-10-27-skill-only-rerun.md) 记录各轮独立结果、认证状态及当前部署限制。
 
+最新的 [同一 skill 六任务复测](docs/validation/2026-10-27-skill-only-expanded.md) 在当前资源上发现了资源漏发现、参数与编排错误、超预算误报通过和凭据输出等问题。部分真实业务调用成功，但六项完整验收均未通过，尚不能宣称仅凭 skill 可以稳定独立交付。
+
 不依赖真实模型服务的测试栈使用 Fake coding agent：
 
 ```bash
