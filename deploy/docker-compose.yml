@@ -1,6 +1,10 @@
 secrets:
   internal_api_secret:
     file: ${LOOM_INTERNAL_API_SECRET_FILE:-../secrets/internal_api_secret}
+  service_signing:
+    file: ${LOOM_SERVICE_SIGNING_KEY_FILE:-../secrets/service-signing.pem}
+  service_verify:
+    file: ${LOOM_SERVICE_VERIFY_KEY_FILE:-../secrets/service-verify.pem}
 
 services:
   minio:
@@ -71,6 +75,14 @@ services:
       LOOM_SERVICE_NAME: observer
       LOOM_GRIP_AUTHORITY: ${LOOM_GRIP_AUTHORITY:-loom.local}
       LOOM_GRIP_TOKEN: ${LOOM_GRIP_TOKEN:-}
+      LOOM_GRIP_SIGNING_KEY_FILE: /run/secrets/service_signing
+      LOOM_GRIP_SIGNING_KEY_ID: service-access-v1
+      LOOM_GRIP_VERIFICATION_KEYS: '{"service-access-v1":"/run/secrets/service_verify"}'
+      LOOM_GRIP_ACCESS_TOKEN_SECONDS: ${LOOM_GRIP_ACCESS_TOKEN_SECONDS:-3600}
+      LOOM_GRIP_ALLOW_INSECURE_SERVICES: "true"
+      LOOM_GRIP_UPSTREAM_BINDINGS: >-
+        {"grip://loom.local/workspaces/workspace-default/slaves/slave-a":[{"protocol":"loom-http-json.v1","endpoint":"http://slave-a:8091/.well-known/grip","audience":"grip://loom.local/workspaces/workspace-default/slaves/slave-a"}],
+         "grip://loom.local/workspaces/workspace-default/slaves/slave-b":[{"protocol":"loom-http-json.v1","endpoint":"http://slave-b:8091/.well-known/grip","audience":"grip://loom.local/workspaces/workspace-default/slaves/slave-b"}]}
       LOOM_PUBLIC_BASE_URL: ${LOOM_PUBLIC_BASE_URL:-http://localhost:18080}
       LOOM_DATABASE_URL: postgresql+asyncpg://loom:loom@observer-db:5432/loom_observer
       LOOM_S3_ENDPOINT_URL: http://minio:9000
@@ -79,7 +91,7 @@ services:
       LOOM_S3_SECRET_KEY: loom-content-secret
       LOOM_S3_REGION: us-east-1
       LOOM_PACKAGE_CONTRACT_DIR: /opt/loom/package-contracts
-    secrets: [internal_api_secret]
+    secrets: [internal_api_secret, service_signing, service_verify]
     depends_on:
       observer-db: {condition: service_healthy}
       minio-init: {condition: service_completed_successfully}
@@ -129,11 +141,17 @@ services:
       LOOM_RUNTIME_PLUGIN_DIR: /opt/loom/runtime-plugins
       LOOM_RUNTIME_PLUGIN_SOCKET_DIR: /run/loom/runtime-plugins
       LOOM_RUNTIME_PLUGIN_NETWORK: loom-internal
+      LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK: loom-egress
       LOOM_RUNTIME_PLUGIN_MEMORY: 512m
       LOOM_RUNTIME_PLUGIN_CPUS: "1.0"
       LOOM_RUNTIME_PLUGIN_PIDS_LIMIT: "128"
       LOOM_RUNTIME_PLUGIN_TMPFS_SIZE: 64m
-    secrets: [internal_api_secret]
+      LOOM_GRIP_AUTHORITY: ${LOOM_GRIP_AUTHORITY:-loom.local}
+      LOOM_GRIP_VERIFICATION_KEYS: '{"service-access-v1":"/run/secrets/service_verify"}'
+      LOOM_GRIP_ALLOW_INSECURE_SERVICES: "true"
+      LOOM_GRIP_DATA_LISTEN_HOST: 0.0.0.0
+      LOOM_GRIP_DATA_LISTEN_PORT: "8091"
+    secrets: [internal_api_secret, service_verify]
     depends_on:
       slave-a-db: {condition: service_healthy}
       minio-init: {condition: service_completed_successfully}
@@ -162,11 +180,17 @@ services:
       LOOM_RUNTIME_PLUGIN_DIR: /opt/loom/runtime-plugins
       LOOM_RUNTIME_PLUGIN_SOCKET_DIR: /run/loom/runtime-plugins
       LOOM_RUNTIME_PLUGIN_NETWORK: loom-internal
+      LOOM_RUNTIME_PLUGIN_EGRESS_NETWORK: loom-egress
       LOOM_RUNTIME_PLUGIN_MEMORY: 512m
       LOOM_RUNTIME_PLUGIN_CPUS: "1.0"
       LOOM_RUNTIME_PLUGIN_PIDS_LIMIT: "128"
       LOOM_RUNTIME_PLUGIN_TMPFS_SIZE: 64m
-    secrets: [internal_api_secret]
+      LOOM_GRIP_AUTHORITY: ${LOOM_GRIP_AUTHORITY:-loom.local}
+      LOOM_GRIP_VERIFICATION_KEYS: '{"service-access-v1":"/run/secrets/service_verify"}'
+      LOOM_GRIP_ALLOW_INSECURE_SERVICES: "true"
+      LOOM_GRIP_DATA_LISTEN_HOST: 0.0.0.0
+      LOOM_GRIP_DATA_LISTEN_PORT: "8091"
+    secrets: [internal_api_secret, service_verify]
     depends_on:
       slave-b-db: {condition: service_healthy}
       minio-init: {condition: service_completed_successfully}
@@ -189,3 +213,5 @@ networks:
   loom-internal:
     name: loom-internal
     internal: true
+  loom-egress:
+    name: loom-egress
