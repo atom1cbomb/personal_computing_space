@@ -45,10 +45,33 @@ async def test_interface_package_resource_registration_and_no_execution():
         assert invoke(client, n.root, n.action("register-resource"), value) == created
         description = exchange(client, created["resource"])["body"]
         assert description["resource"]["metadata"]["package"] == uri
-        assert [o["action"]["uri"] for o in description["offers"]] == [n.action("update-attributes")]
+        assert [o["action"]["uri"] for o in description["offers"]] == [n.action("update-attributes"), n.action("how-to-use")]
         assert resources(client, "computing/vm")[0]["uri"] == created["resource"]
         result = exchange(client, n.name("slaves", "slave-a"), action=n.action("activate-package"), input={"package": uri, "idempotency_key": "interface"})
         assert result["error_code"] == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_resource_how_to_use_explains_attributes_and_is_read_only():
+    from tests.support.grip_client import invoke
+    repo = ObserverRepository()
+    with TestClient(create_embedded_app(repo)) as client:
+        n = client.app.state.grip.names
+        resource = invoke(client, n.root, n.action("register-resource"), {
+            "resource_id": "grip://loom.local/workspaces/workspace-default/resources/vm/help",
+            "mcue_ref": n.mcue("computing/vm"),
+            "attributes": {"display_name": "demo2zy", "cpu_cores": 4},
+            "state": "running",
+        })["resource"]
+        result = invoke(client, resource, n.action("how-to-use"))
+        assert result["resource"] == resource
+        assert result["summary"].startswith("computing/vm resource")
+        assert result["attributes"] == {"display_name": "demo2zy", "cpu_cores": 4}
+        assert {item["name"] for item in result["attribute_help"]} >= {"display_name", "cpu_cores"}
+        assert n.action("update-attributes") in {item["action"] for item in result["actions"]}
+        assert n.action("how-to-use") not in {item["action"] for item in result["actions"]}
+        assert "No callable business action" not in result["usage_markdown"]
+        assert not repo.runs
 
 
 @pytest.mark.asyncio

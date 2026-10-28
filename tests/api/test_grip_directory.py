@@ -185,7 +185,7 @@ async def test_warm_directory_observes_external_updates_and_package_visibility(d
     assert current["revision"] != before["revision"]
     assert current["resource"]["metadata"]["attributes"]["display_name"] == "after"
     assert current["resource"]["metadata"]["activations"] == []
-    assert [o["action"]["uri"] for o in current["offers"]] == [n.action("update-attributes")]
+    assert [o["action"]["uri"] for o in current["offers"]] == [n.action("update-attributes"), n.action("how-to-use")]
     state = await client.describe(activation_uri)
     assert state["resource"]["metadata"]["revision"] == 2
     assert not any("/exports/" in o["action"]["uri"] for o in state["offers"])

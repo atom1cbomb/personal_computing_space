@@ -13,7 +13,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
 
 from fastapi import Request as HttpRequest
@@ -67,6 +67,40 @@ class ResourceOutput(Model):
 
 class AttributesOutput(ResourceOutput):
     attributes_revision: int = Field(ge=1)
+
+
+class HowToUseAttribute(Model):
+    name: str
+    type: str | list[str] | None = None
+    required: bool = False
+    description: str = ""
+
+
+class HowToUseRelationship(Model):
+    kind: str
+    resource: URI
+    description: str
+
+
+class HowToUseAction(Model):
+    action: URI
+    mode: Literal["request-reply", "byte-stream"]
+    input_schema: URI
+    output_schema: URI
+    available: bool = True
+    description: str = ""
+
+
+class HowToUseOutput(Model):
+    resource: URI
+    mcue: MCUE
+    summary: str
+    usage_markdown: str
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    attribute_help: list[HowToUseAttribute] = Field(default_factory=list)
+    relationships: list[HowToUseRelationship] = Field(default_factory=list)
+    actions: list[HowToUseAction] = Field(default_factory=list)
+    sources: list[URI] = Field(default_factory=list)
 
 
 class RunInput(Model):
@@ -137,10 +171,10 @@ class ConfigureOutput(ResourceOutput):
     state: str
 
 
-INPUTS = {"read": Empty, "cancel": Empty, "list-resources": ListInput,
+INPUTS = {"read": Empty, "cancel": Empty, "how-to-use": Empty, "list-resources": ListInput,
           "publish-mcue-type": McueDefinition, "update-attributes": UpdateAttributesInput,
           "register-resource": RegisterInput, "run-package": RunInput, "check-package": CheckPackageInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
-OUTPUTS = {"check-package": CheckPackageOutput, "configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
+OUTPUTS = {"how-to-use": HowToUseOutput, "check-package": CheckPackageOutput, "configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
            "update-attributes": AttributesOutput}
 OBJECT = {"type": "object"}
 RUN_RESULT = {"type": "object", "properties": {"run": {"type": "string"}},
@@ -174,6 +208,9 @@ class GripService:
             raise ValueError("invalid_grip_public_base_url")
         self._builtin = {name: self.offer(self.names.action(name), self.names.schema(name + "-input"),
                                         self.names.schema(name + "-output")) for name in INPUTS}
+        self._builtin["how-to-use"]["action"]["description"] = (
+            "Explain how to use this resource, its public attributes, relationships, and actions."
+        )
         self._static = self._static_entries()
         self._call_schema = CallInput.model_json_schema()
         self._package_actions: dict[tuple[str, str], PackageActions] = {}
@@ -211,6 +248,8 @@ class GripService:
 
     def _entry(self, target, mcue, metadata, offers, value=None):
         metadata = {"mcue_ref": self.names.mcue(mcue), "attributes": {}, **metadata}
+        if all(offer["action"]["uri"] != self.names.action("how-to-use") for offer in offers):
+            offers = [*offers, self._builtin["how-to-use"]]
         return Entry({"resource": {"uri": target, "mcue": mcue, "metadata": metadata}, "offers": offers}, value)
 
     def _schema_entry(self, target, schema):
@@ -262,6 +301,8 @@ class GripService:
                 offer = self.offer(action, schema_uri, schema_uri + "/output", mode=call_kind)
             result.offers.append(offer)
             descriptor = await self._metadata(export.action_descriptor_ref, descriptor=True)
+            if descriptor.get("description"):
+                offer["action"]["description"] = descriptor["description"]
             declaration = {
                 **offer["action"],
                 "name": descriptor.get("name") or resource_label(export.action_descriptor_ref.resource_id),
@@ -460,8 +501,105 @@ class GripService:
                 "mcue_ref": self.names.mcue("data/content"), "attributes": {},
                 "media_type": stat.media_type, "sha256": ref.digest, "size": stat.size,
             }},
-            "offers": [self.offer(self.names.action("read"), self.names.schema("read-input"), self.names.schema("read-output"))],
+            "offers": [self.offer(self.names.action("read"), self.names.schema("read-input"), self.names.schema("read-output")),
+                       self._builtin["how-to-use"]],
         }, {"content": value, "media_type": stat.media_type, "encoding": encoding})
+
+    @staticmethod
+    def _attribute_help(schema: dict[str, Any], prefix: str = "") -> list[dict[str, Any]]:
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            return []
+        required = set(schema.get("required", []))
+        result = []
+        for name, definition in properties.items():
+            if not isinstance(definition, dict):
+                continue
+            path = f"{prefix}.{name}" if prefix else name
+            value_type = definition.get("type")
+            if not isinstance(value_type, (str, list)):
+                value_type = None
+            result.append({"name": path, "type": value_type, "required": name in required,
+                           "description": str(definition.get("description") or "")})
+            if value_type == "object":
+                result.extend(GripService._attribute_help(definition, path))
+        return result
+
+    async def _how_to_use(self, target: str, entry: Entry) -> dict[str, Any]:
+        resource = entry.description["resource"]
+        metadata = resource.get("metadata", {})
+        mcue = resource["mcue"]
+        attributes = metadata.get("attributes", {})
+        if not isinstance(attributes, dict):
+            attributes = {}
+        attribute_help = []
+        mcue_ref = metadata.get("mcue_ref")
+        if isinstance(mcue_ref, str):
+            try:
+                definition = await self.repo.get_mcue_definition(self.settings.workspace_id, mcue_ref)
+                attribute_help = self._attribute_help(definition.attributes_schema)
+            except (KeyError, ValueError):
+                attribute_help = []
+
+        relationships = []
+        relationship_descriptions = {
+            "managed_by": "This resource is managed by the referenced workspace resource.",
+            "package": "This package describes the capability used with the resource.",
+            "activation": "This activation is a running package instance associated with the resource.",
+            "target": "This activation targets the referenced workspace resource.",
+        }
+        for key, kind in (("managed_by", "managed_by"), ("package", "package"),
+                          ("target", "target")):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                relationships.append({"kind": kind, "resource": value,
+                                       "description": relationship_descriptions[kind]})
+        for value in metadata.get("activations", []):
+            if isinstance(value, str):
+                relationships.append({"kind": "activation", "resource": value,
+                                       "description": relationship_descriptions["activation"]})
+
+        actions = []
+        source_refs = [target]
+        if isinstance(mcue_ref, str):
+            source_refs.append(mcue_ref)
+        for offer in entry.description.get("offers", []):
+            action = offer.get("action", {})
+            action_uri = action.get("uri")
+            if not isinstance(action_uri, str) or action_uri == self.names.action("how-to-use"):
+                continue
+            input_schema = action.get("input_schema")
+            output_schema = action.get("output_schema")
+            if not isinstance(input_schema, str) or not isinstance(output_schema, str):
+                continue
+            actions.append({"action": action_uri, "mode": action.get("mode", "request-reply"),
+                            "input_schema": input_schema, "output_schema": output_schema,
+                            "available": bool(offer.get("available", True)),
+                            "description": str(action.get("description") or "")})
+            source_refs.append(action_uri)
+
+        label = attributes.get("display_name") or metadata.get("name") or mcue
+        summary = f"{mcue} resource: {label}"
+        lines = [f"Use `{target}` as a `{mcue}` resource."]
+        if relationships:
+            lines.append("Relationships:")
+            for relation in relationships:
+                lines.append(f"- `{relation['kind']}` -> `{relation['resource']}`: {relation['description']}")
+        if actions:
+            lines.append("Available actions:")
+            for action in actions:
+                state = "available" if action["available"] else "unavailable"
+                lines.append(f"- `{action['action']}` ({action['mode']}, {state}); input schema `{action['input_schema']}`, output schema `{action['output_schema']}`.")
+        elif not relationships:
+            lines.append("No callable business action is currently advertised; use the returned metadata and schemas to determine the next step.")
+        return HowToUseOutput(
+            resource=target, mcue=mcue, summary=summary, usage_markdown="\n".join(lines),
+            attributes=attributes,
+            attribute_help=attribute_help,
+            relationships=relationships,
+            actions=actions,
+            sources=list(dict.fromkeys(source_refs)),
+        ).model_dump(mode="json")
 
     async def _package(self, target):
         entry = await self.resolve(target)
@@ -526,6 +664,8 @@ class GripService:
         data = request.input
         if request.action == n.action("list-resources"):
             return {"resources": [e.description["resource"] for e in (await self.catalog(mcue=data.get("mcue"))).values()]}
+        if request.action == n.action("how-to-use"):
+            return await self._how_to_use(request.target, entry)
         if request.action == n.action("publish-mcue-type"):
             target = await self.repo.publish_mcue_type(self.settings.workspace_id, data)
             return {"resource": target}

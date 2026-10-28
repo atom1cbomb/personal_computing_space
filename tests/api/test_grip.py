@@ -161,12 +161,12 @@ async def test_resource_binding_is_explicit_and_ambiguous_instances_are_not_chos
     })
     target = resource_id
     assert (await client.describe(target))["resource"]["metadata"]["package"] is None
-    assert [o["action"]["uri"] for o in (await client.describe(target))["offers"]] == [client.names.action("update-attributes")]
+    assert [o["action"]["uri"] for o in (await client.describe(target))["offers"]] == [client.names.action("update-attributes"), client.names.action("how-to-use")]
     activation = await client.invoke(slave, client.names.action("activate-package"), {
         "package": package, "instance_name": "vm-one", "target": target, "idempotency_key": "vm-one",
         "instance_config": {"host": "private.example", "user": "internal", "port": 22},
     })
-    assert len((await client.describe(target))["offers"]) == 2
+    assert len((await client.describe(target))["offers"]) == 3
     before = await client.describe(target)
     await client.invoke(target, client.names.action("update-attributes"), {
         "expected_attributes_revision": 1, "patch": {"description": "Public description"},
@@ -182,7 +182,7 @@ async def test_resource_binding_is_explicit_and_ambiguous_instances_are_not_chos
         "package": package, "instance_name": "vm-two", "target": target, "idempotency_key": "vm-two",
     })
     description = await client.describe(target)
-    assert [o["action"]["uri"] for o in description["offers"]] == [client.names.action("update-attributes")]
+    assert [o["action"]["uri"] for o in description["offers"]] == [client.names.action("update-attributes"), client.names.action("how-to-use")]
     assert len(description["resource"]["metadata"]["activations"]) == 2
 
 

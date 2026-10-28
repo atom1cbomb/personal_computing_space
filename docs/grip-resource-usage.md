@@ -1,6 +1,6 @@
 # 使用 GRIP 调用 Loom 资源
 
-Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `offers` 选择完整动作 URI，再向该 offer 的 binding endpoint 发起调用。你不需要拼接 Slave 内网地址、runtime 路径或 ComputeBinding。
+Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `offers` 选择完整动作 URI，再向该 offer 的 binding endpoint 发起调用。你不需要拼接 Slave 内网地址、runtime 路径或 ComputeBinding。每个公开目录项还提供平台内建的 `how-to-use` 只读动作；当资源关系、MCUE 自定义属性或激活使用方式不清楚时，先调用它取得结构化说明和 Markdown 指引。
 
 | 对象 | 作为资源的含义 |
 |---|---|

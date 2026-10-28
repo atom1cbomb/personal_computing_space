@@ -49,6 +49,10 @@ and map/reduce computations; see [references/reliable-workflows.md](references/r
 They preserve exact contracts and evidence while reducing repeated protocol code.
 Start discovery with the compact inventory; keep pending/degraded instances in
 the assessment, and inspect action descriptions before declaring a capability absent.
+Every public GRIP directory entry also offers the platform `how-to-use` read action.
+After DESCRIBE, invoke it when the relationship between a resource, its package,
+managed-by resource, activation, custom attributes, or callable actions is unclear;
+use its exact action and schema references instead of inferring provider behavior.
 For a reproducible failure, read [references/diagnostics.md](references/diagnostics.md)
 to inspect the exact package's published source without changing its deployment.
 For a new Python computation on a Slave, read
