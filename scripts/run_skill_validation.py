@@ -127,6 +127,41 @@ def put_files(container: str, files: dict[str, bytes]) -> None:
             input=stream.getvalue())
 
 
+def start_credential_proxy(container: str, observer: str, token: bytes, provider: dict, session_token: str) -> None:
+    """Keep real credentials owned by a different UID from the tested agent."""
+    config = {"observer": observer, "grip_token": token.decode(), "session_token": session_token,
+              "model_base_url": provider["base_url"], "model_api_key": provider["api_key"]}
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        for name, data in {"config.json": json.dumps(config).encode(),
+                           "proxy.py": Path(__file__).with_name("skill_validation_proxy.py").read_bytes()}.items():
+            entry = tarfile.TarInfo(name)
+            entry.size, entry.mode, entry.uid, entry.gid = len(data), 0o600, 0, 0
+            archive.addfile(entry, io.BytesIO(data))
+    command("docker", "exec", "--user", "0", "-i", container, "tar", "xf", "-", "-C", "/run/loom-operator",
+            input=stream.getvalue())
+    command("docker", "exec", "--user", "0", "--detach", container, "python", "/run/loom-operator/proxy.py",
+            "/run/loom-operator/config.json")
+    command("docker", "exec", container, "python", "-c", """
+import pathlib,time,urllib.request
+try:
+    pathlib.Path('/run/loom-operator/config.json').read_bytes()
+except PermissionError:
+    pass
+else:
+    raise AssertionError('operator credentials readable by agent')
+for attempt in range(30):
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:8889/healthz', timeout=5) as r:
+            assert r.status == 200
+        break
+    except OSError:
+        time.sleep(.2)
+else:
+    raise RuntimeError('credential proxy unavailable')
+""")
+
+
 def catalog(container: str) -> dict:
     return json.loads(command("docker", "exec", container, "python", "-c", CATALOG_SCRIPT))
 
@@ -202,14 +237,15 @@ def main() -> None:
     authentication.add_argument("--codex-provider-file", type=Path,
                                 help="Private JSON containing only model/base_url/wire_api/api_key")
     parser.add_argument("--model", help="Optional explicitly selected model; otherwise use CLI default")
+    parser.add_argument("--reasoning-effort", choices=("minimal", "low", "medium", "high", "xhigh", "max"),
+                        help="Explicit Codex model reasoning effort")
     parser.add_argument("--ssh-port", type=int, action="append", default=[22])
-    parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--preflight-only", action="store_true", help="No model or Observer calls")
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("Run as root on the test Docker host, not inside the agent")
-    if args.timeout < 1 or any(p < 1 or p > 65535 for p in args.ssh_port):
-        parser.error("Invalid timeout or SSH port")
+    if any(p < 1 or p > 65535 for p in args.ssh_port):
+        parser.error("Invalid SSH port")
     if not args.preflight_only and not all((args.prompt_file, args.observer, args.grip_token_file,
                                             args.codex_auth_file or args.codex_provider_file)):
         parser.error("Live execution requires prompt, Observer, GRIP token file and model authentication")
@@ -220,6 +256,9 @@ def main() -> None:
     base_config, provider_key, provider_metadata = BASE_CONFIG, None, None
     if args.codex_provider_file:
         base_config, provider_key, provider_metadata = provider_inputs(args.codex_provider_file)
+        # The CLI talks to a local, operator-owned proxy. A session placeholder
+        # satisfies its API-key interface without disclosing either real key.
+        base_config = base_config.replace(json.dumps(provider_metadata["base_url"]), json.dumps("http://127.0.0.1:8889/model"))
     os.umask(0o077)
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -232,6 +271,10 @@ def main() -> None:
                "bundle_sha256": hashlib.sha256(args.bundle.read_bytes()).hexdigest()}
     if provider_metadata:
         summary["model_provider"] = provider_metadata
+    if args.model:
+        summary["model"] = args.model
+    if args.reasoning_effort:
+        summary["reasoning_effort"] = args.reasoning_effort
     try:
         summary["stage"] = "image"
         summary["image_id"] = command("docker", "image", "inspect", args.image,
@@ -245,8 +288,9 @@ def main() -> None:
                 "--pids-limit", "256", "--memory", "2g", "--cpus", "2",
                 "--tmpfs", "/home/agent:rw,nosuid,nodev,uid=1000,gid=1000,mode=700,size=256m",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
+                "--tmpfs", "/run/loom-operator:rw,nosuid,nodev,uid=0,gid=0,mode=700,size=2m",
                 "--mount", f"type=bind,src={work},dst=/work",
-                "--env", "LOOM_OBSERVER_URL=" + (args.observer or ""),
+                "--env", "LOOM_OBSERVER_URL=" + ("http://127.0.0.1:8889" if provider_key and not args.preflight_only else args.observer or ""),
                 "--env", "LOOM_GRIP_AUTHORITY=" + args.authority,
                 "--env", "LOOM_WORKSPACE_ID=" + args.workspace,
                 "--env", "LOOM_GRIP_TOKEN_FILE=/home/agent/.loom/grip-token",
@@ -268,6 +312,13 @@ def main() -> None:
             token = args.grip_token_file.read_bytes().strip()
             if not token:
                 raise ValueError("Empty authentication input")
+            if provider_key:
+                session_token = "evaluation-" + uuid.uuid4().hex
+                start_credential_proxy(container, args.observer, token,
+                                       json.loads(args.codex_provider_file.read_text()), session_token)
+                token, provider_key = session_token.encode(), b"local-proxy-session"
+                summary["boundary"]["operator_credentials_unreadable"] = True
+                (output / "preflight.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
             authentication_files = {".loom/grip-token": token}
             if provider_key:
                 authentication_files[".codex/provider-key"] = provider_key
@@ -290,16 +341,23 @@ def main() -> None:
                           "--color", "never", "-C", "/work", "-o", "/work/final.md"]
             if args.model:
                 invocation += ["--model", args.model]
+            if args.reasoning_effort:
+                invocation += ["-c", "model_reasoning_effort=" + json.dumps(args.reasoning_effort)]
             invocation += ["-"]
             with (output / "events.jsonl").open("wb") as events, (output / "stderr.log").open("wb") as errors:
                 summary["stage"] = "codex_execution"
                 try:
+                    # Do not impose a wall-clock budget on Codex. Remote task
+                    # budgets belong to the submitted Run's
+                    # execution_timeout_seconds. Codex may keep polling,
+                    # collecting evidence and writing its report after that
+                    # Run reaches a terminal state.
                     result = subprocess.run(invocation, input=prompt, stdout=events, stderr=errors,
-                                            timeout=args.timeout, check=False)
+                                            check=False)
                     summary.update(status="agent_finished" if result.returncode == 0 else "agent_failed",
                                    exit_code=result.returncode)
-                except subprocess.TimeoutExpired:
-                    summary["status"] = "agent_timeout"
+                except KeyboardInterrupt:
+                    summary["status"] = "operator_interrupted"
             # CLI success is deliberately not a business acceptance result.
             summary["acceptance"] = "pending_independent_review"
     except Exception as exc:

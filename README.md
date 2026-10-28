@@ -23,11 +23,11 @@
 | [Embedding](capability_services/embedding_http/README.md) | `embedding-http/v1` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
 | [Volcano](capability_services/volcano_http/README.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
 | [Grafana](capability_services/grafana_http/README.md) | `grafana-http/v5` | 查询仪表盘、Prometheus 指标、GPU 利用率及 GPU Arena，按 namespace 统计 GPU 小时 |
-| [AutoPaper](capability_services/autopaper_http/README.md) | `autopaper-http/v1` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
-| [Suanli Cloud](capability_services/suanlicloud_http/README.md) | `suanlicloud-http/v5` | 查询区域、节点、镜像和实例，创建及管理 VM |
-| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | `suanli-vm-ssh-http/v4` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
+| [AutoPaper](capability_services/autopaper_http/README.md) | `autopaper-http/v2` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
+| [Suanli Cloud](capability_services/suanlicloud_http/README.md) | `suanlicloud-http/v6` | 查询区域、节点、镜像和实例，创建及管理 VM |
+| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | `suanli-vm-ssh-http/v5` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
 | [普通 VM SSH](capability_services/vm_ssh_http/README.md) | `vm-ssh-http/v5` | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
-| [Outline](capability_services/outline_http/README.md) | `outline-http/v3` | 查询、检索、创建和更新文档等受限操作 |
+| [Outline](capability_services/outline_http/README.md) | `outline-http/v4` | 查询、检索、读取正文、创建和更新文档等受限操作 |
 
 表中版本对应仓库内的包模板；已部署实例的版本和可用动作以 GRIP DESCRIBE 为准。
 Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数据与完整性信息；它衡量资源分配，不能直接代表实际计算量或个人使用量。
@@ -126,6 +126,10 @@ SDK 0.8、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部�
 一个包可以导出多个能力。每个导出包含能力描述、输入输出契约（`io_contract`）、效果类别、权限声明和重放安全信息；有实现的包还包含 `body`，例如程序引用或固定 digest 的容器镜像。
 
 输入输出契约不仅描述 JSON 字段，也可以表达成功语义及验证器。**格式正确、HTTP 成功或命令退出成功，不自动等于用户的业务目标已经达成。** 声明了成功语义但没有自动验证器时，系统可以要求人工确认。
+
+SDK 0.9 提供紧凑资源目录、契约校验调用、持久调用预算账本和分布式 map/reduce 构造器，见 [常用工作流](skills/personal-computing-space/references/reliable-workflows.md)。预算账本只约束使用该 helper 的调用，不能替代服务端授权或独立验收。
+
+发布者可以显式选取文件，给服务包附加与不可变镜像关联的只读诊断源码。外部 agent 无需主机 SSH 即可检查参数映射和实现；读取源码不授予修改、激活或替换生产实例的权限。修复应发布新版本并单独验证，源码摘要也不等同于镜像构建证明。流程见 [能力包诊断](skills/personal-computing-space/references/diagnostics.md)。
 
 包还可以只有接口、没有实现：`interface + none/1`、`body=null`。这样的包用于描述资源如何使用，可以查询和发布，但不能安装到 Slave，也不会凭空赋予系统执行能力。需要系统实际调用 VM 时，仍需 VM SSH 这类带实现的包。
 
@@ -278,9 +282,9 @@ python -m venv .venv
 
 部分集成和 E2E 测试需要运行中的数据库或 Compose 栈。`./scripts/test-e2e.sh` 仅检查已启动栈的基础健康和节点发现，不代表完整任务验收。HTTP 能力包和多节点执行可分别参考 `scripts/accept-container-http.py`、`tests/e2e/`。
 
-外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与源码上下文，按资源发现、远端计算、服务调用及生命周期分别核验。[初轮报告](docs/validation/2026-10-27-skill-only-live.md) 保留原始失败，[修复后完整用例复测](docs/validation/2026-10-27-skill-only-rerun.md) 记录各轮独立结果、认证状态及当前部署限制。
+外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与项目 checkout；可以通过公开接口读取当前能力包主动发布的诊断源码。按资源发现、远端计算、服务调用及生命周期分别核验。[初轮报告](docs/validation/2026-10-27-skill-only-live.md) 保留原始失败，[修复后完整用例复测](docs/validation/2026-10-27-skill-only-rerun.md) 记录各轮独立结果、认证状态及当前部署限制。
 
-最新的 [同一 skill 六任务复测](docs/validation/2026-10-27-skill-only-expanded.md) 在当前资源上发现了资源漏发现、参数与编排错误、超预算误报通过和凭据输出等问题。部分真实业务调用成功，但六项完整验收均未通过，尚不能宣称仅凭 skill 可以稳定独立交付。
+[六任务基线复测](docs/validation/2026-10-27-skill-only-expanded.md) 保留资源漏发现、参数与编排错误、超预算误报通过和凭据输出等问题。[修复与源码诊断复测](docs/validation/2026-10-28-skill-only-repair.md) 记录 Outline 正文修复、Observer 并发状态修复、SDK 0.9、凭据代理及真实任务结果。业务调用成功与完整验收分开统计，目前仍不能宣称仅凭 skill 可以稳定独立交付。
 
 不依赖真实模型服务的测试栈使用 Fake coding agent：
 

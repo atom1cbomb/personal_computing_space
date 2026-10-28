@@ -42,6 +42,17 @@ Each exported action has a small input/output schema in `schemas/` and an
 IoContract in `contracts/`. The package example is updated from those files by
 `python scripts/generate_service_contracts.py`; use its `--check` mode in CI.
 
+Package v4 uses `id` for `documents_info` and `documents_documents`, matching
+the upstream API. `documents_info` returns the document body in
+`result.data.text`; `documents_documents` lists child documents and is not a
+body read. The gateway normalizes the legacy `documentId` field for older
+contracts, but v4 callers must follow the published `id` input schema.
+
+For opt-in read-only diagnostics, publish with
+`ServicePackage.publish(..., source_files=["server.py", "Dockerfile"])` using
+the immutable image built from those reviewed files. The source bundle contains
+no credentials and does not grant permission to change an existing deployment.
+
 The IoContracts keep `success_semantics` null because the gateway treats a
 successful Outline JSON response matching the output schema as sufficient.
 Stronger document-level criteria require a deterministic validator rather than

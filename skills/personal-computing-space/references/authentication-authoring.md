@@ -166,8 +166,8 @@ system and are not fields the gateway should add to this protocol.
   version upgrade does not automatically inherit another digest's state volume.
 - Define precedence if a gateway supports both mounted and interactive
   credentials. Reject conflicting sources rather than silently changing the
-  effective account. Grafana's current implementation rejects interactive login
-  when mounted profile credentials exist.
+  effective account. Reject conflicting sources rather than silently changing
+  the effective account.
 
 Detect real credential expiry through a bounded upstream access check. A token
 file's presence, an HTTP 200 login page or a subprocess exit code alone is not
@@ -178,13 +178,10 @@ previous verified success only for a bounded interval; a new challenge, failure
 or timeout must end that grace period. Explicit auth-start clears stale attempts
 and cached success before checking the new attempt.
 
-Distinguish normal token rotation from actual credential expiry. For example,
-Grafana 13.2.4 returns `401` with `messageId=session.token.rotate`; the Grafana
-v4 gateway performs the fixed same-origin `POST /api/user/auth-tokens/rotate`,
-persists the updated cookie and retries the original read once under its
-instance lock. Plain/revoked-session 401s still require login, while renewal
-network/service failures are auth_failed. Do not turn every HTTP 401 into a QR
-prompt or confuse a rotation interval with the lifetime of a user's login.
+Distinguish normal token rotation from actual credential expiry using the
+provider behavior declared by the package. A transient renewal failure is not
+proof that a user must log in. Do not turn every HTTP 401 into a browser prompt
+or confuse a rotation interval with the lifetime of a user's login.
 
 Reauthentication uses the same activation/resource URI and current revision.
 Observer invalidates the previous browser challenge, rejects stopped/stale
@@ -215,12 +212,11 @@ are different deadlines.
    replaced session callbacks. Confirm DESCRIBE omits private bridge context and
    credentials. For persistent state, verify restart and provider refresh.
 
-In a Loom source checkout, `capability_services/suanli_vm_ssh_http` demonstrates
-redirect, `grafana_http` browser-cookie, `kubernetes_http` device-code, and
-`vm_ssh_http`, `outline_http`, `suanlicloud_http` credential-profile. Reuse the
-matching contract and tests, not their provider-specific login assumptions.
-If a provider cannot fit these interactions, extend the protocol/runtime/SDK
-explicitly before promising support in a package declaration.
+Capability packages in a source checkout may provide examples and tests for
+their own interaction modes. Reuse the matching package contract and tests,
+not assumptions from another provider. If a provider cannot fit these
+interactions, extend the protocol/runtime/SDK explicitly before promising
+support in a package declaration.
 
 ## Service interaction and restart recovery
 

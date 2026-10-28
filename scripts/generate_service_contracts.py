@@ -85,8 +85,8 @@ def outline_definitions() -> dict[str, dict[str, Any]]:
         "collections-info": obj(["id"], id=string()),
         "collections-documents": obj(["id"], id=string()),
         "documents-list": empty,
-        "documents-info": obj(["documentId"], documentId=string()),
-        "documents-documents": obj(["documentId"], documentId=string()),
+        "documents-info": obj(["id"], id=string()),
+        "documents-documents": obj(["id"], id=string()),
         "documents-search-titles": obj(["query"], query=string()),
         "documents-search": obj(["query"], query=string()),
         "documents-create": obj(["collectionId", "title"], collectionId=string(), title=string()),
@@ -101,6 +101,12 @@ def outline_definitions() -> dict[str, dict[str, Any]]:
             "input": input_schema,
             "output": obj(["action", "result"], action=string(const=internal_name), result=obj()),
         }
+    result["documents-info"]["output"]["properties"]["result"] = obj(
+        ["data"], data=obj(["id", "title", "text"], id=string(), title=string(),
+                          text=string(),
+                          url=string()))
+    result["documents-documents"]["output"]["properties"]["result"] = obj(
+        ["data"], data=array(obj(id=string(), title=string(), url=string(), children=array(obj()))))
     return result
 
 

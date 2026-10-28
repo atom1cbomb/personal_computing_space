@@ -7,7 +7,35 @@
     },
     "result": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {}
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "data"
+      ]
     }
   },
   "required": [

@@ -2,5 +2,5 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-documents",
   "name": "documents_documents",
-  "description": "Documents documents through the outline-http activation."
+  "description": "List a document's child navigation tree by parent id. Returns titles, ids, URLs and children in result.data; this is not the document body. Use documents_info to read full text."
 }

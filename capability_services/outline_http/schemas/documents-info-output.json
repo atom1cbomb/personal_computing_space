@@ -7,7 +7,33 @@
     },
     "result": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "data": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ]
     }
   },
   "required": [

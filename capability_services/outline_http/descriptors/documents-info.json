@@ -2,5 +2,5 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-info",
   "name": "documents_info",
-  "description": "Documents info through the outline-http activation."
+  "description": "Read one document's full Markdown body and metadata by id. The response is result.data with id, title, text and url. Use this action for facts and citations from the document body."
 }

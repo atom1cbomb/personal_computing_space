@@ -230,6 +230,12 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
             if external["invalid"]:
                 return Response([], 200)
             if directory == "outline_http":
+                if url.endswith("/documents.info"):
+                    assert "id" in data and "documentId" not in data
+                    return Response({"ok": True, "data": {"id": data["id"], "title": "Fixture", "text": "Document body", "url": "/doc/fixture"}}, 200)
+                if url.endswith("/documents.documents"):
+                    assert "id" in data and "documentId" not in data
+                    return Response({"ok": True, "data": []}, 200)
                 return Response({"ok": True, "data": {"id": "fixture-document"}}, 200)
             action = data["Action"]
             key = {"DescribeRegions": "Regions", "DescribeZones": "Zones", "DescribeImages": "Images", "DescribeNodes": "Nodes", "DescribeInstances": "Instances", "RunInstances": "Instances", "DescribeInstanceStatus": "InstanceStatuses"}.get(action, "StateTransitions")

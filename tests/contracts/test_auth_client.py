@@ -164,6 +164,31 @@ async def test_bridge_keeps_credentials_in_post_body_and_enforces_observer_origi
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("detail,expected", [
+    ("browser_callback_failed", "browser_callback_failed"),
+    ("browser_session_not_found", "browser_session_not_found"),
+    ("private-token-do-not-display", "observer_bridge_failed"),
+    ({"credential": "private-token"}, "observer_bridge_failed"),
+])
+async def test_bridge_reports_only_allowlisted_failure_stages(detail, expected):
+    observer = Observer()
+    observer.transport = httpx.MockTransport(lambda _: httpx.Response(409, json={"detail": detail}))
+    login = Login("resource", lambda: observer)
+    with pytest.raises(RuntimeError, match="^" + expected + "$"):
+        await login._bridge(observer, observer.auth["client"], "callback")
+
+
+async def test_bridge_timeout_is_distinct_and_does_not_echo_request_credentials():
+    observer = Observer()
+
+    def timeout(request):
+        raise httpx.ReadTimeout("private-provider-token", request=request)
+
+    observer.transport = httpx.MockTransport(timeout)
+    with pytest.raises(RuntimeError, match="^observer_bridge_timeout$"):
+        await Login("resource", lambda: observer)._bridge(observer, observer.auth["client"], "open")
+
+
 async def test_declared_idp_uses_a_persistent_profile_and_reuses_saved_cookie(tmp_path, monkeypatch):
     opened: list[Path] = []
     closed = []

@@ -14,7 +14,7 @@
 | --- | --- |
 | 唯一项目知识 | `scripts/build_agent_skill.py` 生成的 `personal-computing-space.zip`，包含完整 skill 和独立 SDK wheel |
 | 任务 | 自然语言目标、数据生成规则、资源/时间预算、允许的副作用、验收标准；通过 stdin 输入 |
-| 算力空间连接 | Observer URL、GRIP authority、workspace ID；凭据以私有 token 文件注入 |
+| 算力空间连接 | Observer URL、GRIP authority、workspace ID；代理模式只注入临时连接凭据 |
 | Codex 认证 | 独立的 Codex `auth.json`，或下述最小模型服务配置；不复制宿主机整个 `.codex` 或其中的配置与历史 |
 | 基础工具 | 固定版本 Codex、Python 3.12、pip、Git、shell 和通用系统库 |
 
@@ -36,13 +36,18 @@ git rev-parse HEAD
 
 记录提交号、ZIP 摘要和 wheel 版本。ZIP 必须包含一个独立 `loom-orchestration` wheel，其中没有 `loom_v2` 服务端模块。部署运行着哪个服务版本，应由操作员另行记录，不能只拿本地 HEAD 当作生产版本。
 
-测试宿主机需要 Linux、Docker、Python 3、`nsenter`、`iptables`、`ip6tables`。以下文件只进入操作员目录，不作为 agent 上下文：
+测试宿主机需要 Linux、Docker、Python 3、`nsenter`、`iptables`、`ip6tables`。运行前同时执行
+`docker info` 并检查退出码；`command -v docker` 只能证明 CLI 或 host-side shim 在
+`PATH` 中，不能证明 daemon 或 WSL integration 可用。若 Docker shim 把诊断文字写到
+stdout，编排 Driver 可能将其误判为 JSON 协议帧，必须先记录为
+`orchestrator_runtime_unavailable` 环境阻塞。以下文件只进入操作员目录，不作为 agent 上下文：
 
 ```bash
 ssh -o ForwardAgent=no root@9.0.3.9 \
   'install -d -m 700 /root/loom-skill-validation /root/loom-skill-validation/image'
 scp dist/skill-validation/personal-computing-space.zip \
-  scripts/run_skill_validation.py root@9.0.3.9:/root/loom-skill-validation/
+  scripts/run_skill_validation.py scripts/skill_validation_proxy.py \
+  root@9.0.3.9:/root/loom-skill-validation/
 scp deploy/skill-validation/Dockerfile \
   root@9.0.3.9:/root/loom-skill-validation/image/
 ```
@@ -82,12 +87,14 @@ python run_skill_validation.py \
 
 ```text
 /root/loom-skill-validation/private/grip-token
-/root/loom-skill-validation/private/codex-auth.json
+/root/loom-skill-validation/private/codex-provider.json
 ```
 
 目录权限为 0700，文件为 0600。这些文件既不进入 Git，也不进入 skill ZIP、任务提示词或执行报告。不要复制宿主机全部 Codex 配置。
 
-使用自定义模型服务时，将 `--codex-auth-file` 替换为 `--codex-provider-file private/codex-provider.json`。该私有 JSON 只允许 `model`、`base_url`、`wire_api`（固定为 `responses`）和 `api_key` 四个字段；由操作员从已授权的模型配置中提取。运行器拒绝额外配置和 URL 内嵌凭据，把密钥写入容器临时 home，在启动 Codex 时读取，并从其工具子进程环境中排除该变量。报告只保留模型和服务地址，不复制宿主机的 skill、MCP、插件或历史。
+以下运行示例使用 `--codex-provider-file private/codex-provider.json` 的代理模式。该私有 JSON 只允许 `model`、`base_url`、`wire_api`（固定为 `responses`）和 `api_key` 四个字段；由操作员从已授权的模型配置中提取。运行器拒绝额外配置和 URL 内嵌凭据，并启动 root 所有的本地代理。真实 GRIP token 和模型密钥仅放在 root 可读的临时目录；UID 1000 的被测 agent 只获得临时占位凭据，通过固定上游代理调用。预检必须确认 agent 无法读取代理配置。代理随容器销毁，报告不包含密钥。
+
+代理隔离共享密钥，但不缩小共享账号的 Workspace 权限，也不是完整的多租户授权边界。`--codex-auth-file` 兼容路径仍需向 Codex 提供认证文件，不具备上述密钥不可读保证；审计报告必须写明使用的模式。不要把“从子进程环境删除变量”当成无法读取文件或输出凭据的保证。
 
 对 HTTP Observer，明确限定为操作员批准的可信测试网络；agent 依据 skill 显式启用 SDK 的 HTTP 支持。公网部署使用 HTTPS。需要服务直连时，可信 endpoint/audience 必须来自操作员配置和 DESCRIBE，不能让 agent 猜地址或绕过证书验证。
 
@@ -133,12 +140,18 @@ T5 只使用本次创建的任务；明确授权取消，不中断其他用户�
 允许上传本例计算程序/契约、创建带唯一验证前缀的包和 Run。
 自行生成本例唯一前缀，将其用于 request_id、幂等键和创建对象名称；
 同一操作重试复用原键，不同轮次不得复用。
-最多 1 个业务 Run、4 个执行节点、2 个并发节点，任务执行限时 300 秒。
+最多 1 个业务 Run、4 个执行节点、2 个并发节点。对使用
+`SubmissionBuilder` 的任务，在提交的 Run 中设置
+`resource_budget.execution_timeout_seconds`（本例建议 1800 秒，交互式或资源
+创建任务按能力包和任务需要设置更长）；其他 task action 按其已部署的 Run
+契约和服务端默认 deadline 执行。这个预算约束远端 Driver/节点执行，不是
+Codex 的处理时间预算。Codex 可以在 Run 终止后继续读取终态、保存证据并写报告。
 不创建收费 VM，不修改已有业务资源、服务配置或认证。
 你可以在本地生成输入和验算，但实际计算必须有算力空间远端执行证据。
 
-总工作时间限 15 分钟。遇到缺资源、认证、接口或就绪条件时，输出具体 blocker
-及公开接口证据，不通过 SSH 修复，不虚构结果，也不要放宽原验收标准。
+遇到缺资源、认证、接口或就绪条件时，输出具体 blocker 及公开接口证据，不通过
+SSH 修复，不虚构结果，也不要放宽原验收标准。不要自行增加 Codex 会话的墙钟
+截止时间；如果需要停止卡住的会话，由操作员手动中断并记录中断点。
 需要用户认证时明确说明并等待，不自行接受需要人工判断的成功结果。
 
 在工作区写 report.json 和 report.md，报告 status（passed/failed/blocked）、
@@ -157,13 +170,13 @@ python run_skill_validation.py \
   --observer http://9.0.16.66:8080 \
   --authority loom.local --workspace workspace-default \
   --grip-token-file private/grip-token \
-  --codex-auth-file private/codex-auth.json \
-  --timeout 900
+  --codex-provider-file private/codex-provider.json \
+  --model gpt-6.1-sol --reasoning-effort max
 ```
 
-此地址来自本次工作空间的部署配置；复用时替换为实际公开地址。运行器默认采用该 CLI 的默认模型；如果验收固定模型，显式传 `--model` 并记录实际启动模型，不从操作员用户配置隐式继承。每次 `--output` 必须是新目录，避免污染上一轮证据。
+此地址来自本次工作空间的部署配置；复用时替换为实际公开地址。运行器默认采用该 CLI 的默认模型；如果验收固定模型，显式传 `--model` 和 `--reasoning-effort`，并记录实际启动模型及推理档位，不从操作员用户配置隐式继承。每次 `--output` 必须是新目录，避免污染上一轮证据。
 
-运行器把提示词通过 stdin 交给 `codex exec`，关闭插件、apps、web search 和子代理，使用临时会话。完整 JSONL 和 stderr 由宿主机保存，不挂入容器；`/work` 保存 agent 自己生成的内容。`agent_finished` 只表示 Codex 正常退出，业务验收始终等待独立复核。Codex 非交互执行、JSONL 和输出文件用法见 [OpenAI 官方文档](https://learn.chatgpt.com/docs/non-interactive-mode)。
+运行器把提示词通过 stdin 交给 `codex exec`，关闭插件、apps、web search 和子代理，使用临时会话。运行器不设置 Codex 的墙钟超时；由 Run 的 `execution_timeout_seconds` 约束远端业务执行。Codex 可以在远端 Run 完成、失败或超时后继续完成独立核对和报告。若操作员手动中断，记录 `operator_interrupted`，不能把它改写成远端 Run 超时。完整 JSONL 和 stderr 由宿主机保存，不挂入容器；`/work` 保存 agent 自己生成的内容。`agent_finished` 只表示 Codex 正常退出，业务验收始终等待独立复核。Codex 非交互执行、JSONL 和输出文件用法见 [OpenAI 官方文档](https://learn.chatgpt.com/docs/non-interactive-mode)。
 
 ## 独立复核
 
@@ -172,18 +185,21 @@ python run_skill_validation.py \
 1. 检查 `preflight.json`、skill 哈希、镜像 ID、CLI 版本、实际模型、起止时间及完整提示词。目录包含其他启用 skill、源码或既有文件时，本轮验收无效。
 2. 从 agent 报告取得 request_id/Run URI，再独立查询 Observer 的提交、Run、attempt 和结果引用。确认执行目标、节点数量、状态与输出 lineage；执行事件应落在本例时间范围内，防止固定幂等键返回旧 Run。不得把本地算出的正确数字冒充远端结果。
 3. 通过返回的内容引用取回原始结果，核对服务提供的内容摘要。引用及其 digest 以 Observer 为准，不为了通过验证而改写引用。
-4. 对确定性计算使用独立 oracle。例如 T2/T3 的期望值为 `count=10000`、`sum=50005000`、`sum_squares=333383335000`、`min=1`、`max=10000`。T3 另核对两个不同 Slave 的实际执行和汇总关系。
-5. 对动态服务结果，检查查询参数、时间窗口、来源、非空/缺失状态及语义约束；必要时另发一次只读查询交叉确认。动态数据不要求两次响应逐字一致，单次“HTTP 200”不能证明业务完成。
-6. 检查命令日志和生成代码是否访问 `/internal/v1/*`、`/worker/v1/*`、Driver 内部接口、源码仓库或主机 SSH。此检查发现违规行为；它不是完整网络审计或多租户安全证明。若需证明所有请求均符合路径白名单，应由操作员额外采集出口代理/服务端审计日志。
-7. 检查创建与清理台账。取消/超时后继续按公开接口核对远端状态；删除测试容器不会取消远端 Run，也不会释放 VM。不可删除的发布记录和结果内容作为本轮命名的证据保留，不能声称“全部删除”。
-8. 对结果目录、JSONL、stderr 和代码进行凭据扫描，包含本地已知 token 的明文、Base64、十六进制（含空白换行）匹配；通用规则和明文零命中不足以证明安全。发现实际凭据输出时中止该会话、限制原始证据访问，单独记录受影响凭据及失效处理，不能把删除容器等同于凭据已失效。原始资料默认私有，只有脱敏后的报告进入版本库；不要将完整日志或复制的认证文件提交。
-9. 核对本轮容器和网络均已删除；证据收集完成后，删除操作员为本轮复制的认证文件，保留原有账户配置。再次执行需要重新通过安全渠道准备凭据。
+4. 对资源关系、所有权或来源的结论，枚举所有相关 MCUE 资源并保留每条资源的 URI、`package`、`managed_by`、`state`、`activations`、labels/description 和能力包 descriptor。仅在 descriptor 或 MCUE 定义声明 identity/relationship 字段时做精确匹配；不能用 IP、显示名、包名或 URI 拼写推断两台资源相同或相关。
+5. 对确定性计算使用独立 oracle。例如 T2/T3 的期望值为 `count=10000`、`sum=50005000`、`sum_squares=333383335000`、`min=1`、`max=10000`。T3 另核对两个不同 Slave 的实际执行和汇总关系。
+6. 对动态服务结果，检查查询参数、时间窗口、来源、非空/缺失状态及语义约束；必要时另发一次只读查询交叉确认。动态数据不要求两次响应逐字一致，单次“HTTP 200”不能证明业务完成。
+7. 检查命令日志和生成代码是否访问 `/internal/v1/*`、`/worker/v1/*`、Driver 内部接口、源码仓库或主机 SSH。此检查发现违规行为；它不是完整网络审计或多租户安全证明。若需证明所有请求均符合路径白名单，应由操作员额外采集出口代理/服务端审计日志。
+8. 检查创建与清理台账。Run 到达 `execution_deadline_exceeded` 等远端终态后，继续按公开接口核对状态；删除测试容器不会取消远端 Run，也不会释放 VM。不可删除的发布记录和结果内容作为本轮命名的证据保留，不能声称“全部删除”。Codex 等待时间不作为业务预算；只有操作员手动中断或 agent 自己退出后仍缺报告，才记录报告交付问题。
+9. 对结果目录、JSONL、stderr 和代码进行凭据扫描，包含本地已知 token 的明文、Base64、十六进制（含空白换行）匹配；通用规则和明文零命中不足以证明安全。发现实际凭据输出时中止该会话、限制原始证据访问，单独记录受影响凭据及失效处理，不能把删除容器等同于凭据已失效。原始资料默认私有，只有脱敏后的报告进入版本库；不要将完整日志或复制的认证文件提交。
+10. 核对本轮容器和网络均已删除；证据收集完成后，删除操作员为本轮复制的认证文件，保留原有账户配置。再次执行需要重新通过安全渠道准备凭据。
 
 浏览器认证必须由人通过统一认证入口完成；标准无交互容器不会自动完成扫码。需要有人在场的用例应单独安排会话并记录 intervention，不能因任务退出而声称恢复已通过。不得向被测 Codex补入业务实现或修复方案；如确需提示，应将该轮标记为 assisted，另开干净会话复测。
 
 统一登录助手可以运行在操作员有浏览器的本机，不必从测试机下载文件或在测试容器中运行。认证绑定资源实例，隔离 agent 只需自己的 Observer 访问凭据即可调用已认证实例；不复制服务 Cookie。T6 必须在真实 `awaiting_auth` 出现后再登录，保留等待和恢复事件。若提交时实例已经 ready，可以验证已认证调用，但不能据此认定等待恢复通过，也不能撤销已有生产登录来补造前提。旧登录助手会话的过期状态与实例当前认证状态应分别核对。
 
-每轮修复都重新构建 ZIP 并记录摘要；只复跑受修改影响的用例时，应报告这是跨轮次覆盖，不能声称最终 ZIP 在全部用例中完成了一次统一运行。容器准备失败与 agent 业务失败分别记录，网络创建超时等隔离预检失败不能计作业务用例已执行。
+skill/SDK 修复后重新构建 ZIP 并记录摘要；仅修复服务端时可以使用相同冻结 ZIP，在新会话中记录新的部署版本。只复跑受修改影响的用例时，应报告这是跨轮次覆盖，不能声称最终组合在全部用例中完成了一次统一运行。容器准备失败与 agent 业务失败分别记录，网络创建超时等隔离预检失败不能计作业务用例已执行。
+
+如需诊断能力包，允许读取该包主动公开的当前版本源码；不提供 checkout 或历史测试答案。单独验证源码引用、内容摘要和镜像关联，并检查 agent 是否把读取权限误当成修改或切换生产实例的权限。源码关联是发布者声明，不能替代构建来源证明。记录 Run、结果内容和包等持久对象，不能因为没有修改业务文档就填“无新对象”。
 
 ## 结果判定与报告模板
 
@@ -196,6 +212,11 @@ python run_skill_validation.py \
 | `blocked_capability` | 资源、运行时、公开接口或元数据不能满足任务；记录具体缺口 |
 | `not_applicable` | 启动前已经确认本环境没有可选用例所需资源；不能事后用来改写失败 |
 
+`agent_finished`/`agent_failed` 是 Codex 进程状态，不是业务判定。运行器不设
+agent 墙钟截止时间；操作员若因测试机维护等原因手动中断，记录
+`operator_interrupted`，再依据已保存的 Run 终态和报告是否交付判定，不能把中断
+改写成 `execution_deadline_exceeded`。
+
 基础可用性至少要求 T1、T2 通过；服务使用能力另要求选定 T4 通过，多节点能力另要求 T3 通过。认证恢复、故障清理、新包部署和真实 VM 生命周期分别给结论，不从基础通过外推。
 
 报告至少记录：
@@ -205,7 +226,7 @@ python run_skill_validation.py \
 skill ZIP SHA256 / 源码提交 / SDK / Codex / 模型 / 镜像 ID：
 Observer 公开入口 / authority / workspace / 已知服务版本：
 隔离预检结论与证据位置：
-用例 / 前提 / 预算 / agent 状态 / 独立判定：
+用例 / 前提 / Run execution_timeout_seconds / agent 状态 / 独立判定：
 资源 URI / action URI / request_id / Run / 内容引用：
 实际输出 / 独立预期 / 差异：
 人工介入 / 重试 / 修复后新轮次：
@@ -218,5 +239,7 @@ Observer 公开入口 / authority / workspace / 已知服务版本：
 实测示例见 [2026-10-27 验证报告](2026-10-27-skill-only-live.md)：包含 agent 自报通过但独立复核失败、公开契约阻塞、真实服务调用通过三种结果。
 后续 [修复与完整用例复测](2026-10-27-skill-only-rerun.md) 保留各次失败及新轮次证据，并单独判定已认证调用、等待登录后恢复和包部署。
 最新 [同一 skill 六任务复测](2026-10-27-skill-only-expanded.md) 使用一份冻结发布物覆盖多个业务目标，同时检查结果正确性、预算、报告一致性和凭据输出边界。
+
+最新 [gpt-6.1-sol/max 复测](2026-10-28-skill-only-gpt61.md) 在 `root@9.0.3.9` 使用相同冻结 skill 重跑六个独立会话；历史运行器曾设置 Codex 墙钟上限，后续复测应取消该上限，只按 Run 终态、调用结果和报告交付判定。
 
 实现依据：[项目 skill](../../skills/personal-computing-space/SKILL.md)、[SDK 分发与用法](../../skills/personal-computing-space/references/sdk.md)、[服务 binding](../grip-service-bindings.md)、[能力包预检验证](../superpowers/reports/2026-10-26-package-deployment-preflight-validation.md)。Codex 的 skill 搜索位置与配置参考 [官方 skill 文档](https://learn.chatgpt.com/docs/build-skills) 和 [配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)；运行时以锁定版本的实际目录检查为准。

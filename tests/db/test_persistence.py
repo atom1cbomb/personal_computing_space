@@ -8,6 +8,33 @@ from loom_v2.db.models import RunRow
 from loom_v2.db.session import make_session_factory
 
 
+async def test_execution_transaction_reads_only_touched_runs_and_rolls_back_cache(tmp_path, monkeypatch):
+    import pytest
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'scoped.db'}")
+    repo = ObserverRepository(engine)
+    await repo.init_db()
+    for name in ["target", "history-one", "history-two"]:
+        await repo.open_run(name, name, name)
+    decoded = []
+    original = repo._record_from_row
+
+    def observe(row):
+        decoded.append(row.run_id)
+        return original(row)
+
+    monkeypatch.setattr(repo, "_record_from_row", observe)
+    with pytest.raises(RuntimeError, match="rollback_test"):
+        async with repo._execution_transaction():
+            record = await repo.get_run("target")
+            record.events.append({"phase": "must_rollback"})
+            await repo._persist(record)
+            raise RuntimeError("rollback_test")
+    assert decoded == ["target"]
+    for record in (await repo.get_run("target"), await ObserverRepository(engine).get_run("target")):
+        assert not any(e.get("phase") == "must_rollback" for e in record.events)
+    await engine.dispose()
+
+
 async def test_observer_repository_persists_run_snapshot():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     repo = ObserverRepository(engine)

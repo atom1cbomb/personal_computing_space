@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from copy import deepcopy
 from sqlalchemy.ext.asyncio import create_async_engine
 from unittest.mock import patch
@@ -338,6 +339,58 @@ async def test_dynamic_nodes_persist_across_repository_restart():
 
     assert restored.dynamic_nodes == [node]
     assert restored.events[-1]["phase"] == "node_accepted"
+
+
+async def test_result_stays_visible_when_execution_queue_refreshes_during_content_write(tmp_path, monkeypatch):
+    """Queue polling must not replace a Run while a terminal result is being saved."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'observer.db'}")
+    repo = ObserverRepository(engine)
+    await repo.init_db()
+    await _register_slave(repo, "slave-a", "slave-a-instance")
+    run, patched = await _dynamic_run(repo)
+    committed = await repo.commit(run.run_id, patched.draft_version, patched.draft_digest)
+    started = await repo.start(run.run_id, committed.version_id)
+    record = await repo.get_run(run.run_id)
+    package = next(p for p in record.capability_packages if p.package_id == "summarize")
+    input_ref = next(b.input_ref for b in record.draft.snapshot.node_input_bindings
+                     if b.node_id.endswith("/summarize"))
+    node = await repo.accept_node_intent(run.run_id, NodeIntent(
+        intent_id="interleaved-result", execution_id=started["execution_id"],
+        package_ref=ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest),
+        action_descriptor_ref=package.action_exports[0].action_descriptor_ref,
+        input_refs=[input_ref],
+    ), selected_target="slave-a")
+    attempt = await repo.dispatch_dynamic_node(run.run_id, node.node_id, target="slave-a")
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_put = repo.content_store.put
+
+    async def paused_put(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await original_put(*args, **kwargs)
+
+    monkeypatch.setattr(repo.content_store, "put", paused_put)
+    completion = asyncio.create_task(repo.record_dynamic_node_result(run.run_id, node.node_id, {
+        "attempt_id": attempt["attempt_id"], "execution_id": started["execution_id"],
+        "execution_epoch": 1, "value": {"count": 3, "sum": 6},
+    }))
+    await asyncio.wait_for(entered.wait(), 5)
+    poll = asyncio.create_task(repo.claim_next_execution(
+        workspace_id="workspace-default", driver_id="driver", driver_instance_id="driver-instance", driver_epoch=1,
+    ))
+    try:
+        # Before the fix this completes and replaces the in-memory Run with the
+        # pre-result database snapshot. After the fix it waits for the writer.
+        await asyncio.wait({poll}, timeout=.1)
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(completion, poll), 10)
+    for observed in (await repo.get_run(run.run_id), await ObserverRepository(engine).get_run(run.run_id)):
+        saved = next(a for a in observed.attempts if a["attempt_id"] == attempt["attempt_id"])
+        assert saved["state"] == "completed"
+        assert saved["result_ref"]
+        assert observed.dynamic_nodes[0].state == "completed"
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

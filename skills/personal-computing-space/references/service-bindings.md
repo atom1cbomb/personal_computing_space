@@ -37,12 +37,10 @@ mode. Package `runtime_binding.interaction` controls its exported interface:
   async context manager with `read`, `write`, `aclose`. No half-close, stream ID,
   transparent reconnection, or replay. A new channel is a new invocation.
 
-For example, a Volcano task offer can have `mode=request-reply` and an output
-schema `schemas/run-output/v1`; it returns a Run, requires Driver execution, and
-is not complete until that Run succeeds. A direct embedding export with
-`interaction=request-reply` returns its business output without an implicit Run.
-If declarations and schemas disagree, report the conflicting evidence rather
-than choosing an interpretation from the mode alone.
+For any package, the declared interaction and output schema determine whether
+the response is a Run reference or business data. If declarations and schemas
+disagree, report the conflicting evidence rather than choosing an interpretation
+from the mode alone.
 
 A business request can still be explicitly submitted with `run-package` for
 persistent task execution. A stream export cannot become a persistent task node.
@@ -74,19 +72,9 @@ that context or copy it into logs, Run inputs, content, or public attributes.
 Failed refresh retains only the previous grant's original expiry; expired
 channels close and new requests fail until credentials are refreshed.
 
-For Kubernetes service access, use `services-ensure` for an explicitly configured
-ordinary ClusterIP Service, then `service-access-status` and
-`open-service-stream({service_ref})`. Keep namespace/name/port/workload UID and
-selector in the activation's `service_targets`, not in the stream input. It
-rejects headless/external/unowned/recreated Services. The capability owns its
-port-forward process, reconnects with backoff, and aborts old streams. Kubeconfig
-and kubelogin cache stay in that activation; the embedding package receives a
-GRIP grant, never Kubernetes credentials.
-
-The embedding package exposes direct `embed`/`info` and a separate native
-AutoPaper adapter (`/health`, `/info`, `/embed-one`, `/embed`). Operator deployment
-can publish only the consumer port to host loopback. Read actual model identity
-and dimension before registering `model/embedding` attributes. `network/service`
-attributes link the Service to its Kubernetes resource. Reauthentication follows
-[authentication-authoring.md](authentication-authoring.md); version upgrades and
-same-version restart recovery are separate operations.
+Any service-specific dependency, stream setup, target identity, routing policy
+or result interpretation belongs to the selected package's descriptor. Read
+its declared dependency grants and service actions before configuring an
+activation. Keep private provider credentials inside the activation and pass
+only the package-declared GRIP grant to a dependent package. Reauthentication,
+version upgrades and restart recovery remain separate operations.

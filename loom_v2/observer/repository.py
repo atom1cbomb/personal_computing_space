@@ -81,6 +81,7 @@ from loom_v2.contracts.refs import (
 )
 from loom_v2.settings import Settings
 from loom_v2.slave.executor import default_registry
+from loom_v2.driver.orchestrator import docker_runtime_available
 from loom_v2.contracts.errors import DomainError, DomainErrorEnvelope
 from loom_v2.observer.orchestration_preflight import (
     OrchestrationPreflightError,
@@ -347,6 +348,8 @@ class ObserverRepository:
         self._execution_queue_lock = asyncio.Lock()
         self._execution_session = ContextVar("execution_session", default=None)
         self._execution_in_transaction = ContextVar("execution_in_transaction", default=False)
+        self._execution_loaded_runs = ContextVar("execution_loaded_runs", default=None)
+        self._execution_loaded_requests = ContextVar("execution_loaded_requests", default=None)
 
     @asynccontextmanager
     async def _execution_transaction(self):
@@ -354,9 +357,14 @@ class ObserverRepository:
             yield
             return
         async with self._execution_queue_lock:
-            before_runs = deepcopy(self.runs)
-            before_requests = deepcopy(self.execution_requests)
+            # Snapshot the index, then copy/refresh records on first access.
+            # Reloading all historical Runs on every queue poll/health update
+            # blocks the event loop and can expire otherwise healthy leases.
+            before_runs = deepcopy(self.runs) if self.sessions is None else self.runs.copy()
+            before_requests = deepcopy(self.execution_requests) if self.sessions is None else self.execution_requests.copy()
             token = self._execution_in_transaction.set(True)
+            runs_token = self._execution_loaded_runs.set(set())
+            requests_token = self._execution_loaded_requests.set(set())
             try:
                 if self.sessions is None:
                     yield
@@ -368,10 +376,6 @@ class ObserverRepository:
                             await session.execute(text("SELECT pg_advisory_xact_lock(729413806)"))
                         session_token = self._execution_session.set(session)
                         try:
-                            rows = (await session.scalars(select(RunRow).with_for_update())).all()
-                            self.runs.update({row.run_id: self._record_from_row(row) for row in rows})
-                            rows = (await session.scalars(select(RunExecutionRequestRow).with_for_update())).all()
-                            self.execution_requests = {(row.workspace_id, row.request_id): self._execution_request_from_row(row) for row in rows}
                             yield
                         finally:
                             self._execution_session.reset(session_token)
@@ -381,6 +385,8 @@ class ObserverRepository:
                 raise
             finally:
                 self._execution_in_transaction.reset(token)
+                self._execution_loaded_runs.reset(runs_token)
+                self._execution_loaded_requests.reset(requests_token)
 
     @asynccontextmanager
     async def _execution_write_session(self):
@@ -2365,6 +2371,9 @@ class ObserverRepository:
         return normalized
 
     async def _persist(self, record: RunRecord) -> None:
+        loaded = self._execution_loaded_runs.get()
+        if loaded is not None:
+            loaded.add(record.run_id)
         if self.sessions is None:
             return
         async with self._execution_write_session() as session:
@@ -2395,6 +2404,15 @@ class ObserverRepository:
                     setattr(row, key, value)
 
     async def _load(self, run_id: str) -> RunRecord:
+        loaded = self._execution_loaded_runs.get()
+        if loaded is not None and run_id not in loaded:
+            session = self._execution_session.get()
+            if session is not None:
+                row = await session.get(RunRow, run_id, with_for_update=True)
+                if row is None:
+                    raise KeyError(run_id)
+                self.runs[run_id] = self._record_from_row(row)
+            loaded.add(run_id)
         if run_id in self.runs:
             return self.runs[run_id]
         if self.sessions is None:
@@ -2414,6 +2432,9 @@ class ObserverRepository:
             rows = (await session.scalars(select(RunRow).order_by(RunRow.run_id))).all()
         records: list[RunRecord] = []
         for row in rows:
+            if self._execution_in_transaction.get():
+                records.append(await self._load(row.run_id))
+                continue
             record = self.runs.get(row.run_id)
             if record is None:
                 record = self._record_from_row(row)
@@ -2486,6 +2507,17 @@ class ObserverRepository:
 
     async def _load_execution_request(self, workspace_id: str, request_id: str) -> ExecutionRequest | None:
         key = (workspace_id, request_id)
+        loaded = self._execution_loaded_requests.get()
+        if loaded is not None and key not in loaded:
+            session = self._execution_session.get()
+            if session is not None:
+                row = await session.get(RunExecutionRequestRow, key, with_for_update=True)
+                if row is None:
+                    self.execution_requests.pop(key, None)
+                else:
+                    self.execution_requests[key] = self._execution_request_from_row(row)
+            loaded.add(key)
+            return self.execution_requests.get(key)
         cached = self.execution_requests.get(key)
         if cached is not None:
             return cached
@@ -2500,6 +2532,9 @@ class ObserverRepository:
         return item
 
     async def _persist_execution_request(self, item: ExecutionRequest) -> None:
+        loaded = self._execution_loaded_requests.get()
+        if loaded is not None:
+            loaded.add((item.workspace_id, item.request_id))
         item.updated_at = datetime.now(timezone.utc)
         self.execution_requests[(item.workspace_id, item.request_id)] = item
         if self.sessions is None:
@@ -2535,11 +2570,15 @@ class ObserverRepository:
                     setattr(row, key, value)
 
     async def list_execution_requests(self, workspace_id: str, *, states: set[str] | None = None) -> list[ExecutionRequest]:
-        if self.sessions is not None and not self._execution_in_transaction.get():
+        if self.sessions is not None:
+            statement = select(RunExecutionRequestRow).where(RunExecutionRequestRow.workspace_id == workspace_id).order_by(RunExecutionRequestRow.created_at)
+            if states:
+                statement = statement.where(RunExecutionRequestRow.state.in_(states))
+            session = self._execution_session.get()
+            if session is not None:
+                rows = (await session.scalars(statement.with_for_update())).all()
+                return [await self._load_execution_request(row.workspace_id, row.request_id) for row in rows]
             async with self.sessions() as session:
-                statement = select(RunExecutionRequestRow).where(RunExecutionRequestRow.workspace_id == workspace_id).order_by(RunExecutionRequestRow.created_at)
-                if states:
-                    statement = statement.where(RunExecutionRequestRow.state.in_(states))
                 rows = (await session.scalars(statement)).all()
             items = [self._execution_request_from_row(row) for row in rows]
             for item in items:
@@ -2548,6 +2587,8 @@ class ObserverRepository:
         items = [item for item in self.execution_requests.values() if item.workspace_id == workspace_id]
         if states:
             items = [item for item in items if item.state in states]
+        if self._execution_in_transaction.get():
+            items = [await self._load_execution_request(item.workspace_id, item.request_id) for item in items]
         return sorted(items, key=lambda item: item.created_at)
 
     async def submit_run_plan(
@@ -3446,6 +3487,7 @@ class ObserverRepository:
             raise KeyError(package.version_ref)
         return record
 
+    @execution_transaction
     async def set_capability_desired(
         self,
         package_ref: str | ResourceRef,
@@ -3656,6 +3698,7 @@ class ObserverRepository:
             self._project_ready_capabilities(target_slave)
             return activation
 
+    @execution_transaction
     async def record_capability_health(
         self, report: CapabilityHealthReport, *, run_id: str | None = None,
         authentication_restart: bool = False,
@@ -3960,7 +4003,8 @@ class ObserverRepository:
             blockers.append({"code": "orchestration_not_replayable", "package_ref": self._package_ref(package)})
         if max_live_nodes > max_nodes:
             blockers.append({"code": "orchestration_live_node_limit_exceeded", "package_ref": self._package_ref(package), "limit": max_live_nodes, "max_nodes": max_nodes})
-        if self.orchestrator_runtime_available is not False and shutil.which("docker") is None:
+        docker_bin = shutil.which("docker")
+        if self.orchestrator_runtime_available is not False and not docker_runtime_available(docker_bin):
             blockers.append({"code": "orchestrator_runtime_unavailable"})
         if run_id is not None and not self._package_visible_to_run(package, run_id):
             blockers.append({"code": "capability_package_scope_mismatch", "package_ref": self._package_ref(package)})
@@ -5157,6 +5201,7 @@ class ObserverRepository:
             "orchestration_program_ref": package_body_ref(package, "program_content_ref").model_dump(mode="json") if package is not None else None,
         }
 
+    @execution_transaction
     async def accept_node_intent(
         self,
         run_id: str,
@@ -5435,6 +5480,7 @@ class ObserverRepository:
         await self._persist(record)
         return node
 
+    @execution_transaction
     async def dispatch_dynamic_node(self, run_id: str, node_id: str, *, target: str) -> dict[str, Any]:
         record = await self._load(run_id)
         workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else "workspace-default"
@@ -5512,6 +5558,7 @@ class ObserverRepository:
         await self._persist(record)
         return deepcopy(attempt)
 
+    @execution_transaction
     async def reassign_dynamic_node(
         self,
         run_id: str,
@@ -5676,6 +5723,7 @@ class ObserverRepository:
             self.runs[run_id] = updated
             return deepcopy(replacement)
 
+    @execution_transaction
     async def record_dynamic_node_result(self, run_id: str, node_id: str, result: dict[str, Any]) -> DynamicNode:
         record = await self._load(run_id)
         if record.state not in {"running", "cleaning_up"} or record.execution_id is None:
@@ -5885,6 +5933,7 @@ class ObserverRepository:
             await self._settle_execution_request(run_id, execution_id=record.execution_id, outcome=record.outcome)
         return node
 
+    @execution_transaction
     async def fail_dynamic_node(
         self,
         run_id: str,

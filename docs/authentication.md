@@ -1,6 +1,6 @@
 # 能力包统一认证
 
-统一登录由 SDK 0.7 的 `loom-auth` 提供，适用于 `suanli-vm-ssh-http/v5`、
+统一登录从 SDK 0.7 起由 `loom-auth` 提供，适用于 `suanli-vm-ssh-http/v5`、
 `kubernetes-http/v6`、`grafana-http/v4` 和 `autopaper-http/v2`。AutoPaper 还使用
 SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_services/autopaper_http/README.md)。
 使用匹配的 Observer 和 HTTP runtime。
@@ -15,7 +15,7 @@ SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_servi
 在用户浏览器所在机器安装 SDK 的 `auth` 可选依赖，再安装 Chromium：
 
 ```sh
-python -m pip install './loom_orchestration-0.7.0-py3-none-any.whl[auth]'
+python -m pip install './loom_orchestration-0.9.1-py3-none-any.whl[auth]'
 python -m playwright install chromium
 python -m loom_orchestration.auth \
   --observer https://observer.example \
@@ -39,6 +39,11 @@ IdP 的后续资源会先用已有 Cookie/本地会话尝试认证；会话无�
 客户端会重新 DESCRIBE 并调用 `auth-start`，无需重启程序或再次激活；启用本地
 档案时，会先尝试复用该 IdP 的浏览器会话，失败后再要求人工登录。界面只在同一
 revision 的激活达到 ready/authenticated 后显示完成。
+
+SDK 0.9.1 分别显示连接、准备远端认证、建立认证连接、打开浏览器和验证阶段，
+并显示当前阶段等待秒数。浏览器要等远端挑战建立后才打开；弹窗慢时先检查
+页面停在哪个阶段，不要连续重启认证。回调失败、会话失效和连接超时分别显示，
+只展示固定错误代码，不展示上游错误正文、回调 URL 或凭据。
 
 ## 协议
 

@@ -22,6 +22,7 @@ class ServicePackage:
     async def publish(
         self, client: LoomClient, *, image_ref: str,
         dependencies: dict[str, str] | None = None,
+        source_files: list[str] | None = None,
     ) -> str:
         """Return the package's immutable GRIP URI supplied by Observer.
 
@@ -30,6 +31,25 @@ class ServicePackage:
         """
         if not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image_ref):
             raise ValueError("immutable_image_ref_required")
+        source_ref = None
+        if source_files is not None:
+            # Explicit opt-in: never upload a directory recursively, credentials,
+            # build caches, or the operator's surrounding checkout implicitly.
+            contents = {}
+            root = self.directory.resolve()
+            for name in source_files:
+                path = Path(name)
+                if path.is_absolute() or ".." in path.parts or not path.parts:
+                    raise ValueError("source_path_invalid")
+                file = self.directory / path
+                if file.is_symlink() or not file.is_file() or not file.resolve().is_relative_to(root):
+                    raise ValueError("source_path_invalid")
+                contents[path.as_posix()] = file.read_text(encoding="utf-8")
+            if not contents or sum(len(v.encode()) for v in contents.values()) > 2 * 1024 * 1024:
+                raise ValueError("source_bundle_size_invalid")
+            source_ref = await client.upload_content({
+                "format": "loom.source-bundle.v1", "image_ref": image_ref, "files": contents,
+            }, media_type="application/json", name=f"{self.manifest['package_id']}/diagnostic-source")
         refs: dict[str, dict[str, Any]] = {}
         for coordinate, target in (dependencies or {}).items():
             description = await client.describe(target)
@@ -109,6 +129,8 @@ class ServicePackage:
                     descriptor = {key: client.names.root + value.removeprefix(Names().root) if key == "resource_id" else resolve(value) for key, value in source.items()}
                 except PendingDependency:
                     continue
+                if source_ref is not None:
+                    descriptor["diagnostics"] = {"source_bundle_ref": wire(source_ref), "image_ref": image_ref}
                 ref = await client.upload_content(descriptor, media_type="application/vnd.loom.action-descriptor+json", name=f"{prefix}/descriptors/{identity.rsplit('/', 1)[-1]}")
                 refs[identity] = ref.model_dump(mode="json", include={"resource_id", "version_or_digest", "identity_criterion"}, exclude_none=True)
                 del pending[identity]

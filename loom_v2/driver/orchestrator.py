@@ -8,6 +8,8 @@ import asyncio
 import inspect
 import json
 import os
+import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +41,31 @@ class OrchestrationProgramError(RuntimeError):
     def __init__(self, reason: dict[str, Any]) -> None:
         self.reason = reason
         super().__init__(json.dumps(reason, sort_keys=True, ensure_ascii=False))
+
+
+def docker_runtime_available(docker_bin: str | None = None, *, timeout_seconds: float = 2.0) -> bool:
+    """Return whether the Docker CLI can reach a usable daemon.
+
+    ``shutil.which`` alone is insufficient on WSL and similar setups where a
+    host-side Docker Desktop shim is on ``PATH`` but the daemon is stopped or
+    the integration is disabled. Such shims may write human-readable text to
+    stdout, which would otherwise be mistaken for an orchestration protocol
+    frame.
+    """
+    docker_bin = docker_bin or shutil.which("docker")
+    if not docker_bin:
+        return False
+    try:
+        completed = subprocess.run(
+            [docker_bin, "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return completed.returncode == 0
 
 
 @dataclass(frozen=True)
@@ -508,9 +535,12 @@ class DockerOrchestrationExecutor:
         defer_cleanup: Callable[..., Any] | None = None,
     ) -> ResourceRef:
         source = self._validate_program(program)
+        command = self.docker_args()
+        if command and os.path.basename(command[0]).lower() in {"docker", "docker.exe"} and not docker_runtime_available(command[0]):
+            raise OrchestrationExecutorError("orchestrator_runtime_unavailable")
         try:
             process = await asyncio.create_subprocess_exec(
-                *self.docker_args(),
+                *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

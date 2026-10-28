@@ -1,11 +1,11 @@
 {
   "type": "object",
   "properties": {
-    "documentId": {
+    "id": {
       "type": "string"
     }
   },
   "required": [
-    "documentId"
+    "id"
   ]
 }

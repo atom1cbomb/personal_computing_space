@@ -98,3 +98,29 @@ def test_arbitrary_path_and_non_object_parameters_are_rejected(tmp_path: Path) -
         gateway.handle("/v1/../../documents/list", {})
     with pytest.raises(OutlineGatewayError, match="request_json_invalid"):
         gateway.handle("/v1/documents/list", {"parameters": []})
+
+
+@pytest.mark.parametrize("action", ["documents_info", "documents_documents"])
+@pytest.mark.parametrize("parameters", [{"id": "doc-123"}, {"documentId": "doc-123"}])
+def test_document_identity_matches_upstream_contract(monkeypatch, tmp_path, action, parameters):
+    gateway = _gateway(tmp_path)
+    before = dict(parameters)
+    class Response:
+        status_code = 200
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def iter_bytes(self): yield b'{"data":{"id":"doc-123","title":"Title","text":"Body"}}'
+    def stream(method, url, **kwargs):
+        assert json.loads(kwargs["content"]) == {"id": "doc-123"}
+        assert url.endswith("/" + action.replace("_", "."))
+        return Response()
+    monkeypatch.setattr("capability_services.outline_http.server.httpx.stream", stream)
+    assert gateway.call(action, parameters)["data"]["text"] == "Body"
+    assert parameters == before
+
+
+def test_conflicting_document_id_is_rejected_before_provider_call(tmp_path, monkeypatch):
+    monkeypatch.setattr("capability_services.outline_http.server.httpx.stream", lambda *a, **k: pytest.fail("must not call provider"))
+    with pytest.raises(OutlineGatewayError, match="document_identity_conflict"):
+        _gateway(tmp_path).call("documents_info", {"id": "one", "documentId": "two"})

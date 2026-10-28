@@ -24,7 +24,7 @@ from loom_v2.coding_agents.turn import TurnContext
 from loom_v2.driver.coordinator import DriverTurnCoordinator
 from loom_v2.contracts.errors import DomainError, DomainErrorEnvelope
 
-from .orchestrator import DockerOrchestrationExecutor
+from .orchestrator import DockerOrchestrationExecutor, docker_runtime_available
 from .orchestration_runtime import DynamicOrchestrationRuntime
 from .remote_repository import RemoteObserverRepository
 
@@ -745,7 +745,8 @@ class DriverService:
             )
             == DRIVER_ORCHESTRATOR_KEY[1:]
         )
-        if orchestration and shutil.which("docker") is None:
+        docker_bin = shutil.which("docker")
+        if orchestration and not docker_runtime_available(docker_bin):
             raise RuntimeError("orchestrator_runtime_unavailable")
 
     def start_execution_loop(self) -> asyncio.Task:

@@ -39,7 +39,7 @@ see [mcue.md](mcue.md) for definitions, attribute updates, and release requireme
 ```python
 async with LoomClient(observer_url, token=grip_token,
                       grip_authority=grip_authority) as client:
-    resources = await client.resources(mcue="computing/vm")
+    resources = await client.resources(mcue="<category/subtype>")
     description = await client.describe(selected_target_uri)
     result = await client.invoke(selected_target_uri, selected_action_uri, action_input)
 ```
@@ -77,7 +77,8 @@ credential_profile="operator-provided-profile")`. The choice participates in
 the step's idempotency check. This argument requires SDK 0.6.0 and the matching
 Observer, Driver, Slave and runtime release; installing only the wheel does
 not upgrade the deployment. Check the deployed `activate-package` input schema
-before use. Browser-authenticated Suanli SSH instances normally omit the field.
+before use. Whether a profile is required is declared by the selected package
+and activation contract; do not infer it from a provider or resource name.
 
 Activation returns its resource URI automatically. DESCRIBE includes all declared
 business actions in `resource.metadata.actions`: names, descriptions, descriptor
@@ -177,7 +178,10 @@ budget for both normal nodes and cleanup. `resource_budget.cleanup_timeout_secon
 is a separate terminal cleanup deadline (default 60 seconds, allowed 1–300).
 Set `resource_budget.execution_timeout_seconds` on `SubmissionBuilder` to cover
 provisioning, readiness polling and interactive login (for example, 1800 seconds
-for an interactive VM test). Authentication waiting uses this original execution
+for an interactive resource test). This is the server-side Run budget. Agent
+wall-clock time and client polling time are separate: the SDK's default Run
+polling follows the server terminal state, and an explicit polling timeout is
+only a local watchdog. Authentication waiting uses this original execution
 deadline and does not clean up. Once cleanup starts, the submission's
 `deadline_at` reflects the separate cleanup deadline, not the original budget.
 

@@ -120,14 +120,17 @@ class Login:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._state = {"resource": target, "phase": "idle", "error": None}
+        self._phase_started = time.monotonic()
 
     def _update(self, phase: str, **fields):
         with self._lock:
+            if self._state["phase"] != phase:
+                self._phase_started = time.monotonic()
             self._state.update(phase=phase, **fields)
 
     def status(self):
         with self._lock:
-            return dict(self._state)
+            return {**self._state, "elapsed_seconds": int(time.monotonic() - self._phase_started)}
 
     def start(self):
         with self._lock:
@@ -135,6 +138,7 @@ class Login:
                 return
             self._stop.clear()
             self._state = {"resource": self.target, "phase": "starting", "error": None}
+            self._phase_started = time.monotonic()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
 
@@ -182,16 +186,19 @@ class Login:
         payload = {"action": action, "session_id": info["session_id"], "query": query or {}}
         if binding is not None:
             payload["browser_binding"] = binding
-        async with httpx.AsyncClient(transport=client.transport, timeout=30, follow_redirects=False) as http:
-            response = await http.post(info["bridge_url"], json=payload,
-                                       headers={"Authorization": "Bearer " + info["session_token"]})
+        try:
+            async with httpx.AsyncClient(transport=client.transport, timeout=30, follow_redirects=False) as http:
+                response = await http.post(info["bridge_url"], json=payload,
+                                           headers={"Authorization": "Bearer " + info["session_token"]})
+        except httpx.TimeoutException:
+            raise RuntimeError("observer_bridge_timeout") from None
         if response.status_code != 200 or len(response.content) > 128 * 1024:
             if len(response.content) <= 128 * 1024:
                 try:
                     detail = response.json().get("detail")
                 except (ValueError, AttributeError):
                     detail = None
-                if detail in {"browser_callback_failed", "browser_login_verification_failed",
+                if isinstance(detail, str) and detail in {"browser_callback_failed", "browser_login_verification_failed",
                               "browser_auth_open_failed", "browser_session_not_found"}:
                     raise RuntimeError(detail)
             raise RuntimeError("observer_bridge_failed")
@@ -206,6 +213,7 @@ class Login:
         if method == "device-code":
             location = auth["verification_uri"]
         else:
+            self._update("opening_login")
             opened = await self._bridge(client, auth["client"], "open")
             if opened.get("status") != "redirect" or not isinstance(opened.get("browser_binding"), str):
                 raise RuntimeError("observer_bridge_failed")
@@ -236,6 +244,8 @@ class Login:
             async with async_playwright() as playwright:
                 if profile_dir is not None:
                     self._update("restoring_session")
+                else:
+                    self._update("opening_browser")
                 browser = None
                 if profile_dir is not None:
                     try:
@@ -247,6 +257,7 @@ class Login:
                         # interactive login. The next successful login starts
                         # with a clean ephemeral context.
                         profile_dir = None
+                        self._update("opening_browser")
                 if profile_dir is None:
                     browser = await playwright.chromium.launch(headless=False, executable_path=self.browser_executable,
                                                                args=["--disable-dev-shm-usage"])
@@ -341,6 +352,7 @@ class Login:
             action = client.names.action("auth-start")
             if action not in {o["action"]["uri"] for o in description["offers"]}:
                 raise RuntimeError("login_method_unsupported")
+            self._update("preparing_auth")
             for auth_round in range(2):
                 result = await client.invoke(self.target, action, {"expected_revision": revision})
                 if result["resource"] != self.target or result["revision"] != revision:
@@ -444,13 +456,13 @@ PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Loom �
 article{border-bottom:1px solid #ddd;padding:20px 0}p{overflow-wrap:anywhere}button{font:inherit;padding:6px 18px}</style>
 <h1>Loom 资源登录</h1><p>选择实例，在弹出的窗口完成登录。同一 IdP 的资源会复用本地会话；入口过期或登录失败后，可以直接重新认证。</p>
 <main id="logins"></main><script>
-const phases={idle:'待开始',starting:'正在发起登录',restoring_session:'正在尝试本地登录信息',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
-const errors={activation_binding_unavailable:'节点服务入口未就绪，请联系节点管理员',authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
+const phases={idle:'待开始',starting:'正在连接算力空间',preparing_auth:'正在准备远端认证',opening_login:'正在建立认证连接',opening_browser:'正在打开浏览器',restoring_session:'正在尝试本地登录信息',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
+const errors={activation_binding_unavailable:'节点服务入口未就绪，请联系节点管理员',authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',observer_bridge_timeout:'远端认证连接超时，请重试',browser_auth_open_failed:'远端登录入口未能打开，请重试',browser_callback_failed:'远端未接受认证回调，请重试',browser_session_not_found:'认证会话已失效，请重新认证',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
 async function refresh(){try{const values=await(await fetch('/status',{cache:'no-store'})).json();
 const root=document.getElementById('logins');root.replaceChildren();for(const x of values){
 const row=document.createElement('article'),name=document.createElement('p'),state=document.createElement('p'),button=document.createElement('button');
-name.textContent=x.resource;state.textContent=phases[x.phase]+(x.user_code?'；授权码：'+x.user_code:'')+(x.error?'；'+(errors[x.error]||'请重新认证'):'');
-button.textContent=x.phase==='idle'?'登录':'重新认证';button.disabled=['starting','awaiting_login','verifying'].includes(x.phase);
+name.textContent=x.resource;state.textContent=phases[x.phase]+(x.user_code?'；授权码：'+x.user_code:'')+(x.error?'；'+(errors[x.error]||'请重新认证'):'')+(['starting','preparing_auth','opening_login','opening_browser','restoring_session','verifying'].includes(x.phase)?'；已等待 '+x.elapsed_seconds+' 秒':'');
+button.textContent=x.phase==='idle'?'登录':'重新认证';button.disabled=['starting','preparing_auth','opening_login','opening_browser','restoring_session','awaiting_login','verifying'].includes(x.phase);
 button.onclick=async()=>{button.disabled=true;await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resource:x.resource,csrf:'__CSRF__'})});await refresh()};
 row.append(name,state,button);root.append(row)}}catch{}}
 refresh();setInterval(refresh,1500);</script></html>'''

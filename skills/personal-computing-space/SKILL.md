@@ -42,6 +42,15 @@ skill archive includes its wheel under `assets/wheels/`; install that wheel
 in the external agent's environment, not in the orchestration sandbox.
 See [references/sdk.md](references/sdk.md) for installation, discovery, and
 source-checkout fallback. Do not assume the package is published on PyPI.
+SDK 0.9 includes `inventory`, `action_contract`, `execute_action`, `CallLedger`,
+`publish_function`, `submit_map_reduce` and `wait_run`. Prefer these public
+helpers for resource discovery, ordinary JSON calls, bounded multi-call tasks
+and map/reduce computations; see [references/reliable-workflows.md](references/reliable-workflows.md).
+They preserve exact contracts and evidence while reducing repeated protocol code.
+Start discovery with the compact inventory; keep pending/degraded instances in
+the assessment, and inspect action descriptions before declaring a capability absent.
+For a reproducible failure, read [references/diagnostics.md](references/diagnostics.md)
+to inspect the exact package's published source without changing its deployment.
 For a new Python computation on a Slave, read
 [references/function-packages.md](references/function-packages.md): publish a
 single-export `process:json_stdio/1` function through public content/package APIs,
@@ -51,8 +60,8 @@ then use its discovered action. A pre-existing application package is not requir
 
 For resource descriptions, registration, or attribute updates, read
 [references/mcue.md](references/mcue.md). MCUE defines the resource's public
-extension attributes. The contract uses `resource.mcue` (for example,
-`computing/vm`), a versioned `metadata.mcue_ref`, and `metadata.attributes`.
+extension attributes. The contract uses the returned `resource.mcue`, a
+versioned `metadata.mcue_ref`, and `metadata.attributes`.
 It replaces resource-level `kind`; it does not rename GRIP reply/error kinds.
 
 MCUE requires SDK 0.5 and the matching Observer release with its resource
@@ -64,6 +73,46 @@ is a public attribute. Do not impose a universal host/user/port blacklist or
 copy `instance_config` into attributes. Credentials normally remain in the
 authentication/runtime credential channels. Public attributes describe a
 resource; action offers and runtime configuration govern its use.
+
+## Capability package descriptions
+
+For the concrete resolution procedure and relationship checks, read
+[references/capability-descriptors.md](references/capability-descriptors.md).
+
+The project skill is provider-neutral. It defines how to discover and verify a
+capability; it does not define what a particular VM, cluster, dashboard,
+model, or document service does. Treat the selected capability package as the
+source of that behavior:
+
+1. Enumerate the relevant resources and activations through the public
+   Observer API. Keep the exact resource and activation URIs, package URI,
+   revision, `managed_by`, `state`, and public attributes as evidence.
+2. Resolve the returned `metadata.mcue_ref` through its exact public MCUE read
+   action before interpreting attributes. DESCRIBE the selected resource and
+   activation, then read the offered action, input/output schema, interaction
+   mode, permissions, dependency grants and any inline descriptor or
+   `resource_effects` before constructing a call.
+3. If a descriptor is referenced but not inline, fetch it through the public
+   `GET /api/v1/action-descriptors?resource_id=...&version_or_digest=...`
+   action using the returned resource ID and version/digest. Resolve
+   every referenced schema, contract, package and action the same way. A
+   missing or conflicting descriptor is a metadata blocker; do not guess names,
+   fields, lifecycle states, identity links, endpoints, or provider semantics.
+4. Use the package-declared identity and relationship paths to match resources
+   and action results exactly. `managed_by` and other system metadata are
+   evidence for ownership/provenance; they do not replace a package-declared
+   identity mapping. An address, display name, package name or URI spelling is
+   never a relationship proof.
+5. Follow the descriptor's interaction, readiness, authentication, side-effect,
+   retry and cleanup declarations. Record the exact action, arguments, result,
+   Run/content references and final state. Never substitute a locally inferred
+   result for the declared remote operation.
+
+Capability packages may expose their current public source or additional
+documentation through the package's declared references. Read those only via
+the public package/content actions and treat them as immutable evidence for the
+selected package version. The source of truth is still the deployed descriptor
+and schemas; project-level examples must not override them.
 
 ## Boundary
 
@@ -88,10 +137,6 @@ resource; action offers and runtime configuration govern its use.
   with `POST /api/v1/content`; omit lifecycle fields and package digest. This
   creates a workspace-reusable package without a Run and does not activate a
   Slave. Run-bound packages are part of the complete external submission.
-
-For a Kubernetes task, require a ready `service + container:http/1` export whose
-package contract documents the Kubernetes gateway. `available=true` alone does
-not mean that a Kubernetes credential profile is configured.
 
 Credentials are selected per activation. For a named service, pass the
 operator-provided `credential_profile` in the Slave's `activate-package` input,
@@ -124,18 +169,11 @@ failure, cancellation, or successful completion. A provider HTTP success or a
 create response does not mean that the resource is ready for access.
 
 The public package endpoint includes verified descriptor payloads inline. If a
-descriptor is not inline, resolve it only through the public
-`GET /api/v1/action-descriptors?resource_id=...&version_or_digest=...`
-endpoint. If the descriptor, output schema, or referenced package cannot be
-resolved, stop with a metadata/readiness blocker instead of guessing a field,
-package, or polling action.
-
-For Suanli VM creation, the declared workflow is therefore
-`instances-run` → resource and cleanup registration →
-`instances-list` until the matching VM is running and has an IP →
-`suanli-vm-ssh-http` activation and browser
-authentication → `exec`; retain the InstanceId for
-`instances-terminate` cleanup.
+descriptor is not inline, resolve it only through the public descriptor action
+with the returned resource ID and version/digest. If the descriptor, output
+schema, or referenced package cannot be resolved, stop with a
+metadata/readiness blocker instead of guessing a field, package, or polling
+action.
 
 ## Workflow
 
@@ -192,29 +230,11 @@ for installation, instance selection, status, expiry and retry. The portal start
 `auth-start` using the latest DESCRIBE revision and verifies ready before showing
 success. Expiry does not require a new resource, activation or business Run.
 
-## Kubernetes capability package
+## Capability-specific behavior
 
-Use the package's fixed business actions from GRIP DESCRIBE. Activate the
-package on a chosen Slave. On `pending_auth`, use the unified login portal for that activation and poll
-the same activation until ready. Never ask for a token or
-kubeconfig in a task message.
-
-Invoke the discovered jobs-submit action only with a VolcanoJob manifest
-(`apiVersion: batch.volcano.sh/v1alpha1`, `kind: Job`). Use its status, logs, and
-delete exports. Runtime HTTP paths are private implementation bindings.
-
-## Volcano visibility
-
-For queues, PodGroups, cross-namespace workload visibility and GPU allocation,
-discover resources with `mcue="computing/volcano"`. Their MCUE public attributes
-include `dashboard_url` and `kubernetes_ref`, which identifies the associated
-Kubernetes resource. Read [references/volcano.md](references/volcano.md) before
-querying or connecting a Dashboard. Use its ready activation and exact discovered
-action URI; Dashboard addresses differ across clusters.
-
-## Grafana monitoring
-
-For actual GPU utilization, host GPU numeric indexes and historical monitoring,
-discover `mcue="computing/grafana"` and match its explicit `kubernetes_ref` or
-`volcano_ref`. Read [references/grafana.md](references/grafana.md) before querying
-or connecting it. Volcano allocation counts do not provide actual utilization.
+There are no project-level sections for individual providers or resource
+classes. For a concrete service, use the package and MCUE descriptors returned
+by Observer, then apply the generic discovery and contract rules above. A
+package may document provider-specific authentication, actions, result
+semantics and lifecycle in its own immutable descriptor or public README; that
+documentation travels with the package rather than with this skill.

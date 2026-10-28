@@ -1,5 +1,6 @@
 import pytest
 import json
+from types import SimpleNamespace
 import subprocess
 import sys
 
@@ -9,7 +10,27 @@ from loom_v2.driver.orchestrator import (
     OrchestrationExecutorError,
     OrchestrationProgramError,
     _BOOTSTRAP,
+    docker_runtime_available,
 )
+
+
+def test_docker_runtime_available_checks_daemon_not_only_cli(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr("loom_v2.driver.orchestrator.shutil.which", lambda name: "/usr/bin/docker")
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr("loom_v2.driver.orchestrator.subprocess.run", fake_run)
+    assert not docker_runtime_available()
+    assert calls[0][0] == (["/usr/bin/docker", "info"],)
+    assert calls[0][1]["stdout"] is subprocess.DEVNULL
+    assert calls[0][1]["stderr"] is subprocess.DEVNULL
+
+    monkeypatch.setattr("loom_v2.driver.orchestrator.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
+    assert docker_runtime_available()
 
 
 @pytest.mark.parametrize("seconds,expected", [(0, "final"), (-1, "failure"), (3601, "failure"), (True, "failure")])

@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "outline-http",
-  "package_version": "v3",
+  "package_version": "v4",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -99,11 +99,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-info",
-        "version_or_digest": "4914dad18d0d7e7e0317660705fd483dbbb2a0f3bff69b2799b40f3f024d1ea4",
+        "version_or_digest": "933a0caa739e7c613fd271a933c75d6d9c30bb5a7ca0e93bded9ac20048ee5c4",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-info/sha256/4d6861b23f73921f5c556c26e78ed2f6419315719e189535ef31c4288018e579",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-info/sha256/f8476e2171fc9fbad01c6d9faaf51260cf070b841088d2131c9acef1700b528e",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -118,11 +118,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/outline/documents-documents",
-        "version_or_digest": "84e9237c46e460b4c9b97842b94c0b70d8b6340e35738e937dc8296f51945a66",
+        "version_or_digest": "99a66c4922234b506250260867f099093f441fc6722f47682cd000db49144cbc",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-documents/sha256/bec52aa7ebc21d544727835a7ec25c0fdaa5ecfd6745a7f7c91c3ead8ac5db51",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-documents/sha256/779156b7fe5e8300d0fb79f09f3f3cfa06912b41c568775481fe529226c3c579",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",

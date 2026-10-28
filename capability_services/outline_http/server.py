@@ -129,6 +129,14 @@ class OutlineGateway:
             parameters = {}
         if not isinstance(parameters, dict):
             raise OutlineGatewayError("request_json_invalid", 400)
+        parameters = dict(parameters)
+        # Older Loom contracts called this field documentId. Outline expects
+        # id for both the document body and child-navigation endpoints.
+        if action in {"documents_info", "documents_documents"} and "documentId" in parameters:
+            legacy_id = parameters.pop("documentId")
+            if "id" in parameters and parameters["id"] != legacy_id:
+                raise OutlineGatewayError("document_identity_conflict", 400)
+            parameters["id"] = legacy_id
         body = self._json_body(parameters)
         headers = {
             "Authorization": f"Bearer {self._api_key()}",
