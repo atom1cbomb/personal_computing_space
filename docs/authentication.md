@@ -24,13 +24,21 @@ python -m loom_orchestration.auth \
   --activation grip://loom.local/workspaces/workspace-default/activations/kubernetes-http/v6/slave-a/beijing
 ```
 
+如需指定本地登录档案目录，可追加 `--auth-state-dir /private/loom-auth-profiles`；
+临时禁用档案复用可使用 `--no-auth-state`。
+
 也可使用安装后的 `loom-auth` 命令。Observer 使用 HTTP 时显式加 `--allow-http`。
 打开 `http://localhost:3000/`，选择实例，点击登录。可重复 `--activation`，URI
 必须来自 Observer。客户端只处理选定的激活实例，凭据文件仅在本地进程读取。
+默认会在 `~/.loom/auth-profiles` 为能力包声明的每个 IdP 保存一个受权限保护的
+浏览器档案（可用 `--auth-state-dir` 修改，或用 `--no-auth-state` 关闭）。因此同一
+IdP 的后续资源会先用已有 Cookie/本地会话尝试认证；会话无效时仍会在同一个窗口中
+要求人工登录。未声明 `idp` 的包不会与其他资源共享档案。
 
 首次登录、登录链接过期、关闭窗口、实际凭据失效，都在同一页面点击“重新认证”。
-客户端会重新 DESCRIBE 并调用 `auth-start`，无需重启程序、保存短期会话文件或
-再次激活。界面只在同一 revision 的激活达到 ready/authenticated 后显示完成。
+客户端会重新 DESCRIBE 并调用 `auth-start`，无需重启程序或再次激活；启用本地
+档案时，会先尝试复用该 IdP 的浏览器会话，失败后再要求人工登录。界面只在同一
+revision 的激活达到 ready/authenticated 后显示完成。
 
 ## 协议
 
@@ -43,6 +51,7 @@ python -m loom_orchestration.auth \
   "authentication": {
     "status": "auth_required",
     "method": "browser-cookie",
+    "idp": "https://login.example/tenant",
     "cookie_name": "grafana_session",
     "verification_uri": "http://localhost:3000/",
     "expires_at": 1792583100,
@@ -62,9 +71,12 @@ python -m loom_orchestration.auth \
 没有 `client`。五分钟是浏览器挑战期限，不是实际凭据期限。
 
 包声明 `authentication.interaction.mode`：`redirect` 捕获固定本地 OAuth 回调；
-`browser-cookie` 从自身隔离浏览器读取指定 cookie，并由服务端验证；`device-code`
+`browser-cookie` 从 IdP 隔离浏览器档案读取指定 cookie，并由服务端验证；`device-code`
 由原凭据插件完成设备授权。`credential-profile` 用于 Outline、算力云 API 和普通
-SSH 的操作员凭据配置，只验证凭据，不发起浏览器授权。Grafana 保留原站回调，SSH 保留 opkssh 登记的回调。
+SSH 的操作员凭据配置，只验证凭据，不发起浏览器授权。需要复用登录会话的包应在
+`authentication.idp` 中声明 HTTPS 的稳定 IdP 标识（历史/兼容包也可放在
+`interaction.idp`）；Grafana 保留原站回调，SSH
+保留 opkssh 登记的回调。
 
 ## 状态和恢复
 

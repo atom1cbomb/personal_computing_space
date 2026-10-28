@@ -151,7 +151,7 @@ SDK 0.8、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部�
 
 需要外部认证的包会报告 `pending_auth`；认证和健康检查通过后才进入 `ready`，后台检查继续更新状态。服务凭据由 operator 通过受控 profile 提供，或由用户完成交互式登录，不应写入包内容、对话或任务输出。
 
-统一认证使用实例的 `auth-start` 与 SDK 的 `loom-auth`，支持设备登录、浏览器回调和隔离浏览器 Cookie 登录；API key、AK/SK 或 SSH 密钥由 credential profile 提供。浏览器助手运行在用户电脑上：
+统一认证使用实例的 `auth-start` 与 SDK 的 `loom-auth`，支持设备登录、浏览器回调和浏览器 Cookie 登录；声明同一 IdP 的资源会复用本机受保护的浏览器档案，API key、AK/SK 或 SSH 密钥由 credential profile 提供。浏览器助手运行在用户电脑上：
 
 ```text
 用户浏览器 ↔ loom-auth ↔ Observer ↔ Slave ↔ 能力容器

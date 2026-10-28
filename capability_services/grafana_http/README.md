@@ -121,8 +121,10 @@ an error.
 By default, activate without credential_profile. The activation starts in
 pending_auth. Invoke its auth-start action with the current revision, then use
 the [unified SDK login client](../../docs/authentication.md).
-The client opens an isolated, visible Chromium window on the user's machine,
-which follows Grafana → connect.cs.ac.cn → open.cs.ac.cn's WeChat QR sign-in.
+The client opens a visible Chromium window on the user's machine. The package
+declares `https://connect.cs.ac.cn` as its IdP, so the helper can reuse the
+saved login session across Grafana and Suanli VM activations. The browser
+follows Grafana → connect.cs.ac.cn → open.cs.ac.cn's WeChat QR sign-in.
 Grafana handles its own OAuth state, PKCE and registered callback. No redirect
 URI is rewritten. The client reads only the cookie from its own browser context
 and sends it in the existing authenticated Observer bridge callback POST body.

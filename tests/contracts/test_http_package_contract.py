@@ -117,6 +117,30 @@ def test_authentication_interaction_contract(interaction, browser, valid):
             CapabilityPackageVersion.model_validate(payload)
 
 
+def test_authentication_interaction_accepts_an_idp_for_profile_reuse():
+    payload = http_package_payload()
+    payload["body"]["authentication"] = {
+        "start_path": "/auth/start", "status_path": "/auth/status",
+        "browser_path": "/auth/browser",
+        "idp": "https://login.example/tenant",
+        "interaction": {"mode": "browser-cookie", "cookie_name": "sid"},
+    }
+    package = CapabilityPackageVersion.model_validate(payload)
+    assert package.body["authentication"]["idp"] == "https://login.example/tenant"
+
+
+@pytest.mark.parametrize("idp", ["http://login.example", "https://login.example/a?b=c", "https://login.example/a\\nb"])
+def test_authentication_interaction_rejects_unsafe_idp(idp):
+    payload = http_package_payload()
+    payload["body"]["authentication"] = {
+        "start_path": "/auth/start", "status_path": "/auth/status",
+        "idp": idp,
+        "interaction": {"mode": "redirect"},
+    }
+    with pytest.raises(ValueError, match="package_contract_invalid"):
+        CapabilityPackageVersion.model_validate(payload)
+
+
 def test_historical_browser_client_is_readable_without_rewriting_the_package():
     payload = http_package_payload()
     payload["body"]["authentication"] = {"start_path": "/auth/start", "status_path": "/auth/status",

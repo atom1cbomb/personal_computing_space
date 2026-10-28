@@ -18,11 +18,13 @@ from .program import OrchestrationContext, ProgramSource
 from .submission import SubmissionBuilder
 from .metadata import ResourceEffect, validate_action_descriptor
 from .mcue import McueDefinition
+from .auth import AuthProfileStore
 
 __all__ = [
     "DependencyContext", "WebSocketStream", "StreamAborted", "AccessCredential",
     "ClosureContract",
     "LoomClient",
+    "AuthProfileStore",
     "McueDefinition",
     "ServicePackage",
     "GripError",

@@ -2,13 +2,16 @@ import asyncio
 from copy import deepcopy
 from http.server import ThreadingHTTPServer
 import json
+from pathlib import Path
+import sys
 import threading
 import time
+from types import ModuleType, SimpleNamespace
 
 import httpx
 import pytest
 
-from loom_orchestration.auth import Handler, Login, https_origin
+from loom_orchestration.auth import AuthProfileStore, Handler, Login, https_origin
 from loom_orchestration.grip import Names
 
 
@@ -90,6 +93,26 @@ def test_failed_and_expired_attempts_restart_without_restarting_the_helper(monke
     assert all(call[0] == target and call[2] == {"expected_revision": 1} for call in observer.calls)
 
 
+async def test_rejected_saved_session_restarts_auth_for_human_fallback(monkeypatch):
+    observer = Observer("browser-cookie")
+    observer.auth["idp"] = "https://idp.example"
+    target = observer.names.name("activations", "service", "v1", "slave", "test")
+    login = Login(target, lambda: observer)
+    attempts = 0
+
+    async def browser(*_args):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("saved_auth_rejected")
+        observer.ready = True
+
+    monkeypatch.setattr(login, "_browser", browser)
+    await login.authenticate()
+    assert attempts == 2
+    assert len(observer.calls) == 2
+
+
 async def test_revision_change_prevents_reporting_a_new_activation_as_login_success(monkeypatch):
     observer = Observer()
     login = Login(observer.names.name("activations", "service", "v1", "slave", "test"), lambda: observer)
@@ -141,6 +164,78 @@ async def test_bridge_keeps_credentials_in_post_body_and_enforces_observer_origi
     assert len(calls) == 1
 
 
+async def test_declared_idp_uses_a_persistent_profile_and_reuses_saved_cookie(tmp_path, monkeypatch):
+    opened: list[Path] = []
+    closed = []
+
+    class Page:
+        url = "https://service.example/"
+        main_frame = object()
+
+        def on(self, *_args):
+            pass
+
+        async def goto(self, *_args, **_kwargs):
+            pass
+
+        def is_closed(self):
+            return False
+
+    class Context:
+        async def route(self, *_args):
+            pass
+
+        async def new_page(self):
+            return Page()
+
+        async def cookies(self, _origin):
+            return [{"name": "sid", "value": "saved-session"}]
+
+        async def close(self):
+            closed.append(True)
+
+    class Chromium:
+        async def launch_persistent_context(self, path, **_kwargs):
+            opened.append(Path(path))
+            return Context()
+
+        async def launch(self, **_kwargs):
+            raise AssertionError("persistent context expected")
+
+    class Playwright:
+        chromium = Chromium()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+    async_api = ModuleType("playwright.async_api")
+    async_api.Error = RuntimeError
+    async_api.async_playwright = lambda: Playwright()
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", async_api)
+
+    login = Login("resource", lambda: None, profile_store=AuthProfileStore(tmp_path / "profiles"))
+    login.idp = "https://idp.example"
+    bridges = []
+
+    async def bridge(_client, _info, action, **_kwargs):
+        bridges.append(action)
+        return ({"status": "redirect", "location": "https://service.example/", "browser_binding": "binding"}
+                if action == "open" else {"status": "accepted"})
+
+    login._bridge = bridge
+    await login._browser(SimpleNamespace(base_url="https://observer.example"), {
+        "method": "browser-cookie", "cookie_name": "sid", "client": {},
+        "idp": login.idp,
+    }, 1, time.time() + 30)
+    assert len(opened) == 1 and opened[0].parent == tmp_path / "profiles"
+    assert bridges == ["open", "callback"]
+    assert closed == [True]
+
+
 def test_portal_starts_only_selected_instance_and_rejects_cross_origin_requests(monkeypatch):
     logins = {name: Login(name, Observer) for name in ["bj", "nj", "ict-bj"]}
     started = []
@@ -171,3 +266,21 @@ def test_portal_starts_only_selected_instance_and_rejects_cross_origin_requests(
 def test_browser_requires_a_valid_https_destination(location):
     with pytest.raises(RuntimeError, match="browser_login_location_invalid"):
         https_origin(location)
+
+
+def test_auth_profile_store_partitions_idps_and_enforces_private_directory(tmp_path):
+    store = AuthProfileStore(tmp_path / "profiles")
+    first = store.profile_dir("https://idp.example/tenant-a")
+    same = store.profile_dir("https://idp.example/tenant-a")
+    other = store.profile_dir("https://idp.example/tenant-b")
+    assert first == same
+    assert first != other
+    assert first.parent == tmp_path / "profiles"
+    assert first.name != "tenant-a"
+    assert oct(first.stat().st_mode & 0o777) == "0o700"
+
+
+def test_auth_profile_store_does_not_create_state_without_an_idp(tmp_path):
+    store = AuthProfileStore(tmp_path / "profiles")
+    assert store.profile_dir(None) is None
+    assert not (tmp_path / "profiles").exists()

@@ -143,6 +143,7 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
     "start_path": "/v1/auth/start",
     "status_path": "/v1/auth/status",
     "browser_path": "/v1/auth/browser",
+    "idp": "https://login.example/tenant",
     "interaction": {"mode": "redirect"}
   }
 }
@@ -175,6 +176,9 @@ Run 内由 coding agent 物化的能力缺口仍是 `run_bound` candidate，并�
 
 `authentication.interaction` 声明 `redirect`、`browser-cookie`、`device-code` 或 `credential-profile`。
 前两者同时声明 `browser_path`，`browser-cookie` 还声明 `cookie_name`。
+包可以在 `authentication.idp` 声明稳定的 HTTPS IdP 标识；本地 `loom-auth` 会按该
+标识复用受保护的浏览器档案，并在已保存会话失效时回退到人工登录。未声明 IdP 的
+激活不会共享本地登录状态。
 统一 SDK 客户端 `loom-auth` 根据声明完成认证，不执行包提供的本地 Python 文件。
 Observer 的 `auth-start` 统一返回 `resource`、`revision` 和 `authentication`；
 DESCRIBE 暴露脱敏的 `metadata.authentication`，登录凭据只通过私有认证通道传递。

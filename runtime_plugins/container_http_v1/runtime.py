@@ -358,7 +358,7 @@ class DockerContainerHTTPRuntimeV1:
         if (
             not isinstance(authentication, dict)
             or not {"start_path", "status_path"}.issubset(authentication)
-            or set(authentication) - {"start_path", "status_path", "browser_path", "interaction", "client"}
+            or set(authentication) - {"start_path", "status_path", "browser_path", "interaction", "idp", "client"}
         ):
             raise RuntimeError("runtime_plugin_capability_mismatch")
         start_path = authentication.get("start_path")

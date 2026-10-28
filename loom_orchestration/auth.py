@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import contextmanager, nullcontext
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -22,7 +24,81 @@ METHODS = {"redirect", "browser-cookie", "device-code", "credential-profile"}
 ERRORS = {"authentication_expired", "authentication_failed", "activation_changed",
           "activation_binding_unavailable",
           "login_window_closed", "login_method_unsupported", "browser_dependency_missing",
-          "observer_bridge_failed", "browser_login_location_invalid", "login_cancelled", "operator_credentials_required"}
+          "observer_bridge_failed", "observer_bridge_timeout", "browser_callback_failed",
+          "browser_auth_open_failed", "browser_session_not_found",
+          "browser_login_verification_failed", "saved_auth_rejected",
+          "browser_login_location_invalid", "login_cancelled", "operator_credentials_required"}
+
+
+class AuthProfileStore:
+    """Keep browser authentication state in one private profile per IdP."""
+
+    def __init__(self, root: str | Path | None = None):
+        self.root = Path(root).expanduser() if root is not None else None
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def profile_dir(self, idp: str | None) -> Path | None:
+        if self.root is None or not isinstance(idp, str) or not idp.strip():
+            return None
+        value = idp.strip()
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        try:
+            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if self.root.is_symlink():
+                return None
+            self.root.chmod(0o700)
+            path = self.root / digest
+            if path.is_symlink():
+                return None
+            path.mkdir(mode=0o700, exist_ok=True)
+        except OSError:
+            # A read-only home should not prevent a normal interactive login.
+            return None
+        try:
+            path.chmod(0o700)
+        except OSError:
+            pass
+        return path
+
+    def has_saved_state(self, idp: str | None) -> bool:
+        path = self.profile_dir(idp)
+        return path is not None and (path / ".loom-auth-state").is_file()
+
+    def mark_authenticated(self, idp: str | None) -> None:
+        path = self.profile_dir(idp)
+        if path is None:
+            return
+        marker = path / ".loom-auth-state"
+        try:
+            marker.touch(mode=0o600, exist_ok=True)
+            marker.chmod(0o600)
+        except OSError:
+            pass
+
+    def clear_saved_state(self, idp: str | None) -> None:
+        path = self.profile_dir(idp)
+        if path is None:
+            return
+        try:
+            (path / ".loom-auth-state").unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    @contextmanager
+    def lock(self, idp: str | None):
+        """Serialize browser use for one persistent profile."""
+        if self.root is None or not isinstance(idp, str) or not idp.strip():
+            yield
+            return
+        key = idp.strip()
+        with self._locks_guard:
+            lock = self._locks.setdefault(key, threading.Lock())
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
 
 
 def https_origin(value: str) -> str:
@@ -34,9 +110,12 @@ def https_origin(value: str) -> str:
 
 
 class Login:
-    def __init__(self, target: str, client_factory, *, browser_executable: str | None = None):
+    def __init__(self, target: str, client_factory, *, browser_executable: str | None = None,
+                 profile_store: AuthProfileStore | None = None):
         self.target, self.client_factory = target, client_factory
         self.browser_executable = browser_executable
+        self.profile_store = profile_store
+        self.idp: str | None = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -107,6 +186,14 @@ class Login:
             response = await http.post(info["bridge_url"], json=payload,
                                        headers={"Authorization": "Bearer " + info["session_token"]})
         if response.status_code != 200 or len(response.content) > 128 * 1024:
+            if len(response.content) <= 128 * 1024:
+                try:
+                    detail = response.json().get("detail")
+                except (ValueError, AttributeError):
+                    detail = None
+                if detail in {"browser_callback_failed", "browser_login_verification_failed",
+                              "browser_auth_open_failed", "browser_session_not_found"}:
+                    raise RuntimeError(detail)
             raise RuntimeError("observer_bridge_failed")
         return response.json()
 
@@ -141,88 +228,156 @@ class Login:
             await route.fulfill(status=200, content_type="text/plain; charset=utf-8",
                                 body="登录信息已收到，正在验证。")
 
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=False, executable_path=self.browser_executable,
-                                                        args=["--disable-dev-shm-usage"])
-            try:
-                context = await browser.new_context(viewport={"width": 1120, "height": 840})
-                if method == "redirect":
-                    await context.route(CALLBACK + "*", intercept)
-                page = await context.new_page()
-                if method == "redirect":
-                    # Playwright routes only the first URL in an HTTP redirect
-                    # chain. Request events also observe the final OAuth callback.
-                    page.on("request", lambda request: capture(request.url)
-                            if request.is_navigation_request() and request.frame == page.main_frame else None)
+        idp = auth.get("idp") or self.idp
+        profile_dir = self.profile_store.profile_dir(idp) if self.profile_store else None
+        saved_profile = self.profile_store.has_saved_state(idp) if self.profile_store else False
+        profile_lock = self.profile_store.lock(idp) if self.profile_store else nullcontext()
+        with profile_lock:
+            async with async_playwright() as playwright:
+                if profile_dir is not None:
+                    self._update("restoring_session")
+                browser = None
+                if profile_dir is not None:
+                    try:
+                        context = await playwright.chromium.launch_persistent_context(
+                            str(profile_dir), headless=False, executable_path=self.browser_executable,
+                            viewport={"width": 1120, "height": 840}, args=["--disable-dev-shm-usage"])
+                    except (BrowserError, OSError):
+                        # A damaged or locked profile must not prevent a normal
+                        # interactive login. The next successful login starts
+                        # with a clean ephemeral context.
+                        profile_dir = None
+                if profile_dir is None:
+                    browser = await playwright.chromium.launch(headless=False, executable_path=self.browser_executable,
+                                                               args=["--disable-dev-shm-usage"])
+                    context = await browser.new_context(viewport={"width": 1120, "height": 840})
                 try:
-                    await page.goto(location, wait_until="domcontentloaded", timeout=30000)
-                except BrowserError:
-                    if callback is None:
-                        raise
-                self._update("awaiting_login")
-                while True:
-                    self._check_deadline(expires_at)
-                    if page.is_closed():
-                        raise RuntimeError("login_window_closed")
-                    if method == "device-code":
-                        ready, observed = await self._state_from_observer(client, revision)
-                        if ready:
+                    saved_cookie_attempt = False
+                    if method == "browser-cookie" and profile_dir is not None:
+                        saved_values = [c["value"] for c in await context.cookies(target_origin)
+                                        if c["name"] == auth["cookie_name"] and c["value"]]
+                        saved_cookie_attempt = len(saved_values) == 1 and len(saved_values[0]) <= 4096
+                    if method == "redirect":
+                        await context.route(CALLBACK + "*", intercept)
+                    page = await context.new_page()
+                    if method == "redirect":
+                        # Playwright routes only the first URL in an HTTP redirect
+                        # chain. Request events also observe the final OAuth callback.
+                        page.on("request", lambda request: capture(request.url)
+                                if request.is_navigation_request() and request.frame == page.main_frame else None)
+                    try:
+                        await page.goto(location, wait_until="domcontentloaded", timeout=30000)
+                    except BrowserError:
+                        if callback is None:
+                            raise
+                    self._update("awaiting_login")
+                    while True:
+                        self._check_deadline(expires_at)
+                        if page.is_closed():
+                            raise RuntimeError("login_window_closed")
+                        if method == "device-code":
+                            ready, observed = await self._state_from_observer(client, revision)
+                            if ready:
+                                if self.profile_store:
+                                    self.profile_store.mark_authenticated(idp)
+                                return
+                            if observed.get("status") == "auth_required" and not observed.get("verification_uri"):
+                                raise RuntimeError("authentication_expired")
+                        elif method == "browser-cookie":
+                            parsed = urlsplit(page.url)
+                            if parsed.scheme + "://" + parsed.netloc == target_origin:
+                                values = [c["value"] for c in await context.cookies(target_origin)
+                                          if c["name"] == auth["cookie_name"] and c["value"]]
+                                if len(values) == 1 and len(values[0]) <= 4096:
+                                    callback = {auth["cookie_name"]: values}
+                        if callback is not None:
+                            self._update("verifying")
+                            try:
+                                accepted = await self._bridge(client, auth["client"], "callback", binding=binding, query=callback)
+                            except RuntimeError as exc:
+                                if saved_cookie_attempt and str(exc) in {
+                                    "browser_callback_failed", "browser_login_verification_failed"
+                                }:
+                                    await context.clear_cookies(name=auth["cookie_name"],
+                                                                 domain=urlsplit(target_origin).hostname)
+                                    if self.profile_store:
+                                        self.profile_store.clear_saved_state(idp)
+                                    raise RuntimeError("saved_auth_rejected") from None
+                                if saved_profile and str(exc) in {
+                                    "browser_callback_failed", "browser_login_verification_failed"
+                                }:
+                                    await context.clear_cookies()
+                                    if self.profile_store:
+                                        self.profile_store.clear_saved_state(idp)
+                                    raise RuntimeError("saved_auth_rejected") from None
+                                raise
+                            if accepted != {"status": "accepted"}:
+                                if saved_cookie_attempt or saved_profile:
+                                    if saved_cookie_attempt:
+                                        await context.clear_cookies(name=auth["cookie_name"],
+                                                                     domain=urlsplit(target_origin).hostname)
+                                    else:
+                                        await context.clear_cookies()
+                                    if self.profile_store:
+                                        self.profile_store.clear_saved_state(idp)
+                                    raise RuntimeError("saved_auth_rejected")
+                                raise RuntimeError("observer_bridge_failed")
+                            if self.profile_store:
+                                self.profile_store.mark_authenticated(idp)
                             return
-                        if observed.get("status") == "auth_required" and not observed.get("verification_uri"):
-                            raise RuntimeError("authentication_expired")
-                    elif method == "browser-cookie":
-                        parsed = urlsplit(page.url)
-                        if parsed.scheme + "://" + parsed.netloc == target_origin:
-                            values = [c["value"] for c in await context.cookies(target_origin)
-                                      if c["name"] == auth["cookie_name"] and c["value"]]
-                            if len(values) == 1 and len(values[0]) <= 4096:
-                                callback = {auth["cookie_name"]: values}
-                    if callback is not None:
-                        self._update("verifying")
-                        accepted = await self._bridge(client, auth["client"], "callback", binding=binding, query=callback)
-                        if accepted != {"status": "accepted"}:
-                            raise RuntimeError("observer_bridge_failed")
-                        return
-                    await asyncio.sleep(1)
-            finally:
-                await browser.close()
+                        await asyncio.sleep(1)
+                finally:
+                    await context.close()
+                    if browser is not None:
+                        await browser.close()
 
     async def authenticate(self):
         async with self.client_factory() as client:
             description = await client.describe(self.target)
             metadata = description["resource"]["metadata"]
+            metadata_auth = metadata.get("authentication") or {}
+            self.idp = metadata_auth.get("idp") if isinstance(metadata_auth.get("idp"), str) else self.idp
             revision = metadata["revision"]
             action = client.names.action("auth-start")
             if action not in {o["action"]["uri"] for o in description["offers"]}:
                 raise RuntimeError("login_method_unsupported")
-            result = await client.invoke(self.target, action, {"expected_revision": revision})
-            if result["resource"] != self.target or result["revision"] != revision:
-                raise RuntimeError("activation_changed")
-            auth = result["authentication"]
-            if auth["method"] not in METHODS:
-                raise RuntimeError("login_method_unsupported")
-            if auth["status"] == "auth_failed":
-                raise RuntimeError("authentication_failed")
-            if auth["method"] == "credential-profile" and auth["status"] != "authenticated":
-                raise RuntimeError("operator_credentials_required")
-            # For a provider with no challenge TTL, bound the local interaction
-            # only; this is not a credential expiry time.
-            expires_at = auth.get("expires_at") or time.time() + 300
-            if auth["status"] != "authenticated":
-                while auth["method"] == "device-code" and not auth.get("verification_uri"):
-                    self._check_deadline(expires_at)
-                    ready, observed = await self._state_from_observer(client, revision)
-                    if ready:
-                        self._update("completed")
-                        return
-                    auth.update(observed)
-                    await asyncio.sleep(1)
-                self._update("starting", method=auth["method"], user_code=auth.get("user_code"),
-                             expires_at=auth.get("expires_at"))
-                await self._browser(client, auth, revision, expires_at)
-            self._update("verifying")
-            await self._wait_ready(client, revision, expires_at)
-            self._update("completed")
+            for auth_round in range(2):
+                result = await client.invoke(self.target, action, {"expected_revision": revision})
+                if result["resource"] != self.target or result["revision"] != revision:
+                    raise RuntimeError("activation_changed")
+                auth = result["authentication"]
+                self.idp = auth.get("idp") if isinstance(auth.get("idp"), str) else self.idp
+                if auth["method"] not in METHODS:
+                    raise RuntimeError("login_method_unsupported")
+                if auth["status"] == "auth_failed":
+                    raise RuntimeError("authentication_failed")
+                if auth["method"] == "credential-profile" and auth["status"] != "authenticated":
+                    raise RuntimeError("operator_credentials_required")
+                # For a provider with no challenge TTL, bound the local interaction
+                # only; this is not a credential expiry time.
+                expires_at = auth.get("expires_at") or time.time() + 300
+                if auth["status"] != "authenticated":
+                    while auth["method"] == "device-code" and not auth.get("verification_uri"):
+                        self._check_deadline(expires_at)
+                        ready, observed = await self._state_from_observer(client, revision)
+                        if ready:
+                            self._update("completed")
+                            return
+                        auth.update(observed)
+                        await asyncio.sleep(1)
+                    self._update("starting", method=auth["method"], user_code=auth.get("user_code"),
+                                 expires_at=auth.get("expires_at"))
+                    try:
+                        await self._browser(client, auth, revision, expires_at)
+                    except RuntimeError as exc:
+                        if str(exc) == "saved_auth_rejected" and auth_round == 0:
+                            self._update("starting", retrying_saved_session=True)
+                            continue
+                        raise
+                self._update("verifying")
+                await self._wait_ready(client, revision, expires_at)
+                self._update("completed")
+                return
 
     def close(self):
         self._stop.set()
@@ -287,9 +442,9 @@ class Handler(BaseHTTPRequestHandler):
 PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Loom 登录</title>
 <style>body{font:17px system-ui;max-width:1000px;margin:40px auto;padding:0 20px;line-height:1.7}
 article{border-bottom:1px solid #ddd;padding:20px 0}p{overflow-wrap:anywhere}button{font:inherit;padding:6px 18px}</style>
-<h1>Loom 资源登录</h1><p>选择实例，在弹出的窗口完成登录。入口过期或登录失败后，可以直接重新认证。</p>
+<h1>Loom 资源登录</h1><p>选择实例，在弹出的窗口完成登录。同一 IdP 的资源会复用本地会话；入口过期或登录失败后，可以直接重新认证。</p>
 <main id="logins"></main><script>
-const phases={idle:'待开始',starting:'正在发起登录',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
+const phases={idle:'待开始',starting:'正在发起登录',restoring_session:'正在尝试本地登录信息',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
 const errors={activation_binding_unavailable:'节点服务入口未就绪，请联系节点管理员',authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
 async function refresh(){try{const values=await(await fetch('/status',{cache:'no-store'})).json();
 const root=document.getElementById('logins');root.replaceChildren();for(const x of values){
@@ -311,6 +466,10 @@ def main():
     parser.add_argument("--allow-http", action="store_true")
     parser.add_argument("--port", type=int, default=3000)
     parser.add_argument("--browser-executable")
+    parser.add_argument("--auth-state-dir", type=Path, default=Path("~/.loom/auth-profiles"),
+                        help="local browser profiles, partitioned by declared IdP")
+    parser.add_argument("--no-auth-state", action="store_true",
+                        help="disable local browser profile reuse for this helper")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("port must be between 1024 and 65535")
@@ -320,7 +479,9 @@ def main():
         return LoomClient(args.observer, token=token, grip_authority=args.authority,
                           workspace_id=args.workspace, allow_insecure_grip=args.allow_http, timeout=60)
 
-    logins = {target: Login(target, client_factory, browser_executable=args.browser_executable)
+    profile_store = None if args.no_auth_state else AuthProfileStore(args.auth_state_dir)
+    logins = {target: Login(target, client_factory, browser_executable=args.browser_executable,
+                             profile_store=profile_store)
               for target in args.activation}
     handler = type("LoginHandler", (Handler,), {"logins": logins, "csrf": secrets.token_urlsafe(32)})
     server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)

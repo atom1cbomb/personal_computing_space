@@ -24,6 +24,7 @@ DRIVER_ORCHESTRATOR_KEY: PackageContractKey = (
 _LOWER_SHA256 = r"[0-9a-f]{64}"
 _CONTENT_RESOURCE_ID_PATTERN = CONTENT_PATTERN
 _ORIGIN_PATH_PATTERN = r"^/(?!/)[^?#\\\u0000-\u0020\u007f]*$"
+_IDP_PATTERN = r"^https://[^@/?#\\\u0000-\u0020\u007f]+(?:/[^?#\\\u0000-\u0020\u007f]*)?$"
 _OCI_DIGEST_REF_PATTERN = (
     rf"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/"
     rf"(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*"
@@ -223,13 +224,16 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                         "start_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
                         "status_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
                         "browser_path": {"type": "string", "pattern": _ORIGIN_PATH_PATTERN},
+                        "idp": {"type": "string", "pattern": _IDP_PATTERN},
                         "interaction": {
                             "oneOf": [
                                 {"type": "object", "required": ["mode"],
-                                 "properties": {"mode": {"enum": ["redirect", "device-code", "credential-profile"]}},
+                                 "properties": {"mode": {"enum": ["redirect", "device-code", "credential-profile"]},
+                                                "idp": {"type": "string", "pattern": _IDP_PATTERN}},
                                  "additionalProperties": False},
                                 {"type": "object", "required": ["mode", "cookie_name"],
                                  "properties": {"mode": {"const": "browser-cookie"},
+                                                "idp": {"type": "string", "pattern": _IDP_PATTERN},
                                                 "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
                                  "additionalProperties": False},
                             ]

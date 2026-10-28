@@ -11,7 +11,7 @@ skill or SDK alone does not add server support. For user login commands, see
 |---|---|
 | Observer | Built-in activation `auth-start`, revision checks, short-lived browser sessions and bridge, public authentication projection, activation state and waiting Run updates |
 | Slave HTTP runtime | Isolated activation container, selected credential mount, optional state volume, private authentication requests and health reports |
-| SDK `loom-auth` | One portal for selected activation URIs, isolated browser contexts, callback/cookie forwarding, polling and explicit reauthentication |
+| SDK `loom-auth` | One portal for selected activation URIs, IdP-partitioned browser profiles, callback/cookie forwarding, polling and explicit reauthentication |
 | Capability gateway | Provider login/exchange or credential plugin, credential storage/refresh, real access verification, expiry detection, private hooks below |
 
 The system does not implement an arbitrary provider's OAuth exchange or acquire
@@ -24,6 +24,7 @@ gateway's private HTTP paths.
 ## Choose and declare an interaction
 
 | `interaction.mode` | Gateway responsibility | `browser_path` |
+| `authentication.idp` | Optional stable HTTPS IdP origin used by the local helper to share a browser profile across activations | None |
 |---|---|---|
 | `redirect` | Open provider authorization; accept the fixed local callback and finish the provider exchange, including provider state/PKCE checks where applicable | Required |
 | `browser-cookie` | Open provider login at its original site; accept and verify the named session cookie | Required; `interaction.cookie_name` also required |
@@ -42,6 +43,7 @@ Example **fragment inside the package `body`**, for a cookie-based service:
     "start_path": "/v1/auth/start",
     "status_path": "/v1/auth/status",
     "browser_path": "/v1/auth/browser",
+    "idp": "https://login.example/tenant",
     "interaction": {
       "mode": "browser-cookie",
       "cookie_name": "service_session"
@@ -51,7 +53,9 @@ Example **fragment inside the package `body`**, for a cookie-based service:
 }
 ```
 
-For redirect, use `"interaction": {"mode": "redirect"}`. For device-code or
+For redirect, use `"interaction": {"mode": "redirect"}`. Add a stable HTTPS
+`authentication.idp` origin when activations using this package authenticate against the same
+identity provider; the local helper then reuses its saved browser profile. For device-code or
 credential-profile, set that mode and remove `browser_path`. Paths must be
 distinct origin-relative paths without query/fragment, and must not overlap the
 health or business paths. Complete the normal image, port, health and business
