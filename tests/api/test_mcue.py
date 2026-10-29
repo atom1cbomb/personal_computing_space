@@ -188,6 +188,35 @@ async def test_historical_descriptor_is_readable_but_not_accepted_for_new_author
     with pytest.raises(ValueError, match="action_descriptor_digest_mismatch"):
         await repo.read_action_descriptor(tampered)
 
+    # Restore a historical package and stopped activation as persisted records,
+    # without admitting it through today's publication contract.
+    from loom_v2.contracts.types import CapabilityPackageVersion, CapabilityPackageActivation, IoContract
+    from tests.support.package_fixture import action_export
+
+    contract = await repo.put_content(IoContract().model_dump(mode="json"), media_type="application/vnd.loom.io-contract+json")
+    package = CapabilityPackageVersion.model_validate({
+        "package_id": "historical", "package_version": "v1", "workspace_id": repo.settings.workspace_id,
+        "scope": "workspace_reusable", "publication_state": "published", "package_type": "service",
+        "execution": {"kind": "container:http", "version": "1"},
+        "body": {"image_ref": "example/historical@sha256:" + "a" * 64, "container_port": 8080, "health_path": "/healthz"},
+        "action_exports": [action_export(ref, contract, runtime_binding={"path": "/create"})],
+    })
+    activation = CapabilityPackageActivation(
+        package_version_ref=package.version_ref, package_digest=package.package_digest,
+        target_slave="slave-a", instance_name="default", desired_state="stopped", activation_state="stopped",
+        activation_revision=1, activation_closure_version_ref="historical", compute_binding_ref="historical",
+        last_idempotency_key="historical",
+    )
+    await repo._persist_workspace_package(package, activations=[activation])
+    entries = await client.resources()
+    targets = [row["uri"] for row in entries if row["mcue"] in {"capability/package", "capability/activation"}]
+    assert len(targets) == 2
+    for target in targets:
+        assert (await client.describe(target))["resource"]["metadata"]["dependencies"] is None
+        assert (await client.invoke(target, client.names.action("how-to-use"), {}))["dependency_fields"] == []
+    with pytest.raises(ValueError, match="resource_effects_invalid"):
+        await repo._validate_package_exports(package, publication=True)
+
 
 async def test_json_boolean_and_number_are_distinct_for_revision_and_publication(mcue_client):
     client, _ = mcue_client

@@ -16,7 +16,9 @@ from loom_v2.contracts.types import IoContract, ResourceRef
 async def activation_config_schema(repository: Any, package: Any) -> dict[str, Any] | None:
     refs = []
     for export in package.action_exports:
-        descriptor = await repository.get_action_descriptor(export.action_descriptor_ref)
+        # Discovery also reads immutable packages published under older authoring
+        # contracts. Publication/activation validates their effects separately.
+        descriptor = await repository.read_action_descriptor(export.action_descriptor_ref)
         if descriptor.get("instance_config_schema_ref"):
             refs.append(ResourceRef.model_validate(descriptor["instance_config_schema_ref"]))
     if not refs:

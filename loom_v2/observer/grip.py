@@ -569,8 +569,10 @@ class GripService:
                 dependencies_help.extend({**field, "path": "instance_config." + field["path"]}
                                          for field in dependency_fields(config_schema))
             for export in dependency_package.action_exports:
-                descriptor = await self.repo.get_action_descriptor(export.action_descriptor_ref)
+                descriptor = await self.repo.read_action_descriptor(export.action_descriptor_ref)
                 for index, effect in enumerate(descriptor.get("resource_effects", [])):
+                    if "mcue_ref" not in effect:
+                        continue
                     definition = await self.repo.get_mcue_definition(self.settings.workspace_id, effect["mcue_ref"])
                     action_name = descriptor.get("name", export.action_descriptor_ref.resource_id)
                     dependencies_help.extend({**field, "path": f"{action_name}.resource_effects.{index}.attributes." + field["path"]}
