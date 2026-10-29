@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .types import ContractModel
+from loom_orchestration.mcue import ResourceMetadata
 
 
 DRIVER_COMMANDS = frozenset({
@@ -41,6 +42,7 @@ class AgentRegistration(ContractModel):
     endpoint_url: str = Field(min_length=1)
     protocol_version: str = Field(min_length=1)
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    resource_metadata: "ResourceMetadata | None" = None
 
 
 class AgentLease(ContractModel):

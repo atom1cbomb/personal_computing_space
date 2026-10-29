@@ -66,7 +66,7 @@ async def test_resource_how_to_use_explains_attributes_and_is_read_only():
         result = invoke(client, resource, n.action("how-to-use"))
         assert result["resource"] == resource
         assert result["summary"].startswith("computing/vm resource")
-        assert result["attributes"] == {"display_name": "demo2zy", "cpu_cores": 4}
+        assert "attributes" not in result and "relationships" not in result
         assert {item["name"] for item in result["attribute_help"]} >= {"display_name", "cpu_cores"}
         assert n.action("update-attributes") in {item["action"] for item in result["actions"]}
         assert n.action("how-to-use") not in {item["action"] for item in result["actions"]}

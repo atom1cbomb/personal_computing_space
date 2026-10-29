@@ -53,6 +53,10 @@ Every public GRIP directory entry also offers the platform `how-to-use` read act
 After DESCRIBE, invoke it when the relationship between a resource, its package,
 managed-by resource, activation, custom attributes, or callable actions is unclear;
 use its exact action and schema references instead of inferring provider behavior.
+`how-to-use` explains dependency fields and their meaning. Read actual runtime
+references from DESCRIBE or the workspace `list-resources` action's
+`metadata.dependencies`; `null` means no dependency declaration, not proof of
+independence. The protocol still has only DESCRIBE and INVOKE.
 Capability packages published by `ServicePackage` expose their package
 `HOW_TO_USE.md` through the returned `documentation` field (backed by the immutable
 `how_to_use_ref` content reference). Treat that document as package-specific usage
@@ -167,6 +171,12 @@ For a `create` effect, generate source that extracts the declared `identity_path
 registers each resource and explicitly defers cleanup before readiness polling.
 In the MCUE contract, use the effect's explicit `mcue_ref` for registration;
 do not infer a type from a package name, URI path, or connection address.
+Resolve that type's dependency fields and the effect's `attributes_mapping`.
+Use `loom_orchestration.resource_attributes(effect, arguments=..., result=...,
+instance_config=...)` to fill declared public attributes, then register them.
+Required dependency values must be supplied; do not invent or infer a host URI.
+See [references/mcue.md](references/mcue.md) for the schema annotation and
+publication checks.
 Use readiness `result_path` and its item-relative `identity_path` to match the
 correct resource before testing conditions. Follow the declared `input_mapping`.
 Before emitting a
@@ -196,7 +206,7 @@ action.
    Use exact returned action URIs and the deployed action schemas.
 3. Publish source/packages through the authoring data plane. Before activation,
    invoke the discovered `check-package` offer with the package URI and intended
-   instance_name. Report its issues when ready=false; activation repeats this
+   instance_name and proposed instance_config. Report its issues when ready=false; activation repeats this
    check before changing state. Node service entries, TLS and routing belong to
    node onboarding: never SSH to repair them as part of package deployment.
    Build/push images locally or in CI; the Slave pulls the immutable image_ref.

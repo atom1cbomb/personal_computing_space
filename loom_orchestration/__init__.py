@@ -16,7 +16,7 @@ from .package import OrchestratorPackage
 from .polling import poll_submission
 from .program import OrchestrationContext, ProgramSource
 from .submission import SubmissionBuilder
-from .metadata import ResourceEffect, validate_action_descriptor
+from .metadata import ResourceEffect, resource_attributes, validate_action_descriptor
 from .mcue import McueDefinition
 from .auth import AuthProfileStore
 from .workflows import CallLedger, action_contract, execute_action, inventory, publish_function, read_package_source, submit_map_reduce, wait_run
@@ -37,6 +37,7 @@ __all__ = [
     "ProgramSource",
     "ResourceRef",
     "ResourceEffect",
+    "resource_attributes",
     "SubmissionBuilder",
     "TaskClosure",
     "poll_submission",

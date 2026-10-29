@@ -85,3 +85,55 @@ same MCUE with the patch in one transaction.
 An attribute update returns the resource URI and new attribute revision directly;
 it does not create a Driver Run or change an activation revision. It cannot
 update system metadata or execution configuration.
+
+## Dependency declarations
+
+In an MCUE `attributes_schema`, mark an explicit string or array-of-string
+property with `"x-loom-dependency": true` and a nonempty `description` explaining
+the relationship. Use `required` and (for nonempty collections) `minItems` to
+require references. Names and meanings belong to the selected type; the platform
+does not prescribe a common host, network or storage field. Explicit nested
+`properties`/`items` paths are supported. Dependency markers inside `$defs`,
+conditional branches or pattern properties are rejected rather than ignored.
+
+Registered values appear in `metadata.attributes`. DESCRIBE and the workspace
+`list-resources` action also return `metadata.dependencies` entries with `path`,
+`resource` (an exact GRIP URI), and `description`. No declaration gives `null`;
+a declared optional collection with no references gives `[]`. Inventory retains
+these fields even for unavailable Slaves. Follow the referenced resource's
+current description to investigate availability or deletion impact; no log
+inspection or inference from IP addresses is necessary for a declared relation.
+
+Package instance configuration uses the same annotation via
+`instance_config_schema_ref`. Upload these schemas with
+`application/vnd.loom.instance-config-schema+json`; `ServicePackage.publish`
+selects that type from descriptor references automatically. Only annotated
+references are projected publicly from activation config. Keep credentials in
+their existing authentication channels. `how-to-use.dependency_fields` explains
+the schema and filling requirements without copying runtime relationship values.
+
+Creation descriptors use `resource_effects[].attributes_mapping` to fill each
+target top-level attribute, for example:
+
+```json
+{
+  "host_resource": {"source": "input", "path": "host"},
+  "display_name": {"source": "output", "path": "name"}
+}
+```
+
+Sources are `input`, `output`, `instance_config` with explicit object paths, or
+`constant` with a `value`. The example applies only to a type declaring these
+fields. Publication and deployment checks require all mandatory creation
+attributes to have mappings, check source paths and basic types, and validate
+constants. Preflight also validates known config values. Final resource
+registration validates provider results after creation. The SDK helper fills
+attributes; it does not execute creation or register anything by itself.
+
+For operator-managed Slaves, deployment config accepts
+`resource_metadata = {mcue_ref, attributes}` and passes it on registration.
+The built-in `computing/slave/v2` declares a required `host_resource`; other
+versions may declare different relationships. Validation runs before issuing a
+lease, and stored metadata remains available after heartbeat expiry. Publish
+new immutable type/package versions and upgrade Observer/SDK together; skill
+changes alone do not change an existing deployment.

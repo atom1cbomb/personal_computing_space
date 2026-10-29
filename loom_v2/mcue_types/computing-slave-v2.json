@@ -1,0 +1,17 @@
+{
+  "mcue": "computing/slave",
+  "version": "v2",
+  "description": "Compute executor with its operator-declared hosting dependency",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {
+      "host_resource": {
+        "type": "string",
+        "description": "Resource hosting this executor. Terminating the host takes this executor offline; fill its exact discovered GRIP resource URI during node deployment.",
+        "x-loom-dependency": true
+      }
+    },
+    "required": ["host_resource"],
+    "additionalProperties": false
+  }
+}

@@ -38,7 +38,8 @@ async def inventory(client, *, include_stopped=False):
     result = {"resources": [], "activations": [], "slaves": []}
     for row in rows:
         m = row["metadata"]
-        base = {"uri": row["uri"], "mcue": row["mcue"]}
+        base = {"uri": row["uri"], "mcue": row["mcue"], "mcue_ref": m.get("mcue_ref"),
+                "dependencies": m.get("dependencies")}
         if row["mcue"] == "capability/activation":
             if not include_stopped and m.get("state") == "stopped":
                 continue
@@ -47,7 +48,7 @@ async def inventory(client, *, include_stopped=False):
                 "actions": [{k: a.get(k) for k in ("name", "description", "interaction", "available")}
                             for a in m.get("actions", [])]})
         elif row["mcue"] == "computing/slave":
-            result["slaves"].append({**base, "available": m.get("available")})
+            result["slaves"].append({**base, "available": m.get("available"), "attributes": m.get("attributes", {})})
         elif row["mcue"] not in {"capability/package", "execution/run"} and not row["mcue"].startswith("grip/"):
             result["resources"].append({**base, **{k: m.get(k) for k in (
                 "attributes", "state", "activations", "available")}})

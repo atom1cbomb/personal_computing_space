@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, Self
 from urllib.parse import quote, urlsplit
 
 from loom_orchestration.grip import Names
+from loom_orchestration.mcue import ResourceMetadata
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
 
@@ -40,6 +41,7 @@ class MachineConfig(ConfigModel):
     grip_data_publish_host: str = "127.0.0.1"
     consumer_ports: dict[str, dict[str, int]] = Field(default_factory=dict)
     ssh_key: Path | None = None
+    resource_metadata: ResourceMetadata | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -77,6 +79,8 @@ class MachineConfig(ConfigModel):
 
     @model_validator(mode="after")
     def role_fields(self) -> Self:
+        if self.role != "slave" and self.resource_metadata is not None:
+            raise ValueError("resource_metadata is only valid for a slave")
         if self.role == "slave" and self.service_id is None:
             raise ValueError("service_id is required for a slave")
         if self.role != "slave" and self.service_id is not None:

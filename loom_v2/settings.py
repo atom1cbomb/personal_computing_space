@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from loom_orchestration.mcue import ResourceMetadata
 
 
 class Settings(BaseSettings):
@@ -72,5 +73,6 @@ class Settings(BaseSettings):
     agent_lease_ttl_seconds: float = 15.0
     driver_url: str | None = None
     slave_endpoint_url: str | None = None
+    slave_resource_metadata: ResourceMetadata | None = None
 
     model_config = SettingsConfigDict(env_prefix="LOOM_", extra="ignore")

@@ -137,7 +137,7 @@ async def test_type_filter_skips_unrelated_sources_and_description_hashes(direct
     payload = client._grip_request("INVOKE", client.names.root,
                                    action=client.names.action("list-resources"), input={"mcue": "grip/mcue-type"})
     result = await client._grip_exchange(client.base_url + "/.well-known/grip", payload)
-    assert len(result["resources"]) == 14
+    assert len(result["resources"]) == 15
 
 
 async def test_listing_and_target_descriptions_agree_and_support_registered_builtin_types(directory):

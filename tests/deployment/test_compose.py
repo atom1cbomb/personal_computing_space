@@ -88,6 +88,22 @@ def test_slave_advertises_cross_host_endpoint_to_observer(tmp_path: Path):
     assert environment["LOOM_SLAVE_ENDPOINT_URL"] == "http://10.0.0.13:8081"
 
 
+def test_slave_metadata_reaches_settings_through_deployment_environment(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from loom_v2.deployment.config import MachineConfig
+    from loom_v2.settings import Settings
+
+    config = make_config(tmp_path)
+    metadata = {"mcue_ref": "grip://loom.local/workspaces/workspace-default/mcue-types/computing/slave/v2",
+                "attributes": {"host_resource": "grip://loom.local/workspaces/workspace-default/resources/vm/host"}}
+    worker = MachineConfig.model_validate({**config.machine("worker-a").model_dump(), "resource_metadata": metadata})
+    config = replace(config, machines=tuple(worker if m.name == worker.name else m for m in config.machines))
+    project = render_project(config, worker.name)
+    environment = json.loads(project.compose_text)["services"]["slave"]["environment"]
+    monkeypatch.setenv("LOOM_SLAVE_RESOURCE_METADATA", environment["LOOM_SLAVE_RESOURCE_METADATA"])
+    assert Settings().slave_resource_metadata.model_dump(mode="json") == metadata
+
+
 def test_slave_mounts_operator_runtime_credentials_when_configured(tmp_path: Path):
     path = tmp_path / "deployment.toml"
     for filename, value in {

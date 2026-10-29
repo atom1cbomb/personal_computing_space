@@ -8,8 +8,9 @@ from copy import deepcopy
 from jsonschema import Draft202012Validator
 
 from loom_orchestration.metadata import ResourceEffect, schema_at_path
+from loom_orchestration.mcue import attribute_validator
+from loom_orchestration.resource_dependencies import DEPENDENCY, resource_dependencies, path_values
 from loom_v2.contracts.types import IoContract, ResourceRef
-from loom_v2.contracts.io_schema import validate_schema
 
 
 async def activation_config_schema(repository: Any, package: Any) -> dict[str, Any] | None:
@@ -20,12 +21,12 @@ async def activation_config_schema(repository: Any, package: Any) -> dict[str, A
             refs.append(ResourceRef.model_validate(descriptor["instance_config_schema_ref"]))
     if not refs:
         return None
-    if len({ref.digest for ref in refs}) != 1:
+    if len({(ref.resource_id, ref.digest) for ref in refs}) != 1:
         raise ValueError("activation_config_schema_conflict")
     schema = await repository._load_json_content(refs[0])
-    validate_schema(schema)
     if schema.get("type") != "object":
         raise ValueError("activation_config_schema_invalid")
+    attribute_validator(schema)
     return schema
 
 
@@ -34,8 +35,48 @@ async def validate_activation_config(repository: Any, package: Any, config: dict
     if schema is not None:
         if set(config) - set(schema.get("properties", {})):
             raise ValueError("activation_config_field_unknown")
-        if not Draft202012Validator(schema).is_valid(config):
+        if not attribute_validator(schema).is_valid(config):
             raise ValueError("activation_config_invalid")
+        resource_dependencies(schema, config)
+    for export in package.action_exports:
+        descriptor = await repository.get_action_descriptor(export.action_descriptor_ref)
+        for raw in descriptor.get("resource_effects", []):
+            effect = ResourceEffect.model_validate(raw)
+            definition = await repository.get_mcue_definition(package.workspace_id or repository.settings.workspace_id, effect.mcue_ref)
+            for name, source in effect.attributes_mapping.items():
+                if source.source != "instance_config":
+                    continue
+                values = path_values(config, source.path)
+                if len(values) != 1:
+                    raise ValueError("resource_attribute_source_missing:" + name)
+                validate_attribute_value(definition, name, values[0], "resource_attribute_value_invalid")
+
+
+def validate_attribute_value(definition, name, value, error):
+    schema = definition.attributes_schema
+    # Preserve the containing schema's resolver for ordinary local $ref fields.
+    if next(attribute_validator(schema).descend(value, schema["properties"][name]), None) is not None:
+        raise ValueError(error + ":" + name)
+    resource_dependencies(schema, {name: value})
+
+
+def validate_attribute_mapping(effect, definition, sources):
+    """Check the declared fill rules, without executing a creation action."""
+    schema = definition.attributes_schema
+    if effect.effect == "create" and set(schema.get("required", [])) - set(effect.attributes_mapping):
+        raise ValueError("resource_attributes_mapping_required")
+    for name, binding in effect.attributes_mapping.items():
+        destination = schema.get("properties", {}).get(name)
+        if destination is None:
+            raise ValueError("resource_attribute_field_unknown:" + name)
+        if binding.source == "constant":
+            validate_attribute_value(definition, name, binding.value, "resource_attribute_constant_invalid")
+        else:
+            source = schema_at_path(sources.get(binding.source) or {}, binding.path)
+            if source is None:
+                raise ValueError("resource_attribute_source_unavailable:" + name)
+            if not _types(source) <= _types(destination):
+                raise ValueError("resource_attribute_type_mismatch:" + name)
 
 
 def _at(schema: dict[str, Any], path: str) -> dict[str, Any]:
@@ -55,7 +96,7 @@ def _types(schema: dict[str, Any]) -> set[str]:
 def _assignable(source: dict[str, Any], destination: dict[str, Any]) -> None:
     if not _types(source) <= _types(destination):
         raise ValueError("resource_effect_mapping_type_mismatch")
-    supported = {"type", "title", "description", "$schema", "$id", "default", "examples"}
+    supported = {"type", "title", "description", "$schema", "$id", "default", "examples", DEPENDENCY}
     if set(destination) - supported:
         raise ValueError("resource_effect_schema_unsupported")
 
@@ -71,7 +112,7 @@ def _mapping_value(
             raise ValueError("resource_effect_mapping_type_mismatch")
         if len(value) < destination.get("minItems", 0) or len(value) > destination.get("maxItems", len(value)):
             raise ValueError("resource_effect_mapping_cardinality_invalid")
-        if set(destination) - {"type", "items", "minItems", "maxItems", "description", "title"}:
+        if set(destination) - {"type", "items", "minItems", "maxItems", "description", "title", DEPENDENCY}:
             raise ValueError("resource_effect_schema_unsupported")
         for item in value:
             _mapping_value(item, destination["items"], source, identity)
@@ -135,10 +176,14 @@ async def validate_resource_dependencies(repository: Any, package: Any) -> None:
         return await schemas(matches[0])
 
     for export, descriptor in exports:
-        _, output_schema = await schemas(export)
+        create_input, output_schema = await schemas(export)
         for raw in descriptor["resource_effects"]:
             effect = ResourceEffect.model_validate(raw)
-            await repository.get_mcue_definition(package.workspace_id or repository.settings.workspace_id, effect.mcue_ref)
+            definition = await repository.get_mcue_definition(package.workspace_id or repository.settings.workspace_id, effect.mcue_ref)
+            validate_attribute_mapping(effect, definition, {
+                "input": create_input, "output": output_schema,
+                "instance_config": await activation_config_schema(repository, package),
+            })
             identity = _at(output_schema, effect.identity_path)
             if _types(identity) != {"string"}:
                 raise ValueError("resource_effect_identity_type_invalid")

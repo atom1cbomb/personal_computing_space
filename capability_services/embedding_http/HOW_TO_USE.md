@@ -5,6 +5,10 @@
 依赖；可选 `request_timeout_seconds` 默认 120 秒。激活绑定目标模型资源后，等待
 activation ready，再调用它的 action。
 
+v2 在配置 schema 中声明 `service_ref` 为公开依赖。激活前向 `check-package`
+传入拟使用的 `instance_config`；运行时关系可从 activation 的 DESCRIBE 或
+workspace `list-resources` 返回的 `metadata.dependencies` 读取。
+
 | action | 输入 | 返回 |
 |---|---|---|
 | `info` | `{}` | 模型名称、维度和设备信息 |

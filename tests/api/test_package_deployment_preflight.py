@@ -84,15 +84,17 @@ async def deployment(tmp_path):
         await slave.close()
 
 
-async def publish(d, modes=("task", "request-reply", "byte-stream")):
+async def publish(d, modes=("task", "request-reply", "byte-stream"), *, config_schema=None):
     c = d.client
     schema = await c.upload_content({"type": "object", "properties": {"value": {"type": "integer"}},
                                     "required": ["value"]}, media_type="application/schema+json")
     contract = await c.upload_content({"schema_version": "io.v1", "input_schema_ref": schema.model_dump(mode="json"),
                                       "output_schema_ref": schema.model_dump(mode="json")})
     exports = []
+    config_ref = await c.upload_content(config_schema, media_type="application/vnd.loom.instance-config-schema+json") if config_schema else None
     for mode in modes:
-        descriptor = await c.upload_content({"schema_version": "action.v1", "resource_id": c.names.action(mode), "name": mode},
+        descriptor = await c.upload_content({"schema_version": "action.v1", "resource_id": c.names.action(mode), "name": mode,
+                                            **({"instance_config_schema_ref": config_ref.model_dump(mode="json")} if config_ref else {})},
                                             media_type="application/vnd.loom.action-descriptor+json")
         exports.append(action_export(descriptor.model_dump(mode="json"), contract.model_dump(mode="json"), runtime_binding={"path": "/" + mode, "interaction": mode}))
     result = await c.register_package({"package_id": "preflight-test", "package_version": "v1", "package_type": "service",
@@ -108,6 +110,52 @@ async def check(d, package, instance="default"):
 async def activate(d, package, instance="default"):
     return await d.client.invoke(d.target, d.client.names.action("activate-package"),
                                 {"package": package, "instance_name": instance, "idempotency_key": "same-request"})
+
+
+async def test_dependency_preflight_activation_and_configuration_share_validation(deployment):
+    d = deployment
+    package_uri = await publish(d, ("task",), config_schema={
+        "type": "object", "required": ["backend"], "additionalProperties": False,
+        "properties": {
+            "backend": {"type": "string", "description": "Backend serving this instance.", "x-loom-dependency": True},
+            "private_option": {"type": "string"},
+        },
+    })
+    package = await d.repo.get_capability_package(package_uri)
+    for config, code in [({}, "activation_config_invalid"), ({"backend": "not-a-uri"}, "dependency_reference_invalid:backend")]:
+        check_result = await d.client.invoke(d.target, d.client.names.action("check-package"), {
+            "package": package_uri, "instance_config": config})
+        assert check_result["ready"] is False and check_result["issues"][0]["code"] == code
+        with pytest.raises(GripError, match=code.split(":", 1)[0]):
+            await d.client.invoke(d.target, d.client.names.action("activate-package"), {
+                "package": package_uri, "instance_config": config, "idempotency_key": "attempt"})
+        assert not await d.repo.list_package_activations(package) and not d.calls
+
+    backend = d.client.names.name("resources", "backend", "primary")
+    config = {"backend": backend, "private_option": "private-fixture"}
+    before_events = repr(d.repo.workspace_package_events)
+    assert (await d.client.invoke(d.target, d.client.names.action("check-package"), {
+        "package": package_uri, "instance_config": config}))["ready"] is True
+    assert repr(d.repo.workspace_package_events) == before_events and not d.calls
+    active = await d.client.invoke(d.target, d.client.names.action("activate-package"), {
+        "package": package_uri, "instance_config": config, "idempotency_key": "attempt"})
+    assert active["state"] == "ready"
+    assert (await check(d, package_uri))["ready"]  # omitted config reuses the active instance
+    described = await d.client.describe(active["resource"])
+    metadata = described["resource"]["metadata"]
+    assert metadata["dependencies"] == [{"path": "backend", "resource": backend, "description": "Backend serving this instance."}]
+    assert "private-fixture" not in str(described)
+    assert next(r for r in await d.client.resources() if r["uri"] == active["resource"]) == described["resource"]
+    for target in (package_uri, active["resource"]):
+        help_text = await d.client.invoke(target, d.client.names.action("how-to-use"), {})
+        assert backend not in str(help_text) and "private-fixture" not in str(help_text)
+        assert help_text["dependency_fields"][0]["path"] == "instance_config.backend"
+    calls_before = list(d.calls)
+    with pytest.raises(GripError, match="activation_config_invalid"):
+        await d.client.invoke(active["resource"], d.client.names.action("configure"), {
+            "instance_config": {}, "expected_revision": active["revision"], "idempotency_key": "invalid-config"})
+    assert d.calls == calls_before
+    assert (await d.repo.list_package_activations(package))[0].instance_config == config
 
 
 async def test_missing_entry_refuses_without_side_effects_then_same_request_deploys(deployment):

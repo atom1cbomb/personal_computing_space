@@ -917,6 +917,19 @@ class ObserverRepository:
         """
         if not isinstance(registration, AgentRegistration):
             registration = AgentRegistration.model_validate(registration)
+        registration = registration.model_copy(deep=True)
+        # Store the validated public projection in the existing durable JSON column.
+        registration.capabilities.pop("resource_metadata", None)
+        if registration.resource_metadata is not None:
+            metadata = registration.resource_metadata
+            try:
+                definition = await self.get_mcue_definition(registration.workspace_id, metadata.mcue_ref)
+            except KeyError:
+                raise ValueError("agent_resource_mcue_invalid") from None
+            if registration.role != "slave" or definition.mcue != "computing/slave":
+                raise ValueError("agent_resource_mcue_invalid")
+            definition.validate_attributes(metadata.attributes)
+            registration.capabilities["resource_metadata"] = metadata.model_dump(mode="json")
         now = datetime.now(timezone.utc)
         workspace_id = registration.workspace_id
         epoch = 0
@@ -3589,8 +3602,9 @@ class ObserverRepository:
             if current is not None and current.package_digest != package.package_digest:
                 raise ValueError("capability_package_identity_conflict")
             if desired_state == "running":
-                from .resource_metadata import validate_activation_config
+                from .resource_metadata import validate_activation_config, validate_resource_dependencies
 
+                await validate_resource_dependencies(self, package)
                 await validate_activation_config(
                     self, package,
                     instance_config if instance_config is not None else (current.instance_config if current else {}),

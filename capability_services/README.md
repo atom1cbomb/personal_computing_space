@@ -71,8 +71,10 @@ Suanli Cloud 的创建 VM descriptor 引用 Suanli SSH 使用包。先发布 SSH
 可运行命令见 [GRIP 示例](../examples/grip/README.md)。SDK 使用方式：
 
 ```python
+instance_config = {}  # 按所选包的配置 schema 填入必填项和依赖 URI。
 check = await client.invoke(slave_uri, client.names.action("check-package"), {
     "package": package_uri, "instance_name": "service-main",
+    "instance_config": instance_config,
 })
 if not check["ready"]:
     raise RuntimeError(check["issues"])
@@ -80,7 +82,7 @@ if not check["ready"]:
 activation = await client.invoke(slave_uri, client.names.action("activate-package"), {
     "package": package_uri,
     "instance_name": "service-main",
-    "instance_config": {},
+    "instance_config": instance_config,
     "credential_profile": "operator-configured-profile",
     "idempotency_key": "activate-service-main",
 })
@@ -88,6 +90,9 @@ description = await client.describe(activation["resource"])
 ```
 
 `check-package` 是只读配置检查，返回 required_interactions 和逐项 issues。
+它同时检查创建动作的 `attributes_mapping` 和已知实例配置中的依赖值。
+依赖缺失或类型错误返回 `activation_config_invalid`，非法引用返回
+`dependency_reference_invalid:<字段路径>`。修正配置后重新检查。
 缺服务签名为 `service_signing_unavailable`，缺数据入口为 `binding_unavailable`，
 入口不合法为 `binding_invalid`。检查失败时选择符合条件的节点或交给节点管理员处理，
 不要在能力包部署过程中 SSH 补配置。服务端激活前会重新检查，拒绝请求不创建实例或增加 revision。

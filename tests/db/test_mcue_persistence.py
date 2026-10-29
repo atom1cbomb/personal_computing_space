@@ -9,6 +9,28 @@ from loom_v2.observer.mcue_migration import backfill_resource_mcue
 from loom_v2.observer.repository import ObserverRepository
 
 
+async def test_slave_resource_metadata_survives_observer_restart(tmp_path):
+    from loom_v2.contracts.agents import AgentRegistration
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'agents.db'}")
+    try:
+        repo = ObserverRepository(engine)
+        await repo.init_db()
+        public = {"mcue_ref": repo.names.mcue("computing/slave", "v2"),
+                  "attributes": {"host_resource": repo.names.name("resources", "vm", "host")}}
+        await repo.register_agent(AgentRegistration(
+            role="slave", agent_id="slave-b", instance_id="one", workspace_id="workspace-default",
+            endpoint_url="http://slave-b", protocol_version="loom.v1", resource_metadata=public))
+        restored = ObserverRepository(engine, content_store=repo.content_store)
+        await restored.init_db()
+        agents = await restored.list_agents("workspace-default", role="slave")
+        assert agents[0]["capabilities"]["resource_metadata"] == public
+        definition = await restored.get_mcue_definition("workspace-default", public["mcue_ref"])
+        definition.validate_attributes(public["attributes"])
+    finally:
+        await engine.dispose()
+
+
 @pytest.mark.parametrize("persistent", [False, True])
 async def test_concurrent_attribute_updates_state_writes_and_restart(tmp_path, persistent):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'mcue.db'}") if persistent else None

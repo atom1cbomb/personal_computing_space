@@ -1,13 +1,13 @@
 # Embedding HTTP capability service
 
-`embedding-http/v1` 将集群中的 embedding 模型作为可使用的 Loom 服务公开。
+`embedding-http/v2` 将集群中的 embedding 模型作为可使用的 Loom 服务公开，并声明上游 `service_ref` 依赖。
 两个 GRIP action `embed`、`info` 都直接返回业务结果。模型资源使用 `model/embedding`
 MCUE，可通过激活的 `target` 关联；模型名称和维度来自实际 `/info` 结果。
 
 在仓库根目录构建镜像，然后用实际镜像摘要发布包：
 
 ```sh
-docker build -f capability_services/embedding_http/Dockerfile -t <registry>/embedding-http:v1 .
+docker build -f capability_services/embedding_http/Dockerfile -t <registry>/embedding-http:v2 .
 python scripts/publish_service_package.py capability_services/embedding_http --image '<registry>/embedding-http@sha256:<actual digest>'
 ```
 

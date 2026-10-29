@@ -48,7 +48,7 @@ async def test_all_resource_descriptions_use_resolvable_mcue(mcue_client):
         definition = await client.invoke(resource["metadata"]["mcue_ref"], client.names.action("read"), {})
         assert definition["mcue"] == resource["mcue"]
     assert [r["uri"] for r in await client.resources(mcue="computing/vm")] == [target]
-    assert len(await client.resources(mcue="grip/mcue-type")) == 14
+    assert len(await client.resources(mcue="grip/mcue-type")) == 15
     content = await client.upload_content({"answer": 42}, media_type="application/json")
     description = await client.describe(content.resource_id)
     assert description["resource"]["mcue"] == "data/content"
@@ -203,3 +203,95 @@ async def test_json_boolean_and_number_are_distinct_for_revision_and_publication
     target = await register(client, definition=published["resource"], attributes={"value": 1})
     assert (await update(client, target, {"value": True}))["attributes_revision"] == 2
     assert (await client.describe(target))["resource"]["metadata"]["attributes"]["value"] is True
+
+
+async def test_schema_declared_dependencies_discovery_and_validation(mcue_client):
+    from loom_orchestration.workflows import inventory
+
+    client, repo = mcue_client
+    host = await register(client, name="host")
+    reference = {"type": "string", "description": "Backing store for this shard.", "x-loom-dependency": True}
+    definition = await client.invoke(client.names.root, client.names.action("publish-mcue-type"), {
+        "mcue": "storage/cluster", "version": "v1", "attributes_schema": {
+            "type": "object", "required": ["replicas", "shards"], "properties": {
+                "replicas": {"type": "array", "minItems": 1, "items": {"type": "string"},
+                             "description": "Replication peers.", "x-loom-dependency": True},
+                "shards": {"type": "array", "items": {
+                    "type": "object", "required": ["store"], "properties": {"store": reference}}},
+            },
+        },
+    })
+    attributes = {"replicas": [host], "shards": [{"store": host}]}
+    target = await register(client, definition=definition["resource"], attributes=attributes, name="cluster")
+    description = await client.describe(target)
+    metadata = description["resource"]["metadata"]
+    assert metadata["dependencies"] == [
+        {"path": "replicas", "resource": host, "description": "Replication peers."},
+        {"path": "shards[].store", "resource": host, "description": reference["description"]},
+    ]
+    assert (await client.resources(mcue="storage/cluster"))[0] == description["resource"]
+    row = next(row for row in (await inventory(client))["resources"] if row["uri"] == target)
+    assert row["dependencies"] == metadata["dependencies"] and row["attributes"] == attributes
+    help_text = await client.invoke(target, client.names.action("how-to-use"), {})
+    assert host not in str(help_text)
+    assert "attributes" not in help_text and "relationships" not in help_text
+    assert help_text["dependency_fields"][0] == {
+        "path": "attributes.replicas", "description": "Replication peers.", "required": True, "many": True}
+    for patch, error in [({"replicas": []}, "mcue_attributes_invalid"),
+                         ({"replicas": ["https://example.com"]}, "dependency_reference_invalid"),
+                         ({"shards": [{"store": "bad"}]}, "dependency_reference_invalid"),
+                         ({"replicas": None}, "mcue_attributes_invalid")]:
+        with pytest.raises(GripError, match=error):
+            await update(client, target, patch)
+        assert (await client.describe(target))["resource"]["metadata"] == metadata
+    assert (await client.describe(host))["resource"]["metadata"]["dependencies"] is None
+    assert not repo.runs
+
+
+@pytest.mark.parametrize("schema", [
+    {"properties": {"host": {"type": "string", "x-loom-dependency": True}}},
+    {"properties": {"host": {"type": "integer", "description": "Host", "x-loom-dependency": True}}},
+    {"properties": {"hosts": {"type": "array", "items": True, "description": "Hosts", "x-loom-dependency": True}}},
+    {"$defs": {"host": {"type": "string", "description": "Host", "x-loom-dependency": True}}},
+    {"allOf": [{"properties": {"host": {"type": "string", "description": "Host", "x-loom-dependency": True}}}]},
+])
+async def test_invalid_dependency_declarations_are_rejected(mcue_client, schema):
+    from loom_orchestration.mcue import McueDefinition
+
+    client, _ = mcue_client
+    payload = {"mcue": "test/dependency", "version": "v1", "attributes_schema": {"type": "object", **schema}}
+    with pytest.raises(ValueError, match="dependency_"):
+        McueDefinition.model_validate(payload)
+    with pytest.raises(GripError, match="invalid_input"):
+        await client.invoke(client.names.root, client.names.action("publish-mcue-type"), payload)
+
+
+async def test_slave_dependency_survives_expiry_and_invalid_reregistration(mcue_client):
+    from datetime import datetime, timedelta, timezone
+    from loom_v2.contracts.agents import AgentRegistration
+    from loom_orchestration.workflows import inventory
+
+    client, repo = mcue_client
+    host = await register(client, name="demo2zy")
+    registration = AgentRegistration(
+        role="slave", agent_id="slave-b", instance_id="original", workspace_id=repo.settings.workspace_id,
+        endpoint_url="http://slave-b", protocol_version="loom.v1",
+        resource_metadata={"mcue_ref": client.names.mcue("computing/slave", "v2"), "attributes": {"host_resource": host}},
+    )
+    lease = await repo.register_agent(registration)
+    invalid = registration.model_copy(deep=True)
+    invalid.instance_id = "invalid"
+    invalid.resource_metadata.attributes = {}
+    with pytest.raises(ValueError, match="mcue_attributes_invalid"):
+        await repo.register_agent(invalid)
+    agents = await repo.list_agents(repo.settings.workspace_id, role="slave")
+    assert len(agents) == 1 and agents[0]["instance_id"] == lease.instance_id and agents[0]["lease_state"] == "active"
+    key = (repo.settings.workspace_id, "slave", "slave-b", "original")
+    repo.agents[key]["last_seen_at"] = datetime.now(timezone.utc) - timedelta(seconds=60)
+    target = client.names.name("slaves", "slave-b")
+    metadata = (await client.describe(target))["resource"]["metadata"]
+    assert metadata["available"] is False and metadata["lease_state"] == "expired"
+    assert metadata["dependencies"][0]["resource"] == host
+    assert (await inventory(client))["slaves"][0]["dependencies"] == metadata["dependencies"]
+    help_text = await client.invoke(target, client.names.action("how-to-use"), {})
+    assert host not in str(help_text) and help_text["dependency_fields"][0]["required"] is True

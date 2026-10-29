@@ -3,6 +3,8 @@
   "properties": {
     "service_ref": {
       "type": "string",
+      "description": "Upstream embedding service used by this adapter. Fill its discovered GRIP resource URI before activation.",
+      "x-loom-dependency": true,
       "pattern": "^grip://[a-z0-9.-]+/workspaces/[^/]+/.+"
     },
     "dependency": {

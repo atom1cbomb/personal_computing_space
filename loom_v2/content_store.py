@@ -311,6 +311,7 @@ async def put_typed_content(store: ContentStore, content: Any, *, media_type: st
     json_media_types = {
         "application/json",
         "application/schema+json",
+        "application/vnd.loom.instance-config-schema+json",
         "application/vnd.loom.io-contract+json",
         "application/vnd.loom.action-descriptor+json",
     }
@@ -327,6 +328,10 @@ async def put_typed_content(store: ContentStore, content: Any, *, media_type: st
             from loom_v2.contracts.io_schema import validate_schema
 
             validate_schema(parsed)
+        elif normalized_media_type == "application/vnd.loom.instance-config-schema+json":
+            from loom_orchestration.mcue import attribute_validator
+
+            attribute_validator(parsed)
         elif normalized_media_type == "application/vnd.loom.io-contract+json":
             from loom_v2.contracts.types import IoContract
 

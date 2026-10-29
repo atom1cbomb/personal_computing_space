@@ -4,7 +4,7 @@
   "name": "embed",
   "description": "Compute embeddings through the configured Kubernetes service.",
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/schemas/instance-config/sha256/965a927129985701643213f6546d46381a93029c7f836cf49b053bbc9655a75e",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/schemas/instance-config/sha256/3472e1f65377015997e94672e364752ea207eeef286b1d0a3ce0dee4221ac234",
     "identity_criterion": "content_digest"
   }
 }

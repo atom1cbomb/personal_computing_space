@@ -138,6 +138,7 @@ def create_app(
         while True:
             try:
                 registration = AgentRegistration(role="slave", agent_id=slave_id, instance_id=instance_id, workspace_id=app.state.service.workspace_id, endpoint_url=endpoint_url, protocol_version=settings.agent_protocol_version, capabilities={"actions": sorted(app.state.service.capability_snapshot()), "base_actions": sorted(app.state.service.supported_actions), "executor_descriptors": executor_descriptors, "runtime_plugin_descriptors": runtime_descriptors, "runtime_plugins": runtime_descriptors, "term_support": [item.model_dump(mode="json") for item in app.state.service.term_support()]})
+                registration.resource_metadata = settings.slave_resource_metadata
                 response = await observer_request(
                     "/internal/v1/agents/register",
                     registration.model_dump(mode="json"),

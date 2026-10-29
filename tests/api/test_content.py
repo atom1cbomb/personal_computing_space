@@ -62,6 +62,19 @@ def test_content_endpoint_preserves_missing_content_error() -> None:
     assert response.json()["detail"] == "content_required"
 
 
+def test_instance_config_schema_upload_has_separate_policy_from_business_io():
+    client = TestClient(create_app())
+    schema = {"type": "object", "required": ["backend"], "properties": {
+        "backend": {"type": "string", "description": "Serving backend.", "x-loom-dependency": True}}}
+    media_type = "application/vnd.loom.instance-config-schema+json"
+    response = client.post("/api/v1/content", json={"media_type": media_type, "content": schema})
+    assert response.status_code == 200, response.text
+    assert client.post("/api/v1/content", json={"media_type": "application/schema+json", "content": schema}).status_code == 422
+    schema["properties"]["backend"].pop("description")
+    rejected = client.post("/api/v1/content", json={"media_type": media_type, "content": schema})
+    assert rejected.status_code == 422 and rejected.json()["detail"] == "dependency_declaration_invalid"
+
+
 def test_mcp_exposes_only_the_generic_content_upload_tool() -> None:
     names = {spec["name"] for spec in DriverMCP.tool_specs()}
 

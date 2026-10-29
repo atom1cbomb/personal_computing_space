@@ -10,7 +10,8 @@ from referencing import Registry, Resource
 from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
 
-from .grip import MCUE, Model
+from .grip import MCUE, URI, Model
+from .resource_dependencies import dependency_fields, resource_dependencies
 
 
 def _schema_nodes(schema):
@@ -50,6 +51,7 @@ def attribute_validator(schema: dict[str, Any]) -> Draft202012Validator:
                     if not node[key].startswith("#"):
                         raise ValueError("mcue_schema_must_be_self_contained")
                     resolver.lookup(node[key])
+        dependency_fields(schema)
         return Draft202012Validator(schema, registry=registry)
     except (SchemaError, Unresolvable) as exc:
         raise ValueError("mcue_schema_invalid") from exc
@@ -69,8 +71,15 @@ class McueDefinition(Model):
     def validate_attributes(self, attributes: dict[str, Any]) -> None:
         try:
             attribute_validator(self.attributes_schema).validate(attributes)
+            resource_dependencies(self.attributes_schema, attributes)
         except (ValidationError, Unresolvable, RecursionError) as exc:
             raise ValueError("mcue_attributes_invalid") from exc
+
+
+class ResourceMetadata(Model):
+    """Operator-supplied public metadata validated by its versioned MCUE."""
+    mcue_ref: URI
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 def merge_attributes(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

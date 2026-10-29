@@ -204,6 +204,8 @@ def _render_slave(config: DeploymentConfig, machine: MachineConfig) -> tuple[dic
             "networks": ["default", "loom-internal"],
         }
     )
+    if machine.resource_metadata is not None:
+        app["environment"]["LOOM_SLAVE_RESOURCE_METADATA"] = machine.resource_metadata.model_dump_json()
     if config.runtime_credentials_dir:
         # The runtime plugin invokes the host Docker daemon through the
         # mounted socket.  Bind sources in ``docker create`` are therefore

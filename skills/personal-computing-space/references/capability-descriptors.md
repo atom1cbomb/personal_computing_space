@@ -12,6 +12,8 @@ Use this procedure whenever a task mentions a concrete service or resource.
    record retain the system metadata (`package`, `managed_by`, `state`,
    `activations`, revision) and public MCUE attributes. Inventory is an index,
    not a behavior contract.
+   Retain `metadata.dependencies` and read each entry's declared meaning; an
+   absent declaration is unknown. DESCRIBE supplies the same runtime references.
 2. Resolve the resource's returned `metadata.mcue_ref` through its exact public
    MCUE read action. Use that versioned definition to interpret public
    attributes; do not copy an attribute list from this skill. If the selected
@@ -32,6 +34,8 @@ Use this procedure whenever a task mentions a concrete service or resource.
    `access_requirements`, authentication requirement and cleanup action are the
    only source for the workflow. Match identities exactly before evaluating
    readiness. Record cleanup before starting a side effect.
+   Read `attributes_mapping` and the target MCUE dependency declarations before
+   creation, and fill the required attributes at resource registration.
 6. For an ordinary action, use the declared interaction to decide whether to
    pass business input, follow a Run, or open a stream. Use the declared result
    schema and validator to interpret the result. Keep the original result

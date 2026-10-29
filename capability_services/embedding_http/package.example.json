@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "embedding-http",
-  "package_version": "v1",
+  "package_version": "v2",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -16,7 +16,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/model/embed",
-        "version_or_digest": "8daaf166a251a63a9e1b88b047bbad17cec211a0fa44249bf4247d8b75fd7b12",
+        "version_or_digest": "a8957ca0b5a0888d45015b4ef42a4ec87e14af8c54e757f1fbadfa267c4a153f",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -36,7 +36,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/model/info",
-        "version_or_digest": "c88ab9b3ce323ef4ecd12c4812fafc5a4a12bbc894ed7c10b96823587e715475",
+        "version_or_digest": "4fbb8bc49af325b4fa91d2c241bb5aea45f58c402da9858d3d2d0ad6f43aa9bf",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {

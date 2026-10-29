@@ -77,18 +77,6 @@ class ServicePackage:
             refs[original_uri] = wire(ref)
             return ref
 
-        for path in sorted((self.directory / "schemas").glob("*.json")):
-            source = json.loads(path.read_text())
-            await upload(source, source, "application/schema+json", f"{prefix}/schemas/{path.stem}")
-        for path in sorted((self.directory / "validators").glob("*.py")):
-            source = path.read_text()
-            await upload(source, source, "text/x-python", f"{prefix}/validators/{path.stem}")
-        usage_path = self.directory / "HOW_TO_USE.md"
-        usage_ref = None
-        if usage_path.is_file():
-            usage = usage_path.read_text(encoding="utf-8")
-            usage_ref = await upload(usage, usage, "text/markdown", f"{prefix}/how-to-use")
-
         sources: dict[str, dict] = {}
         for path in sorted((self.directory / "descriptors").glob("*.json")):
             descriptor = json.loads(path.read_text())
@@ -98,6 +86,24 @@ class ServicePackage:
             if identity in sources:
                 raise ValueError("duplicate_descriptor_source")
             sources[identity] = descriptor
+
+        config_schemas = {descriptor["instance_config_schema_ref"]["resource_id"]
+                          for descriptor in sources.values() if descriptor.get("instance_config_schema_ref")}
+        for path in sorted((self.directory / "schemas").glob("*.json")):
+            source = json.loads(path.read_text())
+            name = f"{prefix}/schemas/{path.stem}"
+            original_uri = content_uri(hashlib.sha256(rfc8785.dumps(source)).hexdigest(), name)
+            media_type = ("application/vnd.loom.instance-config-schema+json" if original_uri in config_schemas
+                          else "application/schema+json")
+            await upload(source, source, media_type, name)
+        for path in sorted((self.directory / "validators").glob("*.py")):
+            source = path.read_text()
+            await upload(source, source, "text/x-python", f"{prefix}/validators/{path.stem}")
+        usage_path = self.directory / "HOW_TO_USE.md"
+        usage_ref = None
+        if usage_path.is_file():
+            usage = usage_path.read_text(encoding="utf-8")
+            usage_ref = await upload(usage, usage, "text/markdown", f"{prefix}/how-to-use")
 
         class PendingDependency(Exception):
             pass

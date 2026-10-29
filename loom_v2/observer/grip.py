@@ -26,6 +26,8 @@ from loom_orchestration.grip import (
 )
 from loom_orchestration.contracts import CredentialProfile
 from loom_orchestration.mcue import McueDefinition
+from loom_orchestration.resource_dependencies import dependency_fields, resource_dependencies
+from loom_v2.observer.resource_metadata import activation_config_schema, validate_activation_config, validate_resource_dependencies
 from loom_orchestration.naming import content_digest, resource_label
 from loom_v2.contracts.errors import DomainError
 from loom_v2.contracts.types import CapabilityPackageVersion, ClosureContract, ResourceRef, TaskClosure
@@ -76,12 +78,6 @@ class HowToUseAttribute(Model):
     description: str = ""
 
 
-class HowToUseRelationship(Model):
-    kind: str
-    resource: URI
-    description: str
-
-
 class HowToUseAction(Model):
     action: URI
     mode: Literal["request-reply", "byte-stream"]
@@ -89,6 +85,13 @@ class HowToUseAction(Model):
     output_schema: URI
     available: bool = True
     description: str = ""
+
+
+class HowToUseDependency(Model):
+    path: str
+    description: str
+    required: bool
+    many: bool
 
 
 class HowToUseDocumentation(Model):
@@ -101,9 +104,8 @@ class HowToUseOutput(Model):
     mcue: MCUE
     summary: str
     usage_markdown: str
-    attributes: dict[str, Any] = Field(default_factory=dict)
     attribute_help: list[HowToUseAttribute] = Field(default_factory=list)
-    relationships: list[HowToUseRelationship] = Field(default_factory=list)
+    dependency_fields: list[HowToUseDependency] = Field(default_factory=list)
     actions: list[HowToUseAction] = Field(default_factory=list)
     documentation: HowToUseDocumentation | None = None
     sources: list[URI] = Field(default_factory=list)
@@ -137,6 +139,7 @@ class ActivateInput(Model):
 class CheckPackageInput(Model):
     package: URI
     instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    instance_config: dict[str, Any] | None = None
 
 
 class ActivationIssue(Model):
@@ -253,7 +256,7 @@ class GripService:
         return self._immutable_metadata[key]
 
     def _entry(self, target, mcue, metadata, offers, value=None):
-        metadata = {"mcue_ref": self.names.mcue(mcue), "attributes": {}, **metadata}
+        metadata = {"mcue_ref": self.names.mcue(mcue), "attributes": {}, "dependencies": None, **metadata}
         if all(offer["action"]["uri"] != self.names.action("how-to-use") for offer in offers):
             offers = [*offers, self._builtin["how-to-use"]]
         return Entry({"resource": {"uri": target, "mcue": mcue, "metadata": metadata}, "offers": offers}, value)
@@ -370,7 +373,11 @@ class GripService:
             agents.sort(key=lambda a: str(a.get("last_seen_at") or ""), reverse=True)
             for slave, agent in select_slave_agents(agents).items():
                 caps = agent.get("capabilities") or {}
+                public = caps.get("resource_metadata") or {"mcue_ref": n.mcue("computing/slave"), "attributes": {}}
+                definition = await self.repo.get_mcue_definition(self.settings.workspace_id, public["mcue_ref"])
                 add(n.name("slaves", slave), "computing/slave", {
+                    **public,
+                    "dependencies": resource_dependencies(definition.attributes_schema, public["attributes"]),
                     "slave_id": slave,
                     "available": agent["lease_state"] == "active",
                     "lease_state": agent["lease_state"], "last_seen_at": agent.get("last_seen_at"),
@@ -430,7 +437,9 @@ class GripService:
                 unavailable_reason = (None if ready else
                                       "desired_state_" + activation.desired_state if activation.desired_state != "running" else
                                       "activation_" + activation.activation_state)
+                config_schema = await activation_config_schema(self.repo, package)
                 metadata = {"package": package_uri, "host": n.name("slaves", activation.target_slave),
+                            "dependencies": resource_dependencies(config_schema, activation.instance_config) if config_schema else None,
                             "name": package.package_id + ":" + activation.instance_name,
                             "description": f"Activated {package.package_id} {package.package_version} on {activation.target_slave}.",
                             "instance_name": activation.instance_name, **self.repo.service_routes.status(package, activation),
@@ -459,6 +468,7 @@ class GripService:
                 "mcue_ref": resource.mcue_ref,
                 "attributes": resource.attributes,
                 "attributes_revision": resource.attributes_revision,
+                "dependencies": resource_dependencies(definitions[resource.mcue_ref]["attributes_schema"], resource.attributes),
                 "state": resource.state,
                 "package": package_names.get(resource.package_ref.resource_id) if resource.package_ref else None,
                 "activations": [self.activation_uri(p, a) for p, a, _ in candidates],
@@ -539,16 +549,32 @@ class GripService:
         if not isinstance(attributes, dict):
             attributes = {}
         attribute_help = []
+        dependencies_help = []
         mcue_ref = metadata.get("mcue_ref")
         if isinstance(mcue_ref, str):
             try:
                 definition = await self.repo.get_mcue_definition(self.settings.workspace_id, mcue_ref)
                 attribute_help = self._attribute_help(definition.attributes_schema)
+                dependencies_help = [{**field, "path": "attributes." + field["path"]}
+                                     for field in dependency_fields(definition.attributes_schema)]
             except (KeyError, ValueError):
                 attribute_help = []
 
         documentation = None
         package = entry.value if isinstance(entry.value, CapabilityPackageVersion) else None
+        dependency_package = package or (entry.value[0] if mcue == "capability/activation" else None)
+        if dependency_package is not None:
+            config_schema = await activation_config_schema(self.repo, dependency_package)
+            if config_schema:
+                dependencies_help.extend({**field, "path": "instance_config." + field["path"]}
+                                         for field in dependency_fields(config_schema))
+            for export in dependency_package.action_exports:
+                descriptor = await self.repo.get_action_descriptor(export.action_descriptor_ref)
+                for index, effect in enumerate(descriptor.get("resource_effects", [])):
+                    definition = await self.repo.get_mcue_definition(self.settings.workspace_id, effect["mcue_ref"])
+                    action_name = descriptor.get("name", export.action_descriptor_ref.resource_id)
+                    dependencies_help.extend({**field, "path": f"{action_name}.resource_effects.{index}.attributes." + field["path"]}
+                                             for field in dependency_fields(definition.attributes_schema))
         if package is not None and package.how_to_use_ref is not None:
             try:
                 raw = await self.repo.content_store.get(package.how_to_use_ref)
@@ -556,24 +582,6 @@ class GripService:
                                  "markdown": raw.decode("utf-8")}
             except (UnicodeDecodeError, FileNotFoundError, TypeError, ValueError):
                 documentation = None
-
-        relationships = []
-        relationship_descriptions = {
-            "managed_by": "This resource is managed by the referenced workspace resource.",
-            "package": "This package describes the capability used with the resource.",
-            "activation": "This activation is a running package instance associated with the resource.",
-            "target": "This activation targets the referenced workspace resource.",
-        }
-        for key, kind in (("managed_by", "managed_by"), ("package", "package"),
-                          ("target", "target")):
-            value = metadata.get(key)
-            if isinstance(value, str):
-                relationships.append({"kind": kind, "resource": value,
-                                       "description": relationship_descriptions[kind]})
-        for value in metadata.get("activations", []):
-            if isinstance(value, str):
-                relationships.append({"kind": "activation", "resource": value,
-                                       "description": relationship_descriptions["activation"]})
 
         actions = []
         source_refs = [target]
@@ -617,23 +625,23 @@ class GripService:
                  metadata.get("package_id") or mcue)
         summary = f"{mcue} resource: {label}"
         lines = [f"Use `{target}` as a `{mcue}` resource."]
-        if relationships:
-            lines.append("Relationships:")
-            for relation in relationships:
-                lines.append(f"- `{relation['kind']}` -> `{relation['resource']}`: {relation['description']}")
+        lines.append("Read current attributes and dependency references with DESCRIBE or the workspace list-resources action.")
+        if dependencies_help:
+            lines.append("Dependency fields (fill them according to the declared schema and creation mappings):")
+            for field in dependencies_help:
+                lines.append(f"- `{field['path']}`: {field['description']}")
         if actions:
             lines.append("Declared actions (activate the package before calling them):" if mcue == "capability/package" else "Available actions:")
             for action in actions:
                 state = "available" if action["available"] else "unavailable"
                 lines.append(f"- `{action['action']}` ({action['mode']}, {state}); input schema `{action['input_schema']}`, output schema `{action['output_schema']}`.")
-        elif not relationships:
+        else:
             lines.append("No callable business action is currently advertised; use the returned metadata and schemas to determine the next step.")
         return HowToUseOutput(
             resource=target, mcue=mcue, summary=summary,
             usage_markdown="\n".join(lines) + (("\n\n" + documentation["markdown"]) if documentation else ""),
-            attributes=attributes,
             attribute_help=attribute_help,
-            relationships=relationships,
+            dependency_fields=dependencies_help,
             actions=actions,
             documentation=documentation,
             sources=list(dict.fromkeys(source_refs + ([documentation["content_ref"]] if documentation else []))),
@@ -763,6 +771,14 @@ class GripService:
                 issues.append({"code": "slave_unavailable", "interaction": None, "actions": []})
             elif not self.repo._slave_supports_package(entry.value, package):
                 issues.append({"code": "package_runtime_unsupported", "interaction": None, "actions": []})
+            activations = await self.repo.list_package_activations(package)
+            current = next((a for a in activations if a.target_slave == entry.value and a.instance_name == payload.instance_name), None)
+            config = payload.instance_config if payload.instance_config is not None else (current.instance_config if current else {})
+            try:
+                await validate_resource_dependencies(self.repo, package)
+                await validate_activation_config(self.repo, package, config)
+            except ValueError as exc:
+                issues.append({"code": str(exc), "interaction": None, "actions": []})
             return {"ready": not issues,
                     "required_interactions": sorted({interaction(e) for e in package.action_exports}), "issues": issues}
         if request.action == n.action("activate-package"):
@@ -903,10 +919,14 @@ class GripService:
         except ValidationError:
             code = "invalid_message"
         except ValueError as exc:
-            code = str(exc) if str(exc) in {
+            public_code = str(exc).split(":", 1)[0]
+            code = public_code if public_code in {
                 "attributes_revision_conflict", "mcue_version_conflict", "resource_mcue_conflict",
                 "resource_attributes_require_update", "mcue_attributes_invalid",
                 "resource_mcue_migration_required",
+                "dependency_reference_invalid", "activation_config_invalid", "activation_config_field_unknown",
+                "resource_attribute_source_missing", "resource_attribute_value_invalid",
+                "resource_attributes_mapping_required",
             } else "invalid_input" if request_id else "invalid_message"
         except (TypeError, UnicodeError):
             code = "invalid_input" if request_id else "invalid_message"

@@ -152,7 +152,9 @@ SDK 0.9 提供紧凑资源目录、契约校验调用、持久调用预算账本
 
 包可以在 Run 内作为候选生成，也可以通过 `POST /api/v1/capability-packages` 直接发布到 Workspace。部署流程为：**构建并推送镜像 → 发布包 → 描述 Slave → `check-package` → 激活命名实例 → 认证 → 验证业务动作**。
 
-对目标 Slave 调用 `check-package`，传入包 URI 和实例名，可只读检查节点在线状态、runtime 支持、服务签名及所需路由，返回 `ready`、`required_interactions` 和逐项 `issues`。缺服务入口或签名时，服务端会在写入激活前拒绝请求；配置修复后可以重试原幂等键。
+对目标 Slave 调用 `check-package`，传入包 URI、实例名和拟使用的 `instance_config`，可只读检查节点在线状态、runtime 支持、服务签名、所需路由和依赖填写情况，返回 `ready`、`required_interactions` 和逐项 `issues`。缺服务入口、签名或必填依赖时，服务端会在写入激活前拒绝请求；配置修复后可以重试原幂等键。
+
+资源类型的 MCUE schema 和能力包的配置 schema 可通过 `x-loom-dependency` 标记依赖字段，并用字段说明定义业务含义。DESCRIBE 与 workspace 的 `list-resources` 动作返回实际 `metadata.dependencies`；`how-to-use` 只解释字段与填写要求。创建动作的 `attributes_mapping` 声明如何填入登记属性，发布和激活时做静态检查，登记时验证实际值。详见 [依赖设计](docs/superpowers/specs/2026-10-29-resource-dependency-metadata-design.md) 和 [MCUE 使用说明](skills/personal-computing-space/references/mcue.md)。
 
 检查通过只代表部署配置满足条件，镜像拉取、外部认证和实际网络仍需验证。实例描述中的 `runtime_state` 是节点报告状态；容器已 ready 但必需入口缺失时，公开 `state` 为 `degraded`、`available=false`。调用方应检查实例和所需动作的可用性。
 

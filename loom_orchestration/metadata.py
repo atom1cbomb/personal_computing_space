@@ -8,6 +8,7 @@ references and bounded predicates an external planner may use to compose nodes.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -103,12 +104,48 @@ class ResourceEffect(ContractModel):
     readiness: ResourceReadiness | None = None
     access_requirements: list[ResourceAccessRequirement] = Field(default_factory=list)
     cleanup: ResourceCleanup | None = None
+    attributes_mapping: dict[str, "AttributeSource"] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_identity_path(self) -> "ResourceEffect":
         if not _PATH.fullmatch(self.identity_path):
             raise ValueError("resource_identity_path_invalid")
         return self
+
+
+class AttributeSource(ContractModel):
+    source: Literal["input", "output", "instance_config", "constant"]
+    path: str | None = None
+    value: Any = None
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source == "constant":
+            if self.path is not None or "value" not in self.model_fields_set:
+                raise ValueError("attribute_source_invalid")
+        elif (not self.path or not re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*", self.path)
+              or "value" in self.model_fields_set and self.value is not None):
+            raise ValueError("attribute_source_invalid")
+        return self
+
+
+def resource_attributes(
+    effect: ResourceEffect | dict[str, Any], *, arguments: dict[str, Any],
+    result: dict[str, Any], instance_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Materialize the declared attributes before public resource registration."""
+    effect = ResourceEffect.model_validate(effect)
+    sources = {"input": arguments, "output": result, "instance_config": instance_config or {}}
+    attributes = {}
+    for name, binding in effect.attributes_mapping.items():
+        value = binding.value if binding.source == "constant" else sources[binding.source]
+        if binding.source != "constant":
+            for part in binding.path.split("."):
+                if not isinstance(value, dict) or part not in value:
+                    raise ValueError("resource_attribute_source_missing:" + name)
+                value = value[part]
+        attributes[name] = deepcopy(value)
+    return attributes
 
 
 def validate_action_descriptor(payload: Any) -> dict[str, Any]:
@@ -167,6 +204,8 @@ def schema_at_path(schema: Any, path: str) -> dict[str, Any] | None:
 
 
 __all__ = [
+    "AttributeSource",
+    "resource_attributes",
     "ResourceAccessRequirement",
     "ResourceCleanup",
     "ResourceCondition",

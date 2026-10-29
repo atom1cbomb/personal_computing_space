@@ -16,6 +16,24 @@ from loom_v2.settings import Settings
 from tests.support.package_fixture import process_package_value
 
 
+async def test_service_authoring_uploads_declared_configuration_dependency_schema():
+    settings = Settings(grip_token="test", public_base_url="http://observer")
+    repo = ObserverRepository(settings=settings)
+    root = Path(__file__).resolve().parents[2] / "capability_services/embedding_http"
+    async with LoomClient("http://observer", token="test", allow_insecure_grip=True,
+                          transport=httpx.ASGITransport(app=create_app(repo, settings=settings))) as client:
+        package_uri = await ServicePackage(root).publish(client, image_ref="example/embedding@sha256:" + "c" * 64)
+        assert package_uri == client.names.name("packages", "embedding-http", "v2")
+        help_text = await client.invoke(package_uri, client.names.action("how-to-use"), {})
+        assert help_text["dependency_fields"] == [{
+            "path": "instance_config.service_ref", "many": False, "required": True,
+            "description": "Upstream embedding service used by this adapter. Fill its discovered GRIP resource URI before activation."}]
+        package = await repo.get_capability_package(package_uri)
+        descriptor = await repo.get_action_descriptor(package.action_exports[0].action_descriptor_ref)
+        ref = ResourceRef.model_validate(descriptor["instance_config_schema_ref"])
+        assert (await repo.content_store.stat(ref)).media_type == "application/vnd.loom.instance-config-schema+json"
+
+
 @pytest.mark.parametrize("model", [ResourceRef, SdkRef])
 @pytest.mark.parametrize("old", ["content://sha256/" + "a" * 64, "loom://suanlicloud/instances-list", "capability-package://test/v1", "slave-a"])
 def test_legacy_resource_identities_are_rejected(model, old):
