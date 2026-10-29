@@ -843,10 +843,9 @@ class DriverService:
         control = self.control_client
         if expected_epoch is not None:
             self._assert_turn_epoch(None, control, expected_epoch=expected_epoch)
-        if control is None or not self.workers:
-            if control is None:
-                return
-            await self._refresh_remote_workers()
+        if control is None:
+            return
+        await self._refresh_remote_workers()
         if not self.workers:
             raise RuntimeError("node_target_unavailable")
         if expected_epoch is not None:
@@ -865,7 +864,6 @@ class DriverService:
             snapshot.program_systems.execution.version,
         ) == DRIVER_ORCHESTRATOR_KEY[1:]:
             assert self.remote_repository is not None
-            await self.remote_repository.refresh_slaves()
             runtime = DynamicOrchestrationRuntime(
                 repository=self.remote_repository,
                 executor=self.orchestration_executor,
@@ -931,9 +929,9 @@ class DriverService:
         await control.command("run.result", {"run_id": run_id, "result": {"attempt_id": attempt["attempt_id"], "execution_id": execution_id, "execution_epoch": execution_epoch, "resource_ref": result.resource_ref.model_dump(mode="json"), "value": result.value, "terminal_state": result.terminal_state, "terminal_error": result.terminal_error, "validation_evidence": result.validation_evidence, "provenance": result.provenance}}, request_id=f"execution:{execution_id}:{execution_epoch}")
 
     async def _refresh_remote_workers(self) -> None:
-        if self.control_client is None:
+        if self.remote_repository is None:
             return
-        agents = await self.control_client.list_slaves()
+        agents = await self.remote_repository.refresh_slaves()
         for agent in agents:
             if agent.get("lease_state") != "active":
                 continue
