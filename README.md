@@ -17,17 +17,17 @@
 
 仓库内已有的服务能力包如下。它们需要各自的镜像、网络、服务账号或凭据配置，不会随着 Loom 启动自动获得外部服务权限。
 
-| 能力包 | 当前源码版本 | 提供的能力 |
+| 能力包（使用说明） | 当前源码版本 | 提供的能力 |
 | --- | --- | --- |
-| [Kubernetes](capability_services/kubernetes_http/README.md) | `kubernetes-http/v8` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
-| [Embedding](capability_services/embedding_http/README.md) | `embedding-http/v1` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
-| [Volcano](capability_services/volcano_http/README.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
-| [Grafana](capability_services/grafana_http/README.md) | `grafana-http/v5` | 查询仪表盘、Prometheus 指标、GPU 利用率及 GPU Arena，按 namespace 统计 GPU 小时 |
-| [AutoPaper](capability_services/autopaper_http/README.md) | `autopaper-http/v2` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
-| [Suanli Cloud](capability_services/suanlicloud_http/README.md) | `suanlicloud-http/v6` | 查询区域、节点、镜像和实例，创建及管理 VM |
-| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/README.md) | `suanli-vm-ssh-http/v5` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
-| [普通 VM SSH](capability_services/vm_ssh_http/README.md) | `vm-ssh-http/v5` | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
-| [Outline](capability_services/outline_http/README.md) | `outline-http/v4` | 查询、检索、读取正文、创建和更新文档等受限操作 |
+| [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v8` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
+| [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v1` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
+| [Volcano](capability_services/volcano_http/HOW_TO_USE.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
+| [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v5` | 查询仪表盘、Prometheus 指标、GPU 利用率及 GPU Arena，按 namespace 统计 GPU 小时 |
+| [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v2` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
+| [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v6` | 查询区域、节点、镜像和实例，创建及管理 VM |
+| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/HOW_TO_USE.md) | `suanli-vm-ssh-http/v5` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
+| [普通 VM SSH](capability_services/vm_ssh_http/HOW_TO_USE.md) | `vm-ssh-http/v5` | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
+| [Outline](capability_services/outline_http/HOW_TO_USE.md) | `outline-http/v4` | 查询、检索、读取正文、创建和更新文档等受限操作 |
 
 表中版本对应仓库内的包模板；已部署实例的版本和可用动作以 GRIP DESCRIBE 为准。
 Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数据与完整性信息；它衡量资源分配，不能直接代表实际计算量或个人使用量。
@@ -134,9 +134,9 @@ SDK 0.9 提供紧凑资源目录、契约校验调用、持久调用预算账本
 包还可以只有接口、没有实现：`interface + none/1`、`body=null`。这样的包用于描述资源如何使用，可以查询和发布，但不能安装到 Slave，也不会凭空赋予系统执行能力。需要系统实际调用 VM 时，仍需 VM SSH 这类带实现的包。
 
 能力包可以通过顶层 `how_to_use_ref` 关联一份不可变的 Markdown 使用文档。使用
-`ServicePackage.publish` 发布服务包时，包目录下的 `README.md` 会自动上传并作为
-该引用；通过 GRIP 调用包资源的 `how-to-use` action 可以取得这份包专属说明以及
-导出的 action/schema 列表。
+`ServicePackage.publish` 发布服务包时，包目录下专门的 `HOW_TO_USE.md` 会自动上传并
+作为该引用；包目录中的 `README.md` 继续用于构建、部署和开发说明。通过 GRIP 调用
+包资源的 `how-to-use` action 可以取得这份包专属说明以及导出的 action/schema 列表。
 
 包的公开描述和运行时实现分离。新增已有 HTTP runtime 支持的业务包，只需交付服务镜像、manifest、descriptor 和 IO contract；如果要增加新的执行方式，则由 operator 安装相应 contract schema 和进程外 runtime plugin，并重启加载，不需要为每种业务修改核心代码。
 

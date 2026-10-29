@@ -63,7 +63,9 @@ async def test_service_publication_rewrites_every_artifact_to_deployment_namespa
         assert package["how_to_use_ref"]["resource_id"].startswith(client.names.root + "/content/suanlicloud-http/how-to-use/")
         package_help = await client.invoke(package_uri, client.names.action("how-to-use"), {})
         assert package_help["documentation"]["content_ref"] == package["how_to_use_ref"]["resource_id"]
-        assert "Publish `suanli-vm-ssh-http/v5` first" in package_help["documentation"]["markdown"]
+        usage_path = root / "suanlicloud_http" / "HOW_TO_USE.md"
+        assert package_help["documentation"]["markdown"] == usage_path.read_text(encoding="utf-8")
+        assert "Publish `suanli-vm-ssh-http/v5` first" not in package_help["documentation"]["markdown"]
         descriptor = next(e for e in package["action_exports"] if "/descriptors/instances-run/" in e["action_descriptor_ref"]["resource_id"])
         value = await client.read_json(SdkRef.model_validate(descriptor["action_descriptor_ref"]))
         assert value["resource_id"] == client.names.name("actions", "suanlicloud", "instances-run")

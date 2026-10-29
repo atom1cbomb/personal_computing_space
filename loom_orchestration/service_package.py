@@ -83,7 +83,7 @@ class ServicePackage:
         for path in sorted((self.directory / "validators").glob("*.py")):
             source = path.read_text()
             await upload(source, source, "text/x-python", f"{prefix}/validators/{path.stem}")
-        usage_path = self.directory / "README.md"
+        usage_path = self.directory / "HOW_TO_USE.md"
         usage_ref = None
         if usage_path.is_file():
             usage = usage_path.read_text(encoding="utf-8")

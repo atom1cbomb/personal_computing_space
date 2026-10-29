@@ -78,10 +78,11 @@ MCUE definition 的 `attributes_schema` 生成，保留字段的类型、是否�
 activation URI 改写成 `managed_by`。
 
 Capability package 可以通过顶层 `how_to_use_ref` 声明一个 workspace 内的 Markdown
-content ref。`ServicePackage.publish` 会自动把包目录下的 `README.md` 上传为这个
-不可变引用；直接注册包时也可以显式提供该字段。Observer 在包的 `how-to-use`
+content ref。`ServicePackage.publish` 会自动把包目录下的 `HOW_TO_USE.md` 上传为这个
+不可变引用；直接注册包时也可以显式提供该字段。包目录下的 `README.md` 保留给构建、
+部署和开发说明，不会自动上传为 `how_to_use_ref`。Observer 在包的 `how-to-use`
 结果中返回 `documentation`，并将包导出的 action declarations 列为需要先激活
-package 的声明动作。README 不进入运行时 `body`，不会被挂载到服务容器。
+package 的声明动作。两份文档都不进入运行时 `body`，不会被挂载到服务容器。
 
 ## 生成规则
 

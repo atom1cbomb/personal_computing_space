@@ -53,9 +53,10 @@ Every public GRIP directory entry also offers the platform `how-to-use` read act
 After DESCRIBE, invoke it when the relationship between a resource, its package,
 managed-by resource, activation, custom attributes, or callable actions is unclear;
 use its exact action and schema references instead of inferring provider behavior.
-Capability packages published by `ServicePackage` expose their package README through
-the returned `documentation` field (backed by the immutable `how_to_use_ref` content
-reference); treat that document as package-specific guidance, while the action and
+Capability packages published by `ServicePackage` expose their package
+`HOW_TO_USE.md` through the returned `documentation` field (backed by the immutable
+`how_to_use_ref` content reference). Treat that document as package-specific usage
+guidance; the package `README.md` is for build/deployment details, and the action and
 schema references in the response remain authoritative.
 For a reproducible failure, read [references/diagnostics.md](references/diagnostics.md)
 to inspect the exact package's published source without changing its deployment.
@@ -244,5 +245,5 @@ There are no project-level sections for individual providers or resource
 classes. For a concrete service, use the package and MCUE descriptors returned
 by Observer, then apply the generic discovery and contract rules above. A
 package may document provider-specific authentication, actions, result
-semantics and lifecycle in its own immutable descriptor or public README; that
+semantics and lifecycle in its own immutable descriptor or public `HOW_TO_USE.md`; that
 documentation travels with the package rather than with this skill.

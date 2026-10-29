@@ -14,17 +14,17 @@
 [认证接入指南](../skills/personal-computing-space/references/authentication-authoring.md)。
 使用系统统一的 `auth-start` 和 `loom-auth`，在网关内实现供应商认证与凭据验证。
 
-| 目录 | 包版本 | 业务导出 | 激活配置和认证 |
-|---|---|---:|---|
-| [autopaper_http](autopaper_http/README.md) | autopaper-http/v2 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
-| [kubernetes_http](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
-| [embedding_http](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
-| [volcano_http](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
-| [grafana_http](grafana_http/README.md) | grafana-http/v5 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
-| [outline_http](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
-| [suanlicloud_http](suanlicloud_http/README.md) | suanlicloud-http/v6 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
-| [vm_ssh_http](vm_ssh_http/README.md) | vm-ssh-http/v5 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
-| [suanli_vm_ssh_http](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v5 | 1 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
+| 目录 | 使用说明 | 构建/部署文档 | 包版本 | 业务导出 | 激活配置和认证 |
+|---|---|---|---:|---:|---|
+| autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v2 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
+| kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
+| embedding_http | [HOW_TO_USE](embedding_http/HOW_TO_USE.md) | [README](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
+| volcano_http | [HOW_TO_USE](volcano_http/HOW_TO_USE.md) | [README](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
+| grafana_http | [HOW_TO_USE](grafana_http/HOW_TO_USE.md) | [README](grafana_http/README.md) | grafana-http/v5 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
+| outline_http | [HOW_TO_USE](outline_http/HOW_TO_USE.md) | [README](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
+| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v6 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| vm_ssh_http | [HOW_TO_USE](vm_ssh_http/HOW_TO_USE.md) | [README](vm_ssh_http/README.md) | vm-ssh-http/v5 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
+| suanli_vm_ssh_http | [HOW_TO_USE](suanli_vm_ssh_http/HOW_TO_USE.md) | [README](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v5 | 1 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
 
 ## 发布
 
