@@ -61,7 +61,8 @@ python -m pytest tests/api/test_resource_attribute_mappings.py \
 
 ## 上线范围
 
-本次仅修改仓库代码、类型、SDK、文档和示例，没有更新生产部署或线上资源。
-上线时应配套更新 Observer/Slave/SDK，为节点填写实际的 resource_metadata，
-并发布使用新声明的不可变包版本。既有 computing/slave/v1 不被覆盖；未填写
-依赖的旧节点仍返回未知关系，不会根据 IP、名称或历史日志自动补写。
+本记录初次提交时仅修改仓库代码、类型、SDK、文档和示例。
+随后已按用户要求提交并部署生产；组件、节点关系、备份与线上验收见
+[生产发布记录](2026-10-29-resource-dependency-metadata-production.md)。
+既有 computing/slave/v1 不被覆盖；未填写依赖的旧节点仍返回未知关系，
+系统不会根据 IP、名称或历史日志自动补写。
