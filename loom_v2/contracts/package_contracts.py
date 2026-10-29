@@ -110,6 +110,7 @@ def _contract_schema(
         "required": ["package_type", "execution", "action_exports", "body"],
         "properties": {
             "package_type": {"const": package_type},
+            "how_to_use_ref": {"$ref": "#/$defs/content_ref"},
             "execution": {
                 "type": "object",
                 "required": ["kind", "version"],

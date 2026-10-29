@@ -2,6 +2,10 @@
 
 Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `offers` 选择完整动作 URI，再向该 offer 的 binding endpoint 发起调用。你不需要拼接 Slave 内网地址、runtime 路径或 ComputeBinding。每个公开目录项还提供平台内建的 `how-to-use` 只读动作；当资源关系、MCUE 自定义属性或激活使用方式不清楚时，先调用它取得结构化说明和 Markdown 指引。
 
+能力包的 `how-to-use` 结果还会包含包发布者的 `documentation`。通过
+`ServicePackage.publish` 发布的 service 包默认把该目录下的 `README.md` 上传为
+不可变的 `how_to_use_ref`；包的导出 action 会列为需要先激活包的声明动作。
+
 | 对象 | 作为资源的含义 |
 |---|---|
 | 能力包 | 不可变的程序与契约，可以作为 action 的输入传递 |

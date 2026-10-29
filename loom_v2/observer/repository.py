@@ -469,6 +469,14 @@ class ObserverRepository:
     async def _validate_package_exports(self, package: CapabilityPackageVersion, *, publication: bool = False) -> None:
         if publication and "credential_profile" in (package.body or {}):
             raise ValueError("credential_profile_requires_activation")
+        if package.how_to_use_ref is not None:
+            stat = await self.content_store.stat(package.how_to_use_ref)
+            if stat is None or not (stat.media_type.startswith("text/") or stat.media_type.endswith("+markdown")):
+                raise ValueError("how_to_use_content_invalid")
+            try:
+                await self.content_store.get(package.how_to_use_ref)
+            except (FileNotFoundError, TypeError, ValueError) as exc:
+                raise ValueError("how_to_use_content_invalid") from exc
         authentication = (package.body or {}).get("authentication")
         if publication and authentication and ("interaction" not in authentication or "client" in authentication):
             raise ValueError("authentication_interaction_required")
@@ -2288,6 +2296,8 @@ class ObserverRepository:
                 ActionExport.model_validate(item)
                 for item in manifest["action_exports"]
             ],
+            how_to_use_ref=(ResourceRef.model_validate(manifest["how_to_use_ref"])
+                            if manifest.get("how_to_use_ref") is not None else None),
             body=(dict(manifest.get("body")) if manifest.get("body") is not None else None),
             package_digest=str(manifest.get("package_digest") or ""),
         )

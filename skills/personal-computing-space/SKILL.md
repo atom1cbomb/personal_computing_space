@@ -53,6 +53,10 @@ Every public GRIP directory entry also offers the platform `how-to-use` read act
 After DESCRIBE, invoke it when the relationship between a resource, its package,
 managed-by resource, activation, custom attributes, or callable actions is unclear;
 use its exact action and schema references instead of inferring provider behavior.
+Capability packages published by `ServicePackage` expose their package README through
+the returned `documentation` field (backed by the immutable `how_to_use_ref` content
+reference); treat that document as package-specific guidance, while the action and
+schema references in the response remain authoritative.
 For a reproducible failure, read [references/diagnostics.md](references/diagnostics.md)
 to inspect the exact package's published source without changing its deployment.
 For a new Python computation on a Slave, read

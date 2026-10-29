@@ -15,6 +15,7 @@ GRIP DESCRIBE 能列出资源的 `offers`、`managed_by`、`package` 和
 - 当前 DESCRIBE 中可用的业务 action、输入输出 schema 和交互模式；
 - `managed_by`、`package`、`activations` 等稳定引用及其关系含义；
 - 生成这些说明所依据的资源、MCUE 和 action 引用。
+- 如果目标是 capability package，还返回包声明的 how-to-use 文档。
 
 返回值必须同时适合程序消费和人阅读。Markdown 是辅助说明，不能替代精确 URI、
 schema 和状态字段。
@@ -59,6 +60,10 @@ action；action/schema/content 目录项也提供同一 action，使 agent 不�
     "available": true,
     "description": "<action description>"
   }],
+  "documentation": {
+    "content_ref": "<Markdown content URI>",
+    "markdown": "<package-authored usage document>"
+  },
   "sources": ["<resource or definition URI>"]
 }
 ```
@@ -71,6 +76,12 @@ MCUE definition 的 `attributes_schema` 生成，保留字段的类型、是否�
 关系的 `resource` 只能是已经在当前 workspace 中出现的 GRIP URI。`managed_by` 是
 稳定的资源到资源关系；activation 仍作为 `activations` 关系单独列出。平台不会把
 activation URI 改写成 `managed_by`。
+
+Capability package 可以通过顶层 `how_to_use_ref` 声明一个 workspace 内的 Markdown
+content ref。`ServicePackage.publish` 会自动把包目录下的 `README.md` 上传为这个
+不可变引用；直接注册包时也可以显式提供该字段。Observer 在包的 `how-to-use`
+结果中返回 `documentation`，并将包导出的 action declarations 列为需要先激活
+package 的声明动作。README 不进入运行时 `body`，不会被挂载到服务容器。
 
 ## 生成规则
 

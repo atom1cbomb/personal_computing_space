@@ -58,6 +58,7 @@ class CapabilityPackageUploadRequest(PublicRequest):
     package_type: str = Field(default="function", min_length=1)
     execution: ExecutionContract = Field(default_factory=ExecutionContract)
     action_exports: list[ActionExport] = Field(min_length=1)
+    how_to_use_ref: ResourceRef | None = None
     body: dict[str, Any] | None = None
     package_digest: str | None = None
 

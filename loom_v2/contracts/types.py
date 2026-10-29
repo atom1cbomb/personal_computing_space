@@ -225,6 +225,7 @@ class CapabilityPackageVersion(ContractModel):
     provenance: list[dict[str, Any]] = Field(default_factory=list)
     execution: ExecutionContract = Field(default_factory=ExecutionContract)
     action_exports: list[ActionExport] = Field(min_length=1)
+    how_to_use_ref: ResourceRef | None = None
     body: dict[str, JsonValue] | None = None
     package_digest: str = ""
 
@@ -237,12 +238,15 @@ class CapabilityPackageVersion(ContractModel):
         ]
         if len(descriptor_keys) != len(set(descriptor_keys)):
             raise ValueError("action_export_duplicate")
+        package_payload = self.model_dump(
+            mode="json",
+            include={"package_type", "execution", "action_exports", "how_to_use_ref", "body"},
+        )
+        if self.how_to_use_ref is None:
+            package_payload.pop("how_to_use_ref", None)
         package_contract_registry.validate(
             (self.package_type, self.execution.kind, self.execution.version),
-            self.model_dump(
-                mode="json",
-                include={"package_type", "execution", "action_exports", "body"},
-            ),
+            package_payload,
         )
         return self
 
@@ -302,7 +306,9 @@ class CapabilityPackageVersion(ContractModel):
 
     def _identity_payload(self) -> dict[str, Any]:
         """Immutable execution identity; lifecycle/provenance are excluded."""
-        payload = self.model_dump(mode="json", include={"package_type", "execution", "action_exports", "body"})
+        payload = self.model_dump(mode="json", include={"package_type", "execution", "action_exports", "how_to_use_ref", "body"})
+        if self.how_to_use_ref is None:
+            payload.pop("how_to_use_ref", None)
         resource_ref_fields = {
             "resource_id",
             "version_or_digest",

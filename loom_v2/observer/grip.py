@@ -91,6 +91,11 @@ class HowToUseAction(Model):
     description: str = ""
 
 
+class HowToUseDocumentation(Model):
+    content_ref: URI
+    markdown: str
+
+
 class HowToUseOutput(Model):
     resource: URI
     mcue: MCUE
@@ -100,6 +105,7 @@ class HowToUseOutput(Model):
     attribute_help: list[HowToUseAttribute] = Field(default_factory=list)
     relationships: list[HowToUseRelationship] = Field(default_factory=list)
     actions: list[HowToUseAction] = Field(default_factory=list)
+    documentation: HowToUseDocumentation | None = None
     sources: list[URI] = Field(default_factory=list)
 
 
@@ -541,6 +547,16 @@ class GripService:
             except (KeyError, ValueError):
                 attribute_help = []
 
+        documentation = None
+        package = entry.value if isinstance(entry.value, CapabilityPackageVersion) else None
+        if package is not None and package.how_to_use_ref is not None:
+            try:
+                raw = await self.repo.content_store.get(package.how_to_use_ref)
+                documentation = {"content_ref": package.how_to_use_ref.resource_id,
+                                 "markdown": raw.decode("utf-8")}
+            except (UnicodeDecodeError, FileNotFoundError, TypeError, ValueError):
+                documentation = None
+
         relationships = []
         relationship_descriptions = {
             "managed_by": "This resource is managed by the referenced workspace resource.",
@@ -578,7 +594,27 @@ class GripService:
                             "description": str(action.get("description") or "")})
             source_refs.append(action_uri)
 
-        label = attributes.get("display_name") or metadata.get("name") or mcue
+        # A package resource advertises its exported actions in metadata rather
+        # than as callable offers. Include those declarations so an agent can
+        # understand what must be activated before invoking the action.
+        if mcue == "capability/package" and isinstance(metadata.get("actions"), list):
+            actions = []
+            for declaration in metadata["actions"]:
+                if not isinstance(declaration, dict):
+                    continue
+                action_uri = declaration.get("uri")
+                input_schema = declaration.get("input_schema")
+                output_schema = declaration.get("output_schema")
+                if not all(isinstance(value, str) for value in (action_uri, input_schema, output_schema)):
+                    continue
+                actions.append({"action": action_uri, "mode": declaration.get("mode", "request-reply"),
+                                "input_schema": input_schema, "output_schema": output_schema,
+                                "available": False,
+                                "description": str(declaration.get("description") or "")})
+                source_refs.append(action_uri)
+
+        label = (attributes.get("display_name") or metadata.get("name") or
+                 metadata.get("package_id") or mcue)
         summary = f"{mcue} resource: {label}"
         lines = [f"Use `{target}` as a `{mcue}` resource."]
         if relationships:
@@ -586,19 +622,21 @@ class GripService:
             for relation in relationships:
                 lines.append(f"- `{relation['kind']}` -> `{relation['resource']}`: {relation['description']}")
         if actions:
-            lines.append("Available actions:")
+            lines.append("Declared actions (activate the package before calling them):" if mcue == "capability/package" else "Available actions:")
             for action in actions:
                 state = "available" if action["available"] else "unavailable"
                 lines.append(f"- `{action['action']}` ({action['mode']}, {state}); input schema `{action['input_schema']}`, output schema `{action['output_schema']}`.")
         elif not relationships:
             lines.append("No callable business action is currently advertised; use the returned metadata and schemas to determine the next step.")
         return HowToUseOutput(
-            resource=target, mcue=mcue, summary=summary, usage_markdown="\n".join(lines),
+            resource=target, mcue=mcue, summary=summary,
+            usage_markdown="\n".join(lines) + (("\n\n" + documentation["markdown"]) if documentation else ""),
             attributes=attributes,
             attribute_help=attribute_help,
             relationships=relationships,
             actions=actions,
-            sources=list(dict.fromkeys(source_refs)),
+            documentation=documentation,
+            sources=list(dict.fromkeys(source_refs + ([documentation["content_ref"]] if documentation else []))),
         ).model_dump(mode="json")
 
     async def _package(self, target):

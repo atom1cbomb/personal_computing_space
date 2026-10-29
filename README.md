@@ -133,6 +133,11 @@ SDK 0.9 提供紧凑资源目录、契约校验调用、持久调用预算账本
 
 包还可以只有接口、没有实现：`interface + none/1`、`body=null`。这样的包用于描述资源如何使用，可以查询和发布，但不能安装到 Slave，也不会凭空赋予系统执行能力。需要系统实际调用 VM 时，仍需 VM SSH 这类带实现的包。
 
+能力包可以通过顶层 `how_to_use_ref` 关联一份不可变的 Markdown 使用文档。使用
+`ServicePackage.publish` 发布服务包时，包目录下的 `README.md` 会自动上传并作为
+该引用；通过 GRIP 调用包资源的 `how-to-use` action 可以取得这份包专属说明以及
+导出的 action/schema 列表。
+
 包的公开描述和运行时实现分离。新增已有 HTTP runtime 支持的业务包，只需交付服务镜像、manifest、descriptor 和 IO contract；如果要增加新的执行方式，则由 operator 安装相应 contract schema 和进程外 runtime plugin，并重启加载，不需要为每种业务修改核心代码。
 
 ### 资源类型、描述与访问能力

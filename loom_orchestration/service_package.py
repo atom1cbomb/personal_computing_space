@@ -83,6 +83,11 @@ class ServicePackage:
         for path in sorted((self.directory / "validators").glob("*.py")):
             source = path.read_text()
             await upload(source, source, "text/x-python", f"{prefix}/validators/{path.stem}")
+        usage_path = self.directory / "README.md"
+        usage_ref = None
+        if usage_path.is_file():
+            usage = usage_path.read_text(encoding="utf-8")
+            usage_ref = await upload(usage, usage, "text/markdown", f"{prefix}/how-to-use")
 
         sources: dict[str, dict] = {}
         for path in sorted((self.directory / "descriptors").glob("*.json")):
@@ -139,6 +144,8 @@ class ServicePackage:
                 raise ValueError("service_descriptor_dependency_cycle")
         manifest = deepcopy(self.manifest)
         manifest["body"]["image_ref"] = image_ref
+        if usage_ref is not None:
+            manifest["how_to_use_ref"] = wire(usage_ref)
         for export in manifest["action_exports"]:
             export["action_descriptor_ref"] = resolve(export["action_descriptor_ref"])
             export["io_contract_ref"] = resolve(export["io_contract_ref"])

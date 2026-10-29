@@ -75,6 +75,26 @@ async def test_resource_how_to_use_explains_attributes_and_is_read_only():
 
 
 @pytest.mark.asyncio
+async def test_package_how_to_use_includes_published_documentation_and_exports():
+    from tests.support.grip_client import exchange, invoke
+    repo = ObserverRepository()
+    manifest = await _interface_package(repo, "documented")
+    documentation = await repo.put_content("# Documented package\n\nActivate this package before invoking its export.", media_type="text/markdown")
+    manifest["how_to_use_ref"] = documentation.model_dump(mode="json")
+    with TestClient(create_embedded_app(repo)) as client:
+        n = client.app.state.grip.names
+        package = client.post("/api/v1/capability-packages", json=manifest).json()["resource"]
+        result = invoke(client, package, n.action("how-to-use"))
+        description = exchange(client, package)["body"]
+        assert result["documentation"]["content_ref"] == documentation.resource_id
+        assert "Activate this package" in result["documentation"]["markdown"]
+        assert "Declared actions" in result["usage_markdown"]
+        assert result["actions"]
+        assert result["actions"][0]["action"] == description["resource"]["metadata"]["actions"][0]["uri"]
+        assert result["actions"][0]["available"] is False
+
+
+@pytest.mark.asyncio
 async def test_resource_manager_and_immutable_binding_through_grip():
     from tests.support.grip_client import invoke, exchange
     repo = ObserverRepository()

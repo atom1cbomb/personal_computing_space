@@ -95,6 +95,17 @@ def test_http_contract_round_trips_full_manifest() -> None:
     assert restored == package
 
 
+def test_http_contract_accepts_how_to_use_content_reference() -> None:
+    payload = http_package_payload()
+    payload["how_to_use_ref"] = _resource_ref(
+        "grip://loom.local/workspaces/workspace-default/content/pkg/how-to-use/sha256/"
+        + "e" * 64
+    )
+    package = CapabilityPackageVersion.model_validate(payload)
+    assert package.how_to_use_ref is not None
+    assert package.how_to_use_ref.identity_criterion == "content_digest"
+
+
 @pytest.mark.parametrize("interaction,browser,valid", [
     ({"mode": "redirect"}, True, True), ({"mode": "redirect"}, False, False),
     ({"mode": "device-code"}, False, True), ({"mode": "device-code"}, True, False),
