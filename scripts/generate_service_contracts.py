@@ -378,7 +378,52 @@ def autopaper_definitions():
     return definitions
 
 
+def overleaf_definitions():
+    identity = {"type": "string", "pattern": "^[0-9a-f]{24}$"}
+    revision = {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+    sha256 = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    source = {"type": "string", "minLength": 1, "maxLength": 1024}
+    archive = {
+        "archive_size": {"type": "integer", "minimum": 1, "maximum": 52428800},
+        "archive_sha256": sha256,
+        "idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+    }
+    project = obj(["project_id", "name", "url"], project_id=identity, name=string(), url=string(), access_level=string())
+    definitions = {
+        "projects-list": {
+            "input": obj(query={"type": "string", "maxLength": 256}, offset={"type": "integer", "minimum": 0},
+                         limit={"type": "integer", "minimum": 1, "maximum": 200}),
+            "output": obj(["projects", "total", "next_offset"], projects=array(project), total={"type": "integer", "minimum": 0},
+                          next_offset={"type": ["integer", "null"], "minimum": 0}),
+        },
+        "projects-status": {
+            "input": obj(["project_id", "base_revision"], project_id=identity, base_revision=revision),
+            "output": obj(["project_id", "revision", "branch", "changed", "base_available", "changes"],
+                project_id=identity, revision=revision, branch=string(enum=["main", "master"]), changed={"type": "boolean"},
+                base_available={"type": "boolean"}, changes={"type": ["array", "null"], "items": obj(["path", "change"], path=string(), change=string())}),
+        },
+        "projects-download": {"input": obj(["project_id"], project_id=identity)},
+        "projects-upload": {"input": obj(["project_id", "base_revision", "deleted_paths", "message", *archive],
+            project_id=identity, base_revision=revision, deleted_paths={"type": "array", "items": source, "maxItems": 2000},
+            message={"type": "string", "minLength": 1, "maxLength": 4096}, **archive)},
+        "projects-import": {"input": obj(["name", *archive],
+            name={"type": "string", "minLength": 1, "maxLength": 255, "pattern": r"^[^/\\\x00-\x1f]+$"}, **archive)},
+    }
+    for name, definition in definitions.items():
+        definition["input"]["additionalProperties"] = False
+        if name in ("projects-download", "projects-upload", "projects-import"):
+            definition["output"] = obj(["protocol", "direction"], protocol=string(const="overleaf-archive.v1"),
+                                       direction=string(const="download" if name == "projects-download" else "upload"))
+        else:
+            result = {**definition["output"], "type": ["object", "null"]}
+            definition["output"] = obj(["status", "result", "error_code"], status=string(enum=["ok", "error"]),
+                result=result, error_code={"type": ["string", "null"]})
+        definition["output"]["additionalProperties"] = False
+    return definitions
+
+
 DEFINITIONS = {
+    "suanli_overleaf_http": overleaf_definitions,
     "autopaper_http": autopaper_definitions,
     "embedding_http": embedding_definitions,
     "kubernetes_http": k8s_definitions,

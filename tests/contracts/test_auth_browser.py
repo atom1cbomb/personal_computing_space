@@ -14,6 +14,80 @@ from tests.contracts.test_auth_client import Observer
 pw = pytest.importorskip("playwright.async_api")
 
 
+async def test_real_chromium_keeps_anonymous_cookie_login_open(monkeypatch):
+    async with pw.async_playwright() as p:
+        if not Path(p.chromium.executable_path).exists():
+            pytest.skip("Chromium is installed with the SDK auth extra")
+    observer = Observer("browser-cookie")
+    observer.auth["cookie_name"] = "overleaf.sid"
+    candidates = []
+    opened = []
+
+    def bridge(request):
+        body = json.loads(request.content)
+        if body["action"] == "open":
+            opened.append(True)
+            return httpx.Response(200, json={"status": "redirect", "location": "https://login.example/login",
+                                            "browser_binding": "binding"})
+        value = body["query"]["overleaf.sid"][0]
+        candidates.append(value)
+        observer.ready = value == "authenticated"
+        return httpx.Response(200, json={"status": "accepted" if observer.ready else "pending"})
+
+    observer.transport = httpx.MockTransport(bridge)
+    launch = pw.BrowserType.launch
+    new_context = pw.Browser.new_context
+
+    async def headless(self, **kwargs):
+        return await launch(self, **{**kwargs, "headless": True})
+
+    async def context(self, **kwargs):
+        value = await new_context(self, **kwargs)
+
+        async def provider(route):
+            logged_in = route.request.url.endswith("/project")
+            body = "<h1>Signed in</h1>" if logged_in else (
+                '<button onclick="location.href=\'/project\'">Sign in</button>')
+            await route.fulfill(status=200, content_type="text/html", body=body, headers={
+                "Set-Cookie": "overleaf.sid=" + ("authenticated" if logged_in else "anonymous")
+                              + "; Path=/; HttpOnly; Secure",
+            })
+
+        await value.route("https://login.example/**", provider)
+        return value
+
+    monkeypatch.setattr(pw.BrowserType, "launch", headless)
+    monkeypatch.setattr(pw.Browser, "new_context", context)
+    login = Login("resource", lambda: observer)
+    # Click only after the anonymous cookie has actually reached the bridge.
+    original_sleep = asyncio.sleep
+    original_new_page = pw.BrowserContext.new_page
+    pages = []
+
+    async def new_page(self, **kwargs):
+        page = await original_new_page(self, **kwargs)
+        pages.append(page)
+        return page
+
+    async def sign_in():
+        while not candidates:
+            await original_sleep(.01)
+        assert candidates == ["anonymous"]
+        await pages[0].get_by_role("button", name="Sign in").click()
+
+    monkeypatch.setattr(pw.BrowserContext, "new_page", new_page)
+    task = asyncio.create_task(sign_in())
+    try:
+        await asyncio.wait_for(login.authenticate(), timeout=15)
+        await task
+        assert login.status()["phase"] == "completed"
+        assert candidates[0] == "anonymous" and candidates[-1] == "authenticated"
+        assert opened == [True] and len(observer.calls) == 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.parametrize("method", ["redirect", "browser-cookie", "device-code"])
 async def test_real_chromium_adapters_return_only_the_declared_callback(method, monkeypatch):
     async with pw.async_playwright() as p:

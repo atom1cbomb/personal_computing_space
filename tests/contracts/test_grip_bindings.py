@@ -91,7 +91,9 @@ async def test_untrusted_binding_fails_before_credential_delivery():
     assert counts == {"DESCRIBE": 1}
 
 
-async def test_real_stream_to_service_without_slave_identity():
+@pytest.mark.parametrize("tls_context", [False, True])
+async def test_real_stream_to_service_without_slave_identity(tls_context):
+    import ssl
     async def echo(reader, writer):
         try:
             while data := await reader.read(4096):
@@ -117,7 +119,8 @@ async def test_real_stream_to_service_without_slave_identity():
             binding = {"protocol": STREAM_PROTOCOL, "endpoint": base.replace("http:", "ws:") + "/stream", "audience": AUDIENCE}
             async with LoomClient("http://observer", token="observer-secret", allow_insecure_grip=True,
                                   transport=observer_transport(discovery(binding, mode="byte-stream"), {}),
-                                  trusted_bindings=[binding], credential_provider=provider) as client:
+                                  trusted_bindings=[binding], credential_provider=provider,
+                                  ssl_context=ssl.create_default_context() if tls_context else None) as client:
                 async with await client.open_stream(TARGET, ACTION, {}) as stream:
                     payload = bytes(range(256)) * 1024
                     async def receive():

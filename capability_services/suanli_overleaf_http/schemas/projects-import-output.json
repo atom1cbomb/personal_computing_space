@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "overleaf-archive.v1"
+    },
+    "direction": {
+      "type": "string",
+      "const": "upload"
+    }
+  },
+  "required": [
+    "protocol",
+    "direction"
+  ],
+  "additionalProperties": false
+}

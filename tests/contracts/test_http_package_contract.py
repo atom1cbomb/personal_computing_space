@@ -111,6 +111,8 @@ def test_http_contract_accepts_how_to_use_content_reference() -> None:
     ({"mode": "device-code"}, False, True), ({"mode": "device-code"}, True, False),
     ({"mode": "credential-profile"}, False, True),
     ({"mode": "browser-cookie", "cookie_name": "grafana_session"}, True, True),
+    ({"mode": "browser-cookie", "cookie_name": "overleaf.sid"}, True, True),
+    ({"mode": "browser-cookie", "cookie_name": "bad cookie"}, True, False),
     ({"mode": "browser-cookie"}, True, False),
     ({"mode": "browser-cookie", "cookie_name": "bad;cookie"}, True, False),
     ({"mode": "custom-script", "entrypoint": "code.py"}, True, False),

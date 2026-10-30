@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/schemas/projects-import-input/sha256/b291f68e33aaa037ebb97958b60c34a09d57039711ee6cbb6e4bcae0c4b03a08",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/schemas/projects-import-output/sha256/9d8eb521d85478a9fee19d3a1a3699d03299c56d255dd0ffc797b1c6493e6e4a",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

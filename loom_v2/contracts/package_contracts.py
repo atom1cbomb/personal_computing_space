@@ -235,7 +235,7 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                                 {"type": "object", "required": ["mode", "cookie_name"],
                                  "properties": {"mode": {"const": "browser-cookie"},
                                                 "idp": {"type": "string", "pattern": _IDP_PATTERN},
-                                                "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+                                                "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"}},
                                  "additionalProperties": False},
                             ]
                         },

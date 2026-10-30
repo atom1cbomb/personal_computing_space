@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-upload",
+  "name": "projects.upload",
+  "description": "Apply a ZIP of changed files and explicit deleted_paths at base_revision; never force push. Use a durable idempotency_key and decode the framed terminal result; stream-open is admission only.",
+  "capability_kinds": [
+    "documents.overleaf.upload"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/schemas/instance-config/sha256/57f6e582bae35494636d08c5fd982ddd2842938cb5f080b6d183dcc4a445a8d8",
+    "identity_criterion": "content_digest"
+  }
+}

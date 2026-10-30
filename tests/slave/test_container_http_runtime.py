@@ -216,6 +216,52 @@ class RecordingRunner:
         return DockerCommandResult(0)
 
 
+@pytest.mark.parametrize("method,reply,valid", [
+    ("browser-cookie", {"status": "pending"}, True),
+    ("browser-cookie", {"status": "accepted"}, True),
+    ("redirect", {"status": "accepted"}, True),
+    ("redirect", {"status": "pending"}, False),
+    ("browser-cookie", {"status": "pending", "cookie": "private"}, False),
+])
+async def test_browser_runtime_forwards_pending_only_for_cookie_login(method, reply, valid):
+    package = _package(["/v1/echo"])
+    interaction = {"mode": method}
+    if method == "browser-cookie":
+        interaction["cookie_name"] = "overleaf.sid"
+    package.body["authentication"] = {
+        "start_path": "/auth/start", "status_path": "/auth/status",
+        "browser_path": "/auth/browser", "interaction": interaction,
+    }
+    runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-a", network="internal")
+
+    class Runner:
+        async def run(self, args, *, timeout):
+            assert args[0] == "inspect"
+            return DockerCommandResult(0, json.dumps([{
+                "Id": "a" * 64,
+                "Config": {"Labels": runtime._labels("workspace-default", package.version_ref,
+                                                      package.package_digest, "default"),
+                           "Image": IMAGE_REF},
+                "State": {"Running": True},
+            }]))
+
+    def respond(request):
+        return httpx.Response(204) if request.url.path == "/healthz" else httpx.Response(200, json=reply)
+
+    runtime.runner = Runner()
+    runtime.http_transport = httpx.MockTransport(respond)
+    activation = {"workspace_id": "workspace-default", "target_slave": "slave-a",
+                  "package_version_ref": package.version_ref, "package_digest": package.package_digest}
+    call = runtime.auth_browser(package.model_dump(mode="json"), activation,
+                                {"action": "callback", "session_id": "s" * 32,
+                                 "query": {"overleaf.sid": ["candidate"]}})
+    if valid:
+        assert await call == reply
+    else:
+        with pytest.raises(RuntimeError, match="service_browser_proxy_invalid"):
+            await call
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("paths", "health_path", "error"),

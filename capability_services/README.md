@@ -16,6 +16,7 @@
 
 | 目录 | 使用说明 | 构建/部署文档 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---|---:|---:|---|
+| suanli_overleaf_http | [HOW_TO_USE](suanli_overleaf_http/HOW_TO_USE.md) | [README](suanli_overleaf_http/README.md) | suanli-overleaf-http/v1 | 5 | 连接 overleaf.cs.ac.cn；Git token profile + 统一网页登录，项目列表、下载、状态、上传和新项目导入 |
 | autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v2 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
 | kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
 | embedding_http | [HOW_TO_USE](embedding_http/HOW_TO_USE.md) | [README](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
@@ -29,14 +30,15 @@
 ## 发布
 
 先构建并推送相应目录的 Dockerfile，记录仓库返回的真实 `registry/repository@sha256:...`。
-两个 SSH 镜像共用 `capability_services/ssh_execution.py`；K8s 和 embedding 镜像需要 SDK。
-这四个镜像都从仓库根目录构建：
+两个 SSH 镜像共用 `capability_services/ssh_execution.py`；K8s、embedding 和 Overleaf 镜像需要 SDK。
+这些镜像都从仓库根目录构建：
 
 ```sh
 docker build -f capability_services/vm_ssh_http/Dockerfile -t loom/vm-ssh-gateway .
 docker build -f capability_services/suanli_vm_ssh_http/Dockerfile -t loom/suanli-vm-ssh-gateway .
 docker build -f capability_services/kubernetes_http/Dockerfile -t loom/kubernetes-gateway:v8 .
 docker build -f capability_services/embedding_http/Dockerfile -t loom/embedding-gateway:v1 .
+docker build -f capability_services/suanli_overleaf_http/Dockerfile -t loom/suanli-overleaf-gateway:v1 .
 ```
 
 配置 `LOOM_OBSERVER_URL`、`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID` 和 `LOOM_GRIP_TOKEN`。
@@ -182,6 +184,8 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest -q tests/capability_services tests/
 集成测试发布原有七个包的当前模板，经过 GRIP、Driver、Slave、
 真实 `container:http` runtime 和本机 HTTP gateway；另有 embedding 的真实 HTTP/WS 通道测试。
 AutoPaper 独立集成测试覆盖发布、激活、浏览器认证、六个业务动作和同实例重新认证。
+Overleaf 独立测试覆盖发布、激活、匿名 Cookie 的 pending、五个动作、真实 Git 冲突和
+HTTP/WS 文件往返；另有真实容器的只读根目录、持久状态与重启验收。
 任务导出经 Driver 执行，服务导出直接回复或建立流。Docker、kubectl/SSH 可执行文件及外部 provider
 使用测试替身；这些结果不代表生产云、真实 Docker 或浏览器登录验收。
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用

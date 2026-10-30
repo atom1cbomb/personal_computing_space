@@ -309,3 +309,93 @@ def test_auth_profile_store_does_not_create_state_without_an_idp(tmp_path):
     store = AuthProfileStore(tmp_path / "profiles")
     assert store.profile_dir(None) is None
     assert not (tmp_path / "profiles").exists()
+
+
+@pytest.mark.parametrize("outcome", ["authenticated", "expired", "closed", "failed"])
+async def test_anonymous_cookie_waits_in_same_browser_until_verified(outcome, tmp_path, monkeypatch):
+    observer = Observer("browser-cookie")
+    observer.auth.update(cookie_name="overleaf.sid", idp="https://overleaf.example")
+    store = AuthProfileStore(tmp_path / "profiles")
+    login = Login("resource", lambda: observer, profile_store=store)
+    callback_values, opened, closed = [], [], []
+
+    class Page:
+        url = "https://overleaf.example/login"
+
+        async def goto(self, *_args, **_kwargs):
+            pass
+
+        def is_closed(self):
+            return outcome == "closed" and bool(callback_values)
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+        async def clear_cookies(self, **_kwargs):
+            raise AssertionError("pending login must keep the browser's current cookies")
+
+        async def cookies(self, _origin):
+            return [{"name": "overleaf.sid", "value": "anonymous" if not callback_values else "verified"}]
+
+        async def close(self):
+            closed.append(True)
+
+    class Chromium:
+        async def launch_persistent_context(self, *_args, **_kwargs):
+            opened.append(True)
+            return Context()
+
+    class Playwright:
+        chromium = Chromium()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+    api = ModuleType("playwright.async_api")
+    api.Error = RuntimeError
+    api.async_playwright = Playwright
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", api)
+    check_deadline = login._check_deadline
+
+    def deadline(expires_at):
+        check_deadline(time.time() - 1 if outcome == "expired" and callback_values else expires_at)
+
+    monkeypatch.setattr(login, "_check_deadline", deadline)
+
+    def bridge(request):
+        body = json.loads(request.content)
+        if body["action"] == "open":
+            return httpx.Response(200, json={"status": "redirect", "location": Page.url,
+                                            "browser_binding": "binding"})
+        assert not closed
+        assert not store.has_saved_state(observer.auth["idp"])
+        callback_values.append(body["query"]["overleaf.sid"][0])
+        if len(callback_values) == 1:
+            return httpx.Response(200, json={"status": "pending"})
+        if outcome == "failed":
+            return httpx.Response(409, json={"detail": "browser_callback_failed"})
+        observer.ready = True
+        return httpx.Response(200, json={"status": "accepted"})
+
+    observer.transport = httpx.MockTransport(bridge)
+    if outcome == "authenticated":
+        await login.authenticate()
+        assert login.status()["phase"] == "completed"
+        assert callback_values == ["anonymous", "verified"]
+        assert store.has_saved_state(observer.auth["idp"])
+    else:
+        error = {"expired": "authentication_expired", "closed": "login_window_closed",
+                 "failed": "browser_callback_failed"}[outcome]
+        # Exercise one browser session so a saved-profile fallback cannot mask
+        # an incorrectly consumed anonymous-cookie challenge.
+        with pytest.raises(RuntimeError, match=error):
+            await login._browser(observer, observer.auth, 1, observer.auth["expires_at"])
+        assert not store.has_saved_state(observer.auth["idp"])
+    assert opened == [True] and closed == [True]
+    assert "anonymous" not in json.dumps(login.status())
+    assert "verified" not in json.dumps(login.status())

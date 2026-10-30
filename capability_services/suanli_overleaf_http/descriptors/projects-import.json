@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-import",
+  "name": "projects.import",
+  "description": "Create a new project from a full source ZIP using the web session. Retry only the identical key/content. import_outcome_unknown requires manual reconciliation; never automatically create again. Decode the framed terminal result.",
+  "capability_kinds": [
+    "documents.overleaf.import"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/schemas/instance-config/sha256/57f6e582bae35494636d08c5fd982ddd2842938cb5f080b6d183dcc4a445a8d8",
+    "identity_criterion": "content_digest"
+  }
+}

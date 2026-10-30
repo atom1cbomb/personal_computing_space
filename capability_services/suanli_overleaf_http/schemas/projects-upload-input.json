@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{24}$"
+    },
+    "base_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "deleted_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "maxItems": 2000
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "archive_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 52428800
+    },
+    "archive_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    }
+  },
+  "required": [
+    "project_id",
+    "base_revision",
+    "deleted_paths",
+    "message",
+    "archive_size",
+    "archive_sha256",
+    "idempotency_key"
+  ],
+  "additionalProperties": false
+}

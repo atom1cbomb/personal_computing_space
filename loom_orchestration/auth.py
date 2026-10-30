@@ -322,6 +322,16 @@ class Login:
                                         self.profile_store.clear_saved_state(idp)
                                     raise RuntimeError("saved_auth_rejected") from None
                                 raise
+                            if method == "browser-cookie" and accepted == {"status": "pending"}:
+                                # A rejected candidate is no longer a saved-login
+                                # attempt. Keep the live browser for human login.
+                                saved_cookie_attempt = saved_profile = False
+                                if self.profile_store:
+                                    self.profile_store.clear_saved_state(idp)
+                                callback = None
+                                self._update("awaiting_login")
+                                await asyncio.sleep(1)
+                                continue
                             if accepted != {"status": "accepted"}:
                                 if saved_cookie_attempt or saved_profile:
                                     if saved_cookie_attempt:
