@@ -19,6 +19,15 @@ from .streams import STREAM_PROTOCOL, connect_stream
 from .contracts import ClosureContract, ResourceRef
 
 
+class PlanRejectedError(RuntimeError):
+    """A native task action returned a domain rejection, with public blockers."""
+
+    def __init__(self, rejection: dict[str, Any]):
+        self.code = rejection["code"]
+        self.details = rejection.get("details", {})
+        super().__init__(self.code)
+
+
 class LoomClient:
     def __init__(self, base_url: str, *, token: str | None = None, client: httpx.AsyncClient | None = None, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 30.0, grip_authority: str = "loom.local", workspace_id: str = "workspace-default", allow_insecure_grip: bool = False, trusted_bindings: list[dict] | None = None, binding_preference: list[str] | None = None, credential_provider=None, descriptions: dict | None = None, schemas: dict | None = None, ssl_context=None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -44,6 +53,7 @@ class LoomClient:
         self._schemas = deepcopy(schemas or {})
         self._credentials: dict[tuple, tuple[AccessCredential, float]] = {}
         self._credential_lock = asyncio.Lock()
+        self._driver_uri: str | None = None
 
     async def __aenter__(self) -> "LoomClient":
         if self._client is None:
@@ -106,16 +116,36 @@ class LoomClient:
         return result["content"]
 
     async def submit(self, *, request_id: str, plan: ClosureContract, conversation_ref: str | None = None) -> dict[str, Any]:
-        payload = {"request_id": request_id, "plan": plan.model_dump(mode="json")}
+        """Queue a complete plan; request_id is its business idempotency key."""
+        payload = {"idempotency_key": request_id, "plan": plan.model_dump(mode="json")}
         if conversation_ref is not None:
             payload["conversation_ref"] = conversation_ref
-        return await self._request("POST", "/api/v1/run-submissions", json=payload)
+        result = await self.invoke(await self._driver(), self.names.action("submit-plan"), payload)
+        if "rejected" in result:
+            raise PlanRejectedError(result["rejected"])
+        return await self.submission(request_id)
 
     async def submission(self, request_id: str) -> dict[str, Any]:
-        return await self._request("GET", f"/api/v1/run-submissions/{request_id}")
+        return await self.invoke(await self._driver(), self.names.action("get-submission"),
+                                 {"idempotency_key": request_id})
 
     async def run(self, run_id: str) -> dict[str, Any]:
-        return await self._request("GET", f"/api/v1/runs/{run_id}")
+        """Read a Run, including evidence/history, by its URI or opaque ID."""
+        return await self.invoke(self._run_uri(run_id), self.names.action("read"),
+                                 {"include_history": True})
+
+    async def _driver(self) -> str:
+        if self._driver_uri is None:
+            default = self.names.name("drivers", "default")
+            driver = next((r for r in await self.resources(mcue="computing/driver") if r["uri"] == default), None)
+            if driver is None:
+                raise GripError("not_found")
+            # Cache the logical resource identity, never its process or lease.
+            self._driver_uri = driver["uri"]
+        return self._driver_uri
+
+    def _run_uri(self, run_id: str) -> str:
+        return uri(run_id) if run_id.startswith("grip://") else self.names.name("runs", run_id)
 
     async def _grip_exchange(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         Request.model_validate(payload)
@@ -266,8 +296,12 @@ class LoomClient:
         if offer.action.mode != mode:
             raise GripError("unsupported_binding")
         selected = self._select_binding(offer, binding)
-        # read has a preinstalled bootstrap contract, preventing schema recursion.
-        if action == self.names.action("read"):
+        # Schema reads and the generic read contract bootstrap schema resolution.
+        # Resource-specific reads (Run history, frozen plans) use their offers.
+        if (action == self.names.action("read")
+                and (description.resource.mcue == "grip/schema"
+                     or (offer.action.input_schema == self.names.schema("read-input")
+                         and offer.action.output_schema == self.names.schema("read-output")))):
             if input != {}:
                 raise GripError("invalid_input")
             output_schema = {"type": "object"}
@@ -309,18 +343,27 @@ class LoomClient:
         return result["resources"]
 
     async def cancel(self, run_id: str, *, request_id: str | None = None, reason: str = "user_cancel") -> dict[str, Any]:
-        return await self._request("POST", f"/api/v1/runs/{run_id}/cancel", json={"request_id": request_id, "reason": reason})
+        payload = {"reason": reason}
+        if request_id is not None:
+            payload["idempotency_key"] = request_id
+        return await self.invoke(self._run_uri(run_id), self.names.action("cancel"), payload)
 
     async def resubmit(self, run_id: str, *, request_id: str, base_closure_version: str, plan: ClosureContract) -> dict[str, Any]:
-        return await self._request("POST", f"/api/v1/runs/{run_id}/resubmit", json={"request_id": request_id, "base_closure_version": base_closure_version, "plan": plan.model_dump(mode="json")})
+        result = await self.invoke(self._run_uri(run_id), self.names.action("resubmit"), {
+            "idempotency_key": request_id, "base_closure_version": base_closure_version,
+            "plan": plan.model_dump(mode="json"),
+        })
+        if "rejected" in result:
+            raise PlanRejectedError(result["rejected"])
+        return await self.submission(request_id)
 
     async def resolve(self, run_id: str, decision: str) -> dict[str, Any]:
         if decision not in {"accept", "abandon"}:
             raise ValueError("invalid_decision")
-        return await self._request("POST", f"/api/v1/runs/{run_id}/resolve", json={"decision": decision})
+        return await self.invoke(self._run_uri(run_id), self.names.action("resolve"), {"decision": decision})
 
     async def close(self, run_id: str) -> dict[str, Any]:
-        return await self._request("POST", f"/api/v1/runs/{run_id}/close", json={})
+        return await self.invoke(self._run_uri(run_id), self.names.action("close"), {})
 
 
-__all__ = ["LoomClient"]
+__all__ = ["LoomClient", "PlanRejectedError"]

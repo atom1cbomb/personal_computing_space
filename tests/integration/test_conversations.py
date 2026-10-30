@@ -1,3 +1,4 @@
+from tests.support.grip_client import submit_plan, submission, run_action
 import asyncio
 
 import pytest
@@ -46,19 +47,18 @@ async def test_persisted_conversation_history_is_ordered_by_run_creation():
 def test_run_history_exposes_persisted_messages():
     repository = ObserverRepository()
     client = TestClient(create_app(repository))
-    run = client.post(
-        "/api/v1/run-submissions",
-        json={
-            "request_id": "conversation-history-request",
+    submitted = submit_plan(client, **{
+            "idempotency_key": "conversation-history-request",
             "conversation_ref": "conversation-history",
             "plan": {"closure_id": "conversation-history-closure", "goal": "能力问题", "body": {"closure_id": "conversation-history-closure"}},
         },
-    ).json()
+    )
+    assert submitted["kind"] == "reply"
+    run = submission(client, "conversation-history-request")
     asyncio.run(repository.append_message(run["run_id"], "user", "能力问题"))
     asyncio.run(repository.append_message(run["run_id"], "assistant", "两者能力相同"))
 
-    history = client.get(f"/api/v1/runs/{run['run_id']}")
-    assert history.status_code == 200
-    messages = [event for event in history.json()["events"] if event.get("phase") == "message"]
+    history = run_action(client, run["run_id"], input={"include_history": True})
+    messages = [event for event in history["events"] if event.get("phase") == "message"]
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert [message["content"] for message in messages] == ["能力问题", "两者能力相同"]

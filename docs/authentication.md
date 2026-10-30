@@ -18,7 +18,7 @@ SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_servi
 在用户浏览器所在机器安装 SDK 的 `auth` 可选依赖，再安装 Chromium：
 
 ```sh
-python -m pip install './loom_orchestration-0.9.4-py3-none-any.whl[auth]'
+python -m pip install './loom_orchestration-0.10.0-py3-none-any.whl[auth]'
 python -m playwright install chromium
 python -m loom_orchestration.auth \
   --observer https://observer.example \

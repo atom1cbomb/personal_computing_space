@@ -25,3 +25,21 @@ def invoke(client, target, action, input=None):
 def resources(client, mcue):
     n = client.app.state.grip.names
     return invoke(client, n.root, n.action("list-resources"), {"mcue": mcue})["resources"]
+
+
+def submit_plan(client, *, idempotency_key, plan, conversation_ref=None):
+    n = client.app.state.grip.names
+    return exchange(client, n.name("drivers", "default"), action=n.action("submit-plan"),
+                    input={"idempotency_key": idempotency_key, "plan": plan,
+                           **({"conversation_ref": conversation_ref} if conversation_ref is not None else {})})
+
+
+def submission(client, idempotency_key):
+    n = client.app.state.grip.names
+    return invoke(client, n.name("drivers", "default"), n.action("get-submission"),
+                  {"idempotency_key": idempotency_key})
+
+
+def run_action(client, run_id, action="read", input=None):
+    n = client.app.state.grip.names
+    return invoke(client, n.name("runs", run_id), n.action(action), input)

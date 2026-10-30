@@ -16,7 +16,7 @@ python examples/grip/invoke.py
 python examples/grip/invoke.py --action list-resources --input list.json
 ```
 
-将 mcue 改为 `capability/package`、`capability/activation`、`computing/vm` 或 `execution/run` 可查相应资源。
+将 mcue 改为 `computing/driver`、`capability/package`、`capability/activation`、`computing/vm`、`execution/plan` 或 `execution/run` 可查相应资源。
 使用 `grip/mcue-type` 查询类型定义，再对返回的定义 URI 调用 read 取得属性 Schema。
 服务包发布方法见 [服务包指南](../../capability_services/README.md)。
 复制返回的 Slave URI 和包 URI，先创建 `check.json`：
@@ -68,6 +68,26 @@ python examples/grip/invoke.py --target "$ACTIVATION_URI" --action "$BUSINESS_AC
 `--wait` 有界轮询返回的 action；到达上限仍返回原任务 URI，可稍后读取。
 一个普通、无需交互认证的包也可直接在 Slave 上调用 `run-package`，输入
 `{package,action,arguments,idempotency_key}`，仍返回同一种 Run 资源。
+
+完整原生计划示例使用 SDK 0.10 的 `publish_function`、`OrchestratorPackage` 和
+`SubmissionBuilder`，发布倍增函数及编排包，再通过发现的 Driver 调用 `submit-plan`：
+
+```sh
+python examples/grip/native-task.py --request-id native-double-1 --value 21 --wait 120
+```
+
+本地 HTTP 加 `--allow-http`。示例需要支持 `process:json_stdio/1` 的 Slave；执行时
+Driver 还需支持 `container:python_orchestrator/1`。Driver 离线仍可冻结计划并排队：
+`accepting_submissions` 与 `available` 分别表示接收入口和执行租约状态。
+输出保留提交、Run 与不可变 Plan URI，默认输入的完成结果应为 `{"value":42}`。
+省略 `--wait` 立即返回提交视图；本地轮询超时不取消任务。
+
+`--request-id` 是业务幂等键，SDK 将它发送为 `idempotency_key`；GRIP 消息 `request_id`
+由 SDK 为每条消息生成。未知提交结果时复用同一命令或调用 `client.submission(key)`。
+改变输入需新业务键。可对返回的 Run 调用 `read`（输入 `{"include_history":true}` 查看证据），
+对 Plan 调用 `read` 查看完整冻结闭包。`client.run(run_uri)` 默认包括历史。
+修复使用 Run 的 `resubmit` 与当前 `base_closure_version`、新键和完整替换计划；
+attestation 的接受或待决任务的放弃使用 `resolve`，终态任务可 `close`。
 
 停止实例的输入为 `{"expected_revision":<当前 revision>,"idempotency_key":"example-stop-1"}`，
 以实例为 target 调用 `stop`。复用同一幂等 key 可查询同一操作结果；改变参数应使用新 key。

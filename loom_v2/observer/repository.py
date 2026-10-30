@@ -144,6 +144,17 @@ class RunRecord:
 class RunSummary:
     run_id: str
     state: str
+    closure_version: str | None = None
+    snapshot_digest: str | None = None
+    execution_id: str | None = None
+    execution_epoch: int | None = None
+
+
+@dataclass
+class PlanSummary:
+    run_id: str
+    closure_version: str
+    snapshot_digest: str
 
 
 @dataclass
@@ -2466,13 +2477,23 @@ class ObserverRepository:
         return records
 
     async def list_run_summaries(self, workspace_id: str, *, run_id: str | None = None) -> list[RunSummary]:
-        """Read directory state without loading closures, events or outcomes."""
+        """Read directory state without loading closure bodies, events or outcomes."""
         if self.sessions is None:
-            return [RunSummary(record.run_id, record.state) for record in self.runs.values()
-                    if record.closure_contract is not None
-                    and record.closure_contract.workspace_id == workspace_id
-                    and (run_id is None or record.run_id == run_id)]
-        query = select(RunRow.run_id, RunRow.state).where(
+            return [RunSummary(
+                record.run_id, record.state,
+                record.committed.version_id if record.committed else None,
+                record.committed.snapshot_digest if record.committed else None,
+                record.execution_id, record.execution_epoch,
+            ) for record in sorted(self.runs.values(), key=lambda item: item.run_id)
+                if record.closure_contract is not None
+                and record.closure_contract.workspace_id == workspace_id
+                and (run_id is None or record.run_id == run_id)]
+        query = select(
+            RunRow.run_id, RunRow.state,
+            RunRow.committed["version_id"].as_string(),
+            RunRow.committed["snapshot_digest"].as_string(),
+            RunRow.execution_id, RunRow.execution_epoch,
+        ).where(
             RunRow.closure_contract["workspace_id"].as_string() == workspace_id,
         ).order_by(RunRow.run_id)
         if run_id is not None:
@@ -2482,16 +2503,75 @@ class ObserverRepository:
 
     async def read_run_result(self, workspace_id: str, run_id: str) -> dict[str, Any]:
         if self.sessions is None:
-            record = await self._assert_run_workspace(run_id, workspace_id)
-            return {"state": record.state, "outcome": record.outcome}
+            record = self.runs.get(run_id)
+            if record is None or record.closure_contract is None or record.closure_contract.workspace_id != workspace_id:
+                raise KeyError(run_id)
+            return {
+                "state": record.state, "outcome": deepcopy(record.outcome), "run_id": record.run_id,
+                "closure_version": record.committed.version_id if record.committed else None,
+                "snapshot_digest": record.committed.snapshot_digest if record.committed else None,
+                "execution_id": record.execution_id, "execution_epoch": record.execution_epoch,
+            }
         async with self.sessions() as session:
-            row = (await session.execute(select(RunRow.state, RunRow.outcome).where(
+            row = (await session.execute(select(
+                RunRow.state, RunRow.outcome, RunRow.run_id,
+                RunRow.committed["version_id"].as_string().label("closure_version"),
+                RunRow.committed["snapshot_digest"].as_string().label("snapshot_digest"),
+                RunRow.execution_id, RunRow.execution_epoch,
+            ).where(
                 RunRow.run_id == run_id,
                 RunRow.closure_contract["workspace_id"].as_string() == workspace_id,
             ))).one_or_none()
         if row is None:
             raise KeyError(run_id)
-        return {"state": row.state, "outcome": row.outcome}
+        return dict(row._mapping)
+
+    async def list_plan_summaries(
+        self, workspace_id: str, *, run_id: str | None = None, closure_version: str | None = None,
+    ) -> list[PlanSummary]:
+        """Project frozen plan identities without loading request or Run bodies."""
+        if self.sessions is None:
+            plans = {
+                (item.run_id, item.closure_version): PlanSummary(item.run_id, item.closure_version, item.snapshot_digest)
+                for item in self.execution_requests.values()
+                if item.workspace_id == workspace_id
+                and item.snapshot_digest
+                and (run_id is None or item.run_id == run_id)
+                and (closure_version is None or item.closure_version == closure_version)
+            }
+            return [plans[key] for key in sorted(plans)]
+        query = select(
+            RunExecutionRequestRow.run_id, RunExecutionRequestRow.closure_version, RunExecutionRequestRow.snapshot_digest,
+        ).where(RunExecutionRequestRow.workspace_id == workspace_id,
+                RunExecutionRequestRow.snapshot_digest != "").distinct().order_by(
+            RunExecutionRequestRow.run_id, RunExecutionRequestRow.closure_version,
+        )
+        if run_id is not None:
+            query = query.where(RunExecutionRequestRow.run_id == run_id)
+        if closure_version is not None:
+            query = query.where(RunExecutionRequestRow.closure_version == closure_version)
+        async with self.sessions() as session:
+            return [PlanSummary(*row) for row in (await session.execute(query)).all()]
+
+    async def read_frozen_plan(self, workspace_id: str, run_id: str, closure_version: str) -> dict[str, Any]:
+        """Read the immutable contract saved when this version entered the queue."""
+        if self.sessions is None:
+            for item in self.execution_requests.values():
+                if (item.workspace_id == workspace_id and item.run_id == run_id and item.closure_version == closure_version
+                        and item.snapshot_digest):
+                    return deepcopy(item.closure_contract)
+            raise KeyError((run_id, closure_version))
+        query = select(RunExecutionRequestRow.closure_contract).where(
+            RunExecutionRequestRow.workspace_id == workspace_id,
+            RunExecutionRequestRow.run_id == run_id,
+            RunExecutionRequestRow.closure_version == closure_version,
+            RunExecutionRequestRow.snapshot_digest != "",
+        ).order_by(RunExecutionRequestRow.created_at).limit(1)
+        async with self.sessions() as session:
+            body = (await session.execute(query)).scalar_one_or_none()
+        if body is None:
+            raise KeyError((run_id, closure_version))
+        return body
 
     @staticmethod
     def _execution_request_from_row(row: RunExecutionRequestRow) -> ExecutionRequest:
@@ -2659,7 +2739,7 @@ class ObserverRepository:
                 request_payload=payload,
                 run_id=record.run_id,
                 closure_version=committed.version_id,
-                closure_contract=record.closure_contract.model_dump(mode="json"),
+                closure_contract=record.closure_contract.model_copy(update={"body": committed.snapshot}).model_dump(mode="json"),
                 snapshot_digest=committed.snapshot_digest,
                 source=source,
                 conversation_ref=conversation_ref,
@@ -2943,6 +3023,8 @@ class ObserverRepository:
                 matching = [ExecutionRequest(
                     workspace_id=workspace_id, request_id=f"cleanup:{record.execution_id}", request_payload={},
                     run_id=run_id, closure_version=record.committed.version_id,
+                    closure_contract=record.closure_contract.model_copy(update={"body": record.committed.snapshot}).model_dump(mode="json"),
+                    snapshot_digest=record.committed.snapshot_digest,
                     execution_id=record.execution_id, execution_epoch=record.execution_epoch,
                 )]
             for item in matching:
@@ -3116,7 +3198,7 @@ class ObserverRepository:
                 request_payload=payload,
                 run_id=run_id,
                 closure_version=committed.version_id,
-                closure_contract=record.closure_contract.model_dump(mode="json"),
+                closure_contract=record.closure_contract.model_copy(update={"body": committed.snapshot}).model_dump(mode="json"),
                 snapshot_digest=committed.snapshot_digest,
                 source="external",
                 conversation_ref=normalized.origin_conversation_ref or None,

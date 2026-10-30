@@ -33,7 +33,7 @@ def prepare(config, path, body, method):
         return config["model_base_url"].rstrip("/") + suffix, body, headers, True
     permitted = (path == "/.well-known/grip" or path in {"/healthz", "/api/v1/runtime"}
                  or path.startswith(("/api/v1/content", "/api/v1/capability-packages", "/api/v1/action-descriptors",
-                                     "/api/v1/run-submissions", "/api/v1/runs/", "/api/v1/auth/token")))
+                                     "/api/v1/auth/token")))
     if not permitted:
         raise ValueError("path_not_allowed")
     if path == "/.well-known/grip":

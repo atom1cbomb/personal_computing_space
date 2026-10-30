@@ -1,3 +1,4 @@
+from tests.support.grip_client import submit_plan, submission
 import hashlib
 import json
 
@@ -12,19 +13,17 @@ from loom_v2.observer.repository import ObserverRepository
 
 def test_complete_submission_is_queued_and_queryable():
     client = TestClient(create_app())
-    response = client.post(
-        "/api/v1/run-submissions",
-        json={
-            "request_id": "request-1",
+    response = submit_plan(client, **{
+            "idempotency_key": "request-1",
             "conversation_ref": "task-1",
             "plan": {"closure_id": "closure-1", "goal": "validate result", "body": {"closure_id": "closure-1"}},
         },
     )
-    assert response.status_code == 202
-    payload = response.json()
+    assert response["kind"] == "reply"
+    payload = submission(client, "request-1")
     assert payload["execution_request_state"] == "queued"
     assert payload["current_run_state"] == "committed"
-    assert client.get("/api/v1/run-submissions/request-1").json()["run_id"] == payload["run_id"]
+    assert submission(client, "request-1")["run_id"] == payload["run_id"]
 
 
 def test_submission_persists_complete_closure_contract():
@@ -42,12 +41,10 @@ def test_submission_persists_complete_closure_contract():
             "closure_id": "closure-transform",
         },
     }
-    response = client.post(
-        "/api/v1/run-submissions",
-        json={"request_id": "conversation-contract-request", "conversation_ref": "conversation-contract", "plan": contract},
+    response = submit_plan(client, **{"idempotency_key": "conversation-contract-request", "conversation_ref": "conversation-contract", "plan": contract},
     )
-    assert response.status_code == 202
-    payload = response.json()
+    assert response["kind"] == "reply"
+    payload = submission(client, "conversation-contract-request")
     assert payload["closure_contract"]["goal"] == "transform numbers"
     assert payload["closure_contract"]["required_success_criteria"][0]["criterion_id"] == "ordered"
     assert payload["closure_contract"]["resource_budget"]["max_attempts"] == 2
@@ -56,14 +53,14 @@ def test_submission_persists_complete_closure_contract():
 def test_duplicate_submission_returns_same_run():
     client = TestClient(create_app())
     body = {
-        "request_id": "same-request",
+        "idempotency_key": "same-request",
         "conversation_ref": "task-2",
         "plan": {"closure_id": "closure-2", "goal": "validate result", "body": {"closure_id": "closure-2"}},
     }
-    first = client.post("/api/v1/run-submissions", json=body)
-    second = client.post("/api/v1/run-submissions", json=body)
-    assert first.status_code == second.status_code == 202
-    assert second.json()["run_id"] == first.json()["run_id"]
+    first = submit_plan(client, **body)
+    second = submit_plan(client, **body)
+    assert first["kind"] == second["kind"] == "reply"
+    assert second["body"] == first["body"]
 
 
 @pytest.mark.asyncio

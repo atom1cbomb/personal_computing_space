@@ -10,10 +10,12 @@ Loom 的资源使用入口是 `DESCRIBE` 和 `INVOKE`：先描述目标，从 `o
 | 对象 | 作为资源的含义 |
 |---|---|
 | 能力包 | 不可变的程序与契约，可以作为 action 的输入传递 |
+| Driver | 单一逻辑执行资源，提供 submit-plan 和 get-submission，接受完整任务闭包 |
 | Slave | 承载执行的资源，提供 run-package、check-package 和 activate-package |
 | 激活实例 | 一个包在某 Slave 上运行的命名实例，提供业务动作、stop，必要时提供 auth-start |
 | VM 等登记资源 | 提供 update-attributes，并通过显式绑定的激活实例提供业务动作 |
-| Run | 一次异步执行的任务资源，提供 read 和 cancel |
+| Plan | 一份已冻结的不可变任务闭包，提供 read；修复产生新版本资源 |
+| Run | 一次异步执行的任务资源，提供 read、cancel、resubmit、resolve 和 close |
 
 能力包和激活实例是不同的资源。同一个包的两个命名实例有不同 URI；实例停止后 URI 仍可描述。激活 revision 表示当前生命周期版本。
 
@@ -105,7 +107,77 @@ asyncio.run(main())
 
 显式运行任务返回 `{"run": "grip://.../runs/..."}`，表示已持久化排队；业务结果在 read 返回的 `outcome` 中。Driver 需要在线领取队列。`request_id` 只关联通信；业务 `idempotency_key` 重用相同输入会返回同一任务，改变输入会拒绝。通信超时不表示任务没有执行。
 
-run-package 在指定 Slave 执行一个普通包导出。`container:python_orchestrator/1` 是 Driver 的编排运行方式，继续通过完整计划提交，不伪装为 Slave runtime。
+run-package 在指定 Slave 执行一个普通包导出。`container:python_orchestrator/1` 是 Driver 的编排运行方式，通过下面同一个 `submit-plan` 动作提交完整闭包。
+
+## 完整计划、Driver 和 Run 生命周期
+
+SDK 0.10 与对应 Observer 将完整任务提交纳入 GRIP。用
+`client.resources(mcue="computing/driver")` 发现 Driver，再读取 DESCRIBE 和 `how-to-use`。
+当前只有一个逻辑 Driver，名称为 `drivers/default`，MCUE 为 `computing/driver`；
+这个 URI 跨进程重启保持稳定。`metadata.task_format.schema` 指向完整 `ClosureContract`
+Schema，`execution_kinds` 包括普通计划和 `container:python_orchestrator/1`。
+
+`metadata.accepting_submissions` 表示 Observer 可接受提交，`metadata.available`
+表示 Driver 当前租约在线。Driver 离线时仍可校验、冻结并持久化排队，恢复后再领取。
+包、内容和执行资源仍须满足提交的就绪检查。返回 Run URI 证明已接收，不证明执行完成。
+
+以下片段假设 `plan` 已用 `SubmissionBuilder` 构造，引用的程序、包和契约均已发布：
+
+```python
+driver = next(r for r in await client.resources(mcue="computing/driver")
+              if r["uri"] == client.names.name("drivers", "default"))
+description = await client.describe(driver["uri"])
+submit_offer = next(o for o in description["offers"]
+                    if o["action"]["uri"] == client.names.action("submit-plan"))
+queued = await client.invoke(driver["uri"], submit_offer["action"]["uri"], {
+    "plan": plan.model_dump(mode="json"),
+    "idempotency_key": "analysis-1",
+    "conversation_ref": "conversation-1",
+})
+if "rejected" in queued:
+    print(queued["rejected"]["details"]["blockers"])
+else:
+    state = await client.invoke(queued["run"], client.names.action("read"), {})
+    frozen = await client.invoke(state["plan"], client.names.action("read"), {})
+```
+
+`submit-plan` 接受计划后返回 `{run: <Run URI>}`。业务 `idempotency_key` 与通信层 GRIP
+`request_id` 独立：重试可使用新的消息 ID，但必须保持业务键、计划和可选 conversation_ref
+一致；改变内容会返回 `request_id_reused`。响应丢失时可在 Driver 上调用
+`get-submission`，输入 `{"idempotency_key":"analysis-1"}`，取得原来的 Run、Plan、
+`closure_version`、`snapshot_digest`、`execution_request_state`、当前状态和结果。
+
+`submit-plan` 和 `resubmit` 的 readiness 拒绝是动作输出 Schema 的另一分支：
+`{rejected: {code: "readiness_blocked", details: {blockers: [...]}, ...}}`。
+该分支保留具体资源、未绑定位置等公开诊断，不创建新提交；修正计划后可重用未被接受的业务键。
+GRIP v1 核心错误信封保持不变。SDK helper 将此分支转为 `PlanRejectedError`，可读取
+`exc.code` 与 `exc.details["blockers"]`；底层 `invoke` 直接返回该结构。
+
+Python SDK 保留 `submit(request_id=..., plan=..., conversation_ref=...)` 和
+`submission(request_id)` 签名，内部发现 Driver 并分别调用 `submit-plan`、`get-submission`。
+其中 `request_id` 是业务键；SDK 自动生成每条 GRIP 消息的通信 ID。`submit` 返回完整提交视图，
+包括 `run`、`plan` URI 和原有 `run_id` 字段。`run`、`cancel`、`resubmit`、`resolve`、`close`
+同时接受 Run URI 或不透明的 Run ID，均通过已发现动作的 binding、消息认证和 Schema 校验。
+
+冻结计划的 URI 为 `plans/{run_id}/{closure_version}`，MCUE 为 `execution/plan`；
+`read` 返回 `{run, closure_version, snapshot_digest, plan}`。`snapshot_digest` 标识
+TaskClosure body；完整 `plan` 还包含成功标准和执行策略。修复生成新 Plan URI，旧 URI
+继续返回原闭包。Run 的 `plan` 引用指向当前版本；尚无持久化冻结快照的旧 Run 返回 `plan=null`。
+
+| Run 动作 | 输入及语义 |
+|---|---|
+| `read` | `{}` 返回当前状态、outcome、执行身份、Driver 和 Plan 引用；`{"include_history":true}` 另含尝试、事件、动态节点与证据。SDK `run()` 默认读取历史 |
+| `cancel` | `{"reason":"user_cancel"}` 请求取消；可选 `idempotency_key` 校验提交键属于此 Run。清理可能继续，需轮询到终态 |
+| `resubmit` | `{plan, idempotency_key, base_closure_version}` 仅用于 `awaiting_decision` 且 `outcome.decision=repair`，保持同一 Run URI，并返回 `{run}` |
+| `resolve` | `{"decision":"accept"}` 接受待 attestation 的结果；`{"decision":"abandon"}` 放弃待决任务。根据用户已授权的决定执行 |
+| `close` | `{}` 关闭 completed、failed 或 cancelled 的 Run；重复 close 幂等，不销毁外部资源 |
+
+修复必须使用新业务键和当前 `closure_version`，提交完整替换闭包；保留目标、既有成功标准、
+约束和执行策略。过期版本返回 `version_conflict`，不允许以修复静默放宽验收或扩大执行权限。
+`awaiting_auth` 应在同一激活实例完成认证后继续原 Run，不能用 resubmit 替代认证恢复。
+生命周期动作保留在 offers 中便于重试，服务端按当前状态校验。
+
+可运行的完整闭包示例见 [native-task.py](../examples/grip/native-task.py)。
 
 ## 激活后调用
 
@@ -237,7 +309,7 @@ published_type = await client.invoke(client.names.root, client.names.action("pub
 MCUE 支持自包含 JSON Schema 2020-12 和本地 `$defs` 引用，不解析远程 Schema；它与动作 io.v1 的 Schema 子集独立。
 同一类型版本不能覆盖。发布新版本后，已有资源仍绑定旧版本；
 在 update-attributes 中同时传入同类型的新 mcue_ref 和属性 patch，可原子迁移定义版本。
-平台类型包括 computing/slave、capability/package、capability/activation、execution/run、loom/workspace、
+平台类型包括 computing/driver、computing/slave、capability/package、capability/activation、execution/plan、execution/run、loom/workspace、
 grip/action、grip/schema、data/content 和 grip/mcue-type；平台系统字段由各自权威记录维护。
 
 已有部署使用 SDK 0.5 和对应服务端时，需要先执行[MCUE 迁移](mcue-upgrade.md)。
@@ -250,9 +322,9 @@ grip/action、grip/schema、data/content 和 grip/mcue-type；平台系统字段
 
 所有 URI 位于 `grip://<authority>/workspaces/<workspace>/...`；SDK 的 `client.names.root` 是目录根。包 URI 带包名和不可变版本，摘要保留在契约中；激活 URI 带包、Slave 和实例名，动作 URI 绑定完整导出身份，不根据尾段分派。
 
-Schema 也是资源：DESCRIBE 后调用内建 read 取得 JSON Schema 2020-12。read 的引导契约预装，不递归依赖自身 Schema。描述不带 expires_at，因此仅用于本次调用准备；SDK 不缓存或跨主体共享描述。
+Schema 也是资源：DESCRIBE 后调用内建 read 取得 JSON Schema 2020-12。通用 read 的引导契约预装，不递归依赖自身 Schema；Run 和 Plan 的专用 read 契约按 offer 校验。描述不带 expires_at，因此仅用于本次调用准备；SDK 不缓存或跨主体共享描述。
 
-REST 的内容上传、包制作、完整计划提交与管理 UI 仍承担制作和管理职责。旧公开 REST 资源发现、登记、激活、停用和认证启动路径已删除，资源使用统一改用 resources/describe/invoke。包 promote 仅负责发布候选包，不再携带激活参数。Worker/plugin 保持内部协议，通过既有调度和持久化执行账本承载 GRIP 动作。
+REST 的内容上传、包制作与管理 UI 仍承担制作和管理职责。旧公开 REST 资源发现、登记、激活、停用、认证启动、完整任务提交、单 Run 查询和任务生命周期路径已删除；资源使用统一改用 resources/describe/invoke，SDK 0.10 的任务 helper 也走 GRIP。包 promote 仅负责发布候选包，不再携带激活参数。Worker/plugin 保持内部协议，通过既有调度和持久化执行账本承载 GRIP 动作。
 
 设计和验证范围见 [GRIP spec](superpowers/specs/2026-10-19-grip-resource-invocation-design.md)
 及 [action 与实例描述 spec](superpowers/specs/2026-10-20-grip-actions-and-activation-description-design.md)。

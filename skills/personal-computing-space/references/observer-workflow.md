@@ -1,11 +1,21 @@
 # Observer External-Agent Workflow
 
-The external agent is the planner. Driver accepts only an immutable execution
-request and never receives prompts, messages, or source uploads.
+The external agent is the planner. The logical GRIP Driver accepts a complete
+`ClosureContract`; Observer validates, freezes and queues it. The Driver process
+claims immutable execution requests and never receives prompts or conversations
+for planning.
 
 ## Discovery
 
-1. Check `GET /healthz` and `GET /api/v1/runtime`.
+1. Discover `client.resources(mcue="computing/driver")`, DESCRIBE its URI, and
+   read its `how-to-use` and offered schemas. There is one logical Driver at
+   `drivers/default`; its URI remains stable across process restarts.
+   `metadata.accepting_submissions` describes the Observer entry point, while
+   `metadata.available` describes the execution lease. A Driver offline lease
+   permits durable queueing; report the waiting state without treating a Run URI
+   as evidence of execution. `metadata.task_format.schema` describes the accepted
+   complete closure; both ordinary plans and `container:python_orchestrator/1`
+   use this Driver.
 2. Use `client.resources(mcue="computing/slave")` and inspect descriptions for `run-package` /
    `activate-package` offers. Filter `metadata.available` and obtain the exact
    callable offers with `client.describe(uri)`. Use the operator's GRIP authority,
@@ -18,7 +28,7 @@ request and never receives prompts, messages, or source uploads.
 
 For a single task, invoke the Slave's `run-package` action with the package
 URI, exported action URI, arguments and stable idempotency key. Its returned
-`run` URI identifies a Run resource with `read` and `cancel` actions. If you need
+`run` URI identifies a Run resource with lifecycle actions including `read` and `cancel`. If you need
 to publish a new Python computation first, use [function-packages.md](function-packages.md).
 
 Long-lived services use `activate-package`; invoke their ready activation with
@@ -66,13 +76,36 @@ plan = SubmissionBuilder(
 queued = await client.submit(request_id="request-opaque", plan=plan)
 ```
 
-`202` means queued. Retry an uncertain response with the exact same
-`request_id` and canonical body. A changed body returns
-`409 request_id_reused`.
+SDK 0.10 implements `submit` by invoking Driver `submit-plan` with
+`{plan, idempotency_key, conversation_ref?}`, then `get-submission` with
+`{idempotency_key}`. An accepted action returns `{run: URI}`; the SDK helper returns the
+full submission view, including `run`, `run_id`, `plan`, `closure_version`,
+`snapshot_digest`, `execution_request_state`, `current_run_state` and `outcome`.
+An accepted Run is durably queued; it has not necessarily started executing.
+A readiness rejection instead returns `{rejected: {code, details: {blockers}, ...}}`
+in the action body and creates no submission. SDK `submit`/`resubmit` raise
+`PlanRejectedError` with `.code` and `.details`; inspect the blockers and repair
+the plan. A key that was rejected before acceptance may be reused with corrected input.
+
+The SDK's `request_id` parameter is the business `idempotency_key`. It is separate
+from the GRIP envelope's per-message `request_id`. Retry an uncertain response
+with the exact same business key, canonical plan and conversation_ref, or recover
+the receipt using `await client.submission("request-opaque")`. Changed content
+with the same key returns the GRIP error `request_id_reused`.
+
+The `plan` URI names `plans/{run_id}/{closure_version}` with MCUE `execution/plan`.
+Its `read` action returns `{run, closure_version, snapshot_digest, plan}`. The
+digest identifies the frozen TaskClosure body; `plan` includes the complete
+contract, including success requirements and execution policy. This version is
+immutable; repairing a Run creates another Plan URI while the old one remains
+readable.
 
 ## Poll and Authenticate
 
-Poll `GET /api/v1/run-submissions/{request_id}` or `GET /api/v1/runs/{run_id}`.
+Poll `client.submission(business_key)` or invoke `read` on the returned Run URI.
+The default Run read input `{}` returns state, outcome, execution identity,
+Driver and current Plan references. Set `{"include_history":true}` for attempts,
+events, dynamic nodes and evidence; `client.run(run_uri)` requests that view.
 The relevant states are:
 
 - `queued`, `committed`, `running`, `cleaning_up`: keep polling;
@@ -88,22 +121,46 @@ Authentication payloads are transient. Never put passwords, authorization
 codes, cookies, private keys, or session tokens in a closure, source upload,
 Run event, or ContentStore object.
 
-## Repair and Cancel
+## Repair, Resolve, Cancel and Close
 
-Repair uses one complete replacement `ClosureContract` with
-`base_closure_version` at `POST /api/v1/runs/{run_id}/resubmit`. Cancel only on
-explicit user request with `POST /api/v1/runs/{run_id}/cancel`.
-Use `await client.cancel(run_id)`; if including `request_id`, it must be the
-original submission's id, not a new cancellation id.
+All lifecycle actions use Run offers through GRIP. SDK `run`, `cancel`, `resubmit`,
+`resolve` and `close` accept either the returned Run URI or its opaque Run ID.
+GRIP `describe` and `invoke` take the full URI; keep returned identities intact.
 
-A GRIP `run-package`/task action's `idempotency_key` is **not** the
-`request_id` of `client.submit`. For a Run returned by GRIP, omit `request_id`
-when cancelling, or invoke the Run's discovered GRIP `cancel` offer with its
-declared input. Passing a GRIP idempotency key as `request_id` can return
-`run_not_found` even though the Run exists; do not diagnose that as a race.
-`client.run(run_id)` and `client.cancel(run_id)` take the opaque Run ID
-(the final path component of the returned Run URI); GRIP `describe`/`invoke`
-take the full URI. Preserve both forms in reports, without inventing IDs.
+Repair requires `awaiting_decision` with `outcome.decision=repair`. Invoke
+`resubmit` with a complete replacement `ClosureContract`, a new business
+`idempotency_key`, and current `closure_version` as `base_closure_version`:
 
-Use only the documented public Observer data-plane and submission paths; do
-not call internal control-plane or worker endpoints.
+```python
+repaired = await client.resubmit(
+    queued["run"], request_id="repair-1",
+    base_closure_version=current["closure_version"], plan=replacement_plan,
+)
+```
+
+The Run URI stays fixed; the Plan URI and closure version change. Preserve goal,
+accepted success criteria, constraints and execution policy. A stale version
+returns `version_conflict`; repair cannot silently weaken acceptance criteria,
+expand effects or increase accepted execution budgets. Retry the exact same
+repair payload and business key after a lost reply.
+
+For `outcome.decision=attestation`, present the execution evidence and apply the
+user's `accept` decision with `await client.resolve(run_uri, "accept")`.
+`await client.resolve(run_uri, "abandon")` abandons a pending attestation or
+repair. An execution result awaiting attestation is not accepted success.
+
+Cancel on the user's request with `await client.cancel(run_uri, reason="user_cancel")`.
+Its optional `request_id` maps to `idempotency_key` and checks that a known
+submission belongs to this Run; it is not a new cancellation identifier.
+Omitting it works for complete-plan, `run-package` and activation-task Runs.
+`run-package` and activation task keys are scoped to those actions; do not pass
+them as a Driver submission key. Cleanup may continue after cancellation, so
+poll through `cleaning_up` and inspect `outcome.cleanup`.
+
+`await client.close(run_uri)` closes a completed, failed or cancelled Run.
+Repeated close is idempotent; it does not destroy external resources. Lifecycle
+offers remain discoverable for retries, with state conditions checked by Observer.
+
+Use public GRIP offers and the content/package authoring data plane. The old
+task REST submission, single-Run read and lifecycle routes have been removed.
+Internal control-plane and worker endpoints are not public task APIs.

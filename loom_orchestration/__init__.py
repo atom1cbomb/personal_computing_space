@@ -6,7 +6,7 @@ Observer data plane.
 """
 
 from .contracts import ClosureContract, ResourceRef, TaskClosure
-from .client import LoomClient
+from .client import LoomClient, PlanRejectedError
 from .dependencies import DependencyContext
 from .streams import WebSocketStream, StreamAborted
 from .bindings import AccessCredential
@@ -27,6 +27,7 @@ __all__ = [
     "DependencyContext", "WebSocketStream", "StreamAborted", "AccessCredential",
     "ClosureContract",
     "LoomClient",
+    "PlanRejectedError",
     "AuthProfileStore",
     "McueDefinition",
     "ServicePackage",

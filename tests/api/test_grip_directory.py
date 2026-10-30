@@ -137,7 +137,7 @@ async def test_type_filter_skips_unrelated_sources_and_description_hashes(direct
     payload = client._grip_request("INVOKE", client.names.root,
                                    action=client.names.action("list-resources"), input={"mcue": "grip/mcue-type"})
     result = await client._grip_exchange(client.base_url + "/.well-known/grip", payload)
-    assert len(result["resources"]) == 15
+    assert len(result["resources"]) == 17
 
 
 async def test_listing_and_target_descriptions_agree_and_support_registered_builtin_types(directory):
@@ -220,7 +220,11 @@ async def test_run_projection_reads_fresh_state_without_loading_history(director
     with queries(engine) as sql:
         result = await client.invoke(uri, client.names.action("read"), {})
         listed = await client.resources(mcue="execution/run")
-    assert result == {"state": "completed", "outcome": {"answer": 42}}
+    assert result["state"] == "completed"
+    assert result["outcome"] == {"answer": 42}
+    assert result["run_id"] == run.run_id
+    assert result["closure_version"] is result["snapshot_digest"] is result["execution_id"] is None
+    assert result["execution_epoch"] == run.execution_epoch
     assert [(r["uri"], r["metadata"]["state"]) for r in listed] == [(uri, "completed")]
     assert all("runs.events" not in s and "runs.draft" not in s for s in sql)
     with pytest.raises(GripError, match="not_found"):

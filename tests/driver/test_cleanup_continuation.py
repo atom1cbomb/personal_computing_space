@@ -14,6 +14,7 @@ from loom_v2.driver.worker import WorkerSession
 from loom_v2.observer.app import create_app
 from loom_v2.observer.cleanup import continuation, registrations
 from loom_v2.observer.repository import ObserverRepository
+from loom_v2.settings import Settings
 from loom_v2.slave.app import create_app as create_slave_app
 from loom_v2.testing.observer import seed_embedded_slaves
 from tests.api.test_dynamic_nodes import _register_slave
@@ -24,7 +25,9 @@ async def lifecycle_run(repo, *, max_nodes=4, register=True):
     seed_embedded_slaves(repo)
     if repo.sessions is not None:
         await _register_slave(repo, "slave-a", "slave-a-instance")
-    async with LoomClient("http://observer", transport=httpx.ASGITransport(app=create_app(repo))) as client:
+    settings = Settings(grip_token="cleanup-test", public_base_url="http://observer")
+    async with LoomClient("http://observer", token="cleanup-test", allow_insecure_grip=True,
+                          transport=httpx.ASGITransport(app=create_app(repo, settings=settings))) as client:
         contract = await client.upload_content({"schema_version": "io.v1"}, media_type="application/vnd.loom.io-contract+json")
         descriptor = await client.upload_content({"schema_version": "action.v1", "resource_id": "grip://loom.local/workspaces/workspace-default/actions/echo", "name": "echo"}, media_type="application/vnd.loom.action-descriptor+json")
         source = await client.upload_content("import json,sys; print(json.dumps(json.load(sys.stdin)))", media_type="text/x-python")
@@ -130,7 +133,9 @@ async def test_cleanup_deadline_reports_remaining_resource():
 async def test_public_cancel_by_run_id_starts_cleanup():
     repo = ObserverRepository()
     record, _, _ = await lifecycle_run(repo)
-    async with LoomClient("http://observer", transport=httpx.ASGITransport(app=create_app(repo))) as client:
+    settings = Settings(grip_token="cleanup-test", public_base_url="http://observer")
+    async with LoomClient("http://observer", token="cleanup-test", allow_insecure_grip=True,
+                          transport=httpx.ASGITransport(app=create_app(repo, settings=settings))) as client:
         cancelled = await client.cancel(record.run_id)
     assert cancelled["state"] == "cleaning_up"
 

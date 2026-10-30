@@ -19,7 +19,9 @@ def test_frontend_loads_runtime_agent_status():
     client = TestClient(create_app())
     response = client.get("/static/app.js")
     assert response.status_code == 200
-    assert "/api/v1/runtime" in response.text
+    assert "/.well-known/grip" in response.text
     assert "Execution Driver" in response.text
-    assert "/api/v1/run-submissions" in response.text
-    assert "/api/v1/runs/" in response.text
+    assert "submit-plan" in response.text
+    assert "include_history: true" in response.text
+    assert "localStorage" not in response.text
+    assert "/api/v1/run-submissions" not in response.text

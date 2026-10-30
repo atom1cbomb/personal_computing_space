@@ -1,5 +1,7 @@
 # Metadata 驱动的外部 Python 编排
 
+> 2026-10-30 接口更新：完整计划提交、查询和 Run 生命周期已统一为 GRIP Driver/Run actions；本文的任务 REST 路径为历史记录。现行契约见 [原生任务实施计划](../plans/2026-10-30-grip-native-tasks.md) 和 [GRIP 指南](../../grip-resource-usage.md)。
+
 > 资源接口历史说明（2026-10-19）：本文记录当时设计；其中资源发现、登记、激活、停用、认证启动和 promote 连带激活的接口已由 [GRIP 资源设计](../specs/2026-10-19-grip-resource-invocation-design.md) 取代。当前使用方法见 [GRIP 指南](../../grip-resource-usage.md)。其余执行与持久化设计按各自适用范围保留。
 
 **日期：** 2026-10-10\

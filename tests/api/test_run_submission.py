@@ -1,91 +1,65 @@
 import asyncio
-import hashlib
 
 from fastapi.testclient import TestClient
 
-from loom_v2.content_store import canonical_json_bytes
-from loom_v2.driver.service import DriverService
 from loom_v2.observer.repository import ObserverRepository
-from loom_v2.slave.executor import ExecutionResult
 from loom_v2.testing.observer import create_embedded_app
-from loom_v2.contracts.types import ResourceRef
+from tests.support.grip_client import run_action, submit_plan, submission
 
 
-def _plan(closure_id: str = "submission-closure", goal: str = "run submitted plan") -> dict:
+def _plan(closure_id="submission-closure", goal="run submitted plan"):
     return {"closure_id": closure_id, "goal": goal, "body": {"closure_id": closure_id}}
 
 
 def test_external_submission_is_idempotent_and_conflicts_on_changed_payload():
     client = TestClient(create_embedded_app(ObserverRepository()))
-    body = {
-        "request_id": "external-request-1",
-        "conversation_ref": "external-conversation",
-        "plan": _plan(),
-    }
-    first = client.post("/api/v1/run-submissions", json=body)
-    second = client.post("/api/v1/run-submissions", json=body)
-    assert first.status_code == second.status_code == 202
-    assert second.json()["run_id"] == first.json()["run_id"]
-
-    changed = {**body, "plan": _plan(goal="a different plan")}
-    conflict = client.post("/api/v1/run-submissions", json=changed)
-    assert conflict.status_code == 409
-    assert conflict.json()["detail"] == "request_id_reused"
+    body = {"idempotency_key": "external-request-1", "conversation_ref": "external-conversation", "plan": _plan()}
+    first = submit_plan(client, **body)
+    second = submit_plan(client, **body)
+    assert first["kind"] == second["kind"] == "reply"
+    assert second["body"] == first["body"]
+    conflict = submit_plan(client, **{**body, "plan": _plan(goal="a different goal")})
+    assert conflict["error_code"] == "request_id_reused"
 
 
-def test_cancelled_submission_is_visible_through_submission_query():
-    client = TestClient(create_embedded_app(ObserverRepository()))
-    submitted = client.post(
-        "/api/v1/run-submissions",
-        json={"request_id": "external-cancel-1", "conversation_ref": "cancel-conversation", "plan": _plan("cancel-closure")},
-    ).json()
-    cancelled = client.post(
-        f"/api/v1/runs/{submitted['run_id']}/cancel",
-        json={"request_id": "external-cancel-1", "reason": "user_cancel"},
-    )
-    assert cancelled.status_code == 200
-    assert cancelled.json()["state"] == "cancelled"
-    queried = client.get("/api/v1/run-submissions/external-cancel-1")
-    assert queried.status_code == 200
-    assert queried.json()["state"] == "cancelled"
+def test_external_submission_can_be_cancelled_before_driver_claims_it():
+    repo = ObserverRepository()
+    client = TestClient(create_embedded_app(repo))
+    assert submit_plan(client, idempotency_key="external-cancel-1", plan=_plan())["kind"] == "reply"
+    submitted = submission(client, "external-cancel-1")
+    cancelled = run_action(client, submitted["run_id"], "cancel", {"idempotency_key": "external-cancel-1", "reason": "user_cancel"})
+    assert cancelled["state"] == "cancelled"
+    queried = submission(client, "external-cancel-1")
+    assert queried["execution_request_state"] == "settled"
+    assert queried["state"] == "cancelled"
 
 
-def test_claim_and_driver_settlement_are_projected_to_submission_query():
-    repository = ObserverRepository()
-    client = TestClient(create_embedded_app(repository))
-    submitted = client.post(
-        "/api/v1/run-submissions",
-        json={"request_id": "external-settle-1", "conversation_ref": "settle-conversation", "plan": _plan("settle-closure")},
-    ).json()
+def test_execution_request_settles_when_run_completes():
+    repo = ObserverRepository()
+    client = TestClient(create_embedded_app(repo))
+    assert submit_plan(client, idempotency_key="external-settle-1", plan=_plan())["kind"] == "reply"
+    submitted = submission(client, "external-settle-1")
 
-    claim = asyncio.run(
-        repository.claim_next_execution(
-            workspace_id="workspace-default",
-            driver_id="test-driver",
-            driver_instance_id="test-instance",
-            driver_epoch=0,
-        )
-    )
-    assert claim is not None
-    assert claim["request"]["request_id"] == "external-settle-1"
+    async def execute():
+        claim = await repo.claim_next_execution(workspace_id="workspace-default", driver_id="driver-a", driver_instance_id="instance-a", driver_epoch=1)
+        assert claim["run"]["run_id"] == submitted["run_id"]
+        run = await repo.get_run(submitted["run_id"])
+        return await repo.record_result(run.run_id, {
+            "attempt_id": run.attempts[-1]["attempt_id"], "execution_id": run.execution_id,
+            "execution_epoch": run.execution_epoch, "terminal_state": "completed", "value": {"ok": True},
+        })
 
-    async def execute(_action: str, payload: dict) -> ExecutionResult:
-        value = {"ok": True}
-        digest = hashlib.sha256(canonical_json_bytes(value)).hexdigest()
-        return ExecutionResult(
-            resource_ref=ResourceRef(resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}", identity_criterion="content_digest"),
-            value=value,
-            replay_safety="Idempotent",
-            terminal_state="completed",
-        )
-
-    driver = DriverService(repository, provider=None, executor=execute)
-    completed, _ = asyncio.run(driver._dispatch_execution(submitted["run_id"], ""))
-    assert completed.state == "completed"
-
-    queried = client.get("/api/v1/run-submissions/external-settle-1")
-    assert queried.status_code == 200
-    payload = queried.json()
+    assert asyncio.run(execute()).state == "completed"
+    payload = submission(client, "external-settle-1")
     assert payload["execution_request_state"] == "settled"
     assert payload["state"] == "completed"
     assert payload["outcome"]["value"] == {"ok": True}
+
+
+def test_replaced_task_rest_routes_are_removed():
+    client = TestClient(create_embedded_app())
+    assert client.post("/api/v1/run-submissions", json={}).status_code == 404
+    assert client.get("/api/v1/run-submissions/key").status_code == 404
+    assert client.get("/api/v1/runs/example").status_code == 404
+    for action in ("cancel", "resubmit", "resolve", "close"):
+        assert client.post(f"/api/v1/runs/example/{action}", json={}).status_code == 404

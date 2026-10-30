@@ -1,0 +1,10 @@
+{
+  "mcue": "execution/plan",
+  "version": "v1",
+  "description": "Immutable ClosureContract associated with a Run and closure version",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

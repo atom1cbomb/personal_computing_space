@@ -1,0 +1,10 @@
+{
+  "mcue": "computing/driver",
+  "version": "v1",
+  "description": "Single logical service executing immutable Loom plans",
+  "attributes_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

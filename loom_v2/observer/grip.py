@@ -36,6 +36,8 @@ from loom_v2.observer.activation import execute_activation_targets, execute_auth
 from loom_v2.observer.authentication import authentication_view
 from loom_v2.digest import digest_json
 from loom_v2.service_access import interaction
+from . import native_tasks
+from .native_tasks import NativeTasks, PlanReadOutput, RunReadInput, RunReadOutput
 
 log = logging.getLogger(__name__)
 
@@ -185,6 +187,8 @@ INPUTS = {"read": Empty, "cancel": Empty, "how-to-use": Empty, "list-resources":
           "register-resource": RegisterInput, "run-package": RunInput, "check-package": CheckPackageInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
 OUTPUTS = {"how-to-use": HowToUseOutput, "check-package": CheckPackageOutput, "configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
            "update-attributes": AttributesOutput}
+INPUTS.update(native_tasks.INPUTS)
+OUTPUTS.update(native_tasks.OUTPUTS)
 OBJECT = {"type": "object"}
 RUN_RESULT = {"type": "object", "properties": {"run": {"type": "string"}},
              "required": ["run"], "additionalProperties": False}
@@ -220,6 +224,9 @@ class GripService:
         self._builtin["how-to-use"]["action"]["description"] = (
             "Explain how to use this resource, its public attributes, relationships, and actions."
         )
+        for name, description in native_tasks.DESCRIPTIONS.items():
+            self._builtin[name]["action"]["description"] = description
+        self.native = NativeTasks(self)
         self._static = self._static_entries()
         self._call_schema = CallInput.model_json_schema()
         self._package_actions: dict[tuple[str, str], PackageActions] = {}
@@ -279,6 +286,9 @@ class GripService:
                 else RUN_RESULT if name == "run-package" else OBJECT
             )
         entries[n.schema("run-output")] = self._schema_entry(n.schema("run-output"), RUN_RESULT)
+        for name, model in (("closure-contract", ClosureContract), ("read-run-input", RunReadInput),
+                            ("read-run-output", RunReadOutput), ("read-plan-output", PlanReadOutput)):
+            entries[n.schema(name)] = self._schema_entry(n.schema(name), model.model_json_schema())
         return entries
 
     async def _actions(self, package) -> PackageActions:
@@ -333,6 +343,7 @@ class GripService:
 
     def _target_family(self, target):
         for prefix, family in (("mcue-types", "grip/mcue-type"), ("slaves", "computing/slave"),
+                               ("drivers", "computing/driver"), ("plans", "execution/plan"),
                                ("packages", "capability/package"), ("activations", "capability/activation"),
                                ("schemas", "grip/schema"), ("resources", "managed"), ("runs", "execution/run")):
             if target.startswith(self.names.root + "/" + prefix + "/"):
@@ -475,11 +486,30 @@ class GripService:
                 "managed_by": resource.managed_by_ref.resource_id if resource.managed_by_ref else None,
                 **(self.app.state.service_access.metadata(*candidates[0][:2]) if len(candidates) == 1 else {}),
             }, [builtin["update-attributes"], *offers], candidates[0][:2] if len(candidates) == 1 else None)
+        plan_summaries = None
         if source("execution/run"):
             run_id = unquote(target[len(n.root + "/runs/"):]) if target is not None else None
+            plan_summaries = await self.repo.list_plan_summaries(self.settings.workspace_id, run_id=run_id)
+            plan_versions = {(plan.run_id, plan.closure_version) for plan in plan_summaries}
             for record in await self.repo.list_run_summaries(self.settings.workspace_id, run_id=run_id):
-                add(n.name("runs", record.run_id), "execution/run", {"state": record.state},
-                    [builtin["read"], builtin["cancel"]], record)
+                add(n.name("runs", record.run_id), "execution/run",
+                    self.native.run_metadata(record, has_plan=(record.run_id, record.closure_version) in plan_versions),
+                    [self.offer(n.action("read"), n.schema("read-run-input"), n.schema("read-run-output")),
+                     *[builtin[name] for name in ("cancel", "resubmit", "resolve", "close")]], record)
+        if source("computing/driver") and wanted(self.native.driver_uri, "computing/driver"):
+            add(self.native.driver_uri, "computing/driver", await self.native.driver_metadata(),
+                [builtin["submit-plan"], builtin["get-submission"]])
+        if source("execution/plan"):
+            parts = target[len(n.root + "/plans/"):].split("/") if target is not None else None
+            if parts is None or len(parts) == 2:
+                plans = plan_summaries if plan_summaries is not None else await self.repo.list_plan_summaries(self.settings.workspace_id,
+                    run_id=unquote(parts[0]) if parts else None,
+                    closure_version=unquote(parts[1]) if parts else None)
+                for plan in plans:
+                    add(self.native.plan_uri(plan.run_id, plan.closure_version), "execution/plan",
+                        {"run": n.name("runs", plan.run_id), "closure_version": plan.closure_version,
+                         "snapshot_digest": plan.snapshot_digest, "schema": n.schema("closure-contract")},
+                        [self.offer(n.action("read"), n.schema("read-input"), n.schema("read-plan-output"))], plan)
         entries.update({uri: entry for uri, entry in self._static.items() if wanted(uri, entry.description["resource"]["mcue"])})
         return entries
 
@@ -627,6 +657,8 @@ class GripService:
                  metadata.get("package_id") or mcue)
         summary = f"{mcue} resource: {label}"
         lines = [f"Use `{target}` as a `{mcue}` resource."]
+        if mcue in native_tasks.USAGE:
+            lines.append(native_tasks.USAGE[mcue])
         lines.append("Read current attributes and dependency references with DESCRIBE or the workspace list-resources action.")
         if dependencies_help:
             lines.append("Dependency fields (fill them according to the declared schema and creation mappings):")
@@ -714,6 +746,23 @@ class GripService:
             return {"resources": [e.description["resource"] for e in (await self.catalog(mcue=data.get("mcue"))).values()]}
         if request.action == n.action("how-to-use"):
             return await self._how_to_use(request.target, entry)
+        family = entry.description["resource"]["mcue"]
+        if family == "computing/driver" and request.target == self.native.driver_uri:
+            for action in ("submit-plan", "get-submission"):
+                if request.action == n.action(action):
+                    return await self.native.invoke(action, data)
+        if isinstance(entry.value, RunSummary):
+            if request.action == n.action("read"):
+                payload = RunReadInput.model_validate(data)
+                return await self.native.read_run(entry.value.run_id, include_history=payload.include_history)
+            for action in ("cancel", "resubmit", "resolve", "close"):
+                if request.action == n.action(action):
+                    return await self.native.invoke(action, data, run_id=entry.value.run_id)
+        if family == "execution/plan" and request.action == n.action("read"):
+            plan = entry.value
+            return {"run": n.name("runs", plan.run_id), "closure_version": plan.closure_version,
+                    "snapshot_digest": plan.snapshot_digest,
+                    "plan": await self.repo.read_frozen_plan(self.settings.workspace_id, plan.run_id, plan.closure_version)}
         if request.action == n.action("publish-mcue-type"):
             target = await self.repo.publish_mcue_type(self.settings.workspace_id, data)
             return {"resource": target}
@@ -750,14 +799,9 @@ class GripService:
             })
             return {"resource": resource.resource_ref.resource_id, "attributes_revision": resource.attributes_revision}
         if request.action == n.action("read"):
-            if isinstance(entry.value, RunSummary):
-                return await self.repo.read_run_result(self.settings.workspace_id, entry.value.run_id)
             if isinstance(entry.value, CapabilityPackageVersion):
                 return {**entry.value.model_dump(mode="json"), "resource": entry.value.version_ref}
             return entry.value
-        if request.action == n.action("cancel"):
-            record = await self.repo.cancel_run(entry.value.run_id, "grip_cancel")
-            return {"state": record.state}
         if request.action == n.action("run-package"):
             payload = RunInput.model_validate(data)
             package = await self._package(payload.package)
@@ -922,7 +966,7 @@ class GripService:
             code = "invalid_message"
         except ValueError as exc:
             public_code = str(exc).split(":", 1)[0]
-            code = public_code if public_code in {
+            code = public_code if public_code in native_tasks.PUBLIC_ERRORS | {
                 "attributes_revision_conflict", "mcue_version_conflict", "resource_mcue_conflict",
                 "resource_attributes_require_update", "mcue_attributes_invalid",
                 "resource_mcue_migration_required",
@@ -935,7 +979,8 @@ class GripService:
         except (KeyError, FileNotFoundError):
             code = "not_found"
         except DomainError as exc:
-            code = "unsupported_binding" if exc.envelope.code == "activation_preflight_failed" else "invalid_input"
+            code = (exc.envelope.code if exc.envelope.code in native_tasks.PUBLIC_ERRORS else
+                    "unsupported_binding" if exc.envelope.code == "activation_preflight_failed" else "invalid_input")
         except Exception:
             # Never include credentials, runtime details or exception payloads.
             log.error("GRIP action failed (request_id=%s)", request_id)

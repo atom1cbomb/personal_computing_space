@@ -1,5 +1,7 @@
 # 外部 Agent 规划与 Driver 独立执行（历史版本）
 
+> 2026-10-30 接口更新：完整计划提交、查询和 Run 生命周期已统一为 GRIP Driver/Run actions；本文的任务 REST 路径为历史记录。现行契约见 [原生任务实施计划](../plans/2026-10-30-grip-native-tasks.md) 和 [GRIP 指南](../../grip-resource-usage.md)。
+
 **日期：** 2026-10-09  
 **状态：** 已被 2026-10-11 spec 完全取代，仅保留历史背景
 **适用规范：** [Spec 设计原则](../spec-design-guidance.md)
