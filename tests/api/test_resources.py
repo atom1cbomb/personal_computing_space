@@ -32,21 +32,25 @@ async def _interface_package(repo: ObserverRepository, package_id: str = "vm-ssh
 
 
 @pytest.mark.asyncio
-async def test_interface_package_resource_registration_and_no_execution():
+async def test_resource_registration_is_independent_of_published_interface_packages():
     from tests.support.grip_client import invoke, resources, exchange
     repo = ObserverRepository()
     manifest = await _interface_package(repo)
     with TestClient(create_embedded_app(repo)) as client:
-        package = client.post("/api/v1/capability-packages", json=manifest).json()
         n = client.app.state.grip.names
-        uri = package["resource"]
-        value = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/suanli/vm/i-123", "mcue_ref": n.mcue("computing/vm"), "package": uri, "state": "running"}
+        value = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/suanli/vm/i-123", "mcue_ref": n.mcue("computing/vm"), "state": "running"}
         created = invoke(client, n.root, n.action("register-resource"), value)
         assert invoke(client, n.root, n.action("register-resource"), value) == created
         description = exchange(client, created["resource"])["body"]
-        assert description["resource"]["metadata"]["package"] == uri
+        assert "package" not in description["resource"]["metadata"]
+        assert description["resource"]["metadata"]["activations"] == []
         assert [o["action"]["uri"] for o in description["offers"]] == [n.action("update-attributes"), n.action("how-to-use")]
         assert resources(client, "computing/vm")[0]["uri"] == created["resource"]
+        uri = client.post("/api/v1/capability-packages", json=manifest).json()["resource"]
+        assert exchange(client, created["resource"])["body"] == description
+        schema = invoke(client, n.schema("register-resource-input"), n.action("read"))
+        assert "package" not in schema["properties"]
+        assert exchange(client, n.root, action=n.action("register-resource"), input={**value, "package": uri})["error_code"] == "invalid_input"
         result = exchange(client, n.name("slaves", "slave-a"), action=n.action("activate-package"), input={"package": uri, "idempotency_key": "interface"})
         assert result["error_code"] == "invalid_input"
 
@@ -95,23 +99,23 @@ async def test_package_how_to_use_includes_published_documentation_and_exports()
 
 
 @pytest.mark.asyncio
-async def test_resource_manager_and_immutable_binding_through_grip():
+async def test_resource_manager_binding_remains_immutable_without_a_package():
     from tests.support.grip_client import invoke, exchange
     repo = ObserverRepository()
-    manifest = await _interface_package(repo)
-    other_manifest = await _interface_package(repo, "other")
     with TestClient(create_embedded_app(repo)) as client:
-        package = client.post("/api/v1/capability-packages", json=manifest).json()["resource"]
-        other = client.post("/api/v1/capability-packages", json=other_manifest).json()["resource"]
         n = client.app.state.grip.names
-        child = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/child", "mcue_ref": n.mcue("computing/vm"), "package": package, "managed_by": n.name("resources", "manager")}
+        child = {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/child", "mcue_ref": n.mcue("computing/vm"), "managed_by": n.name("resources", "manager")}
         assert exchange(client, n.root, action=n.action("register-resource"), input=child)["error_code"] == "not_found"
-        manager = invoke(client, n.root, n.action("register-resource"), {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/manager", "mcue_ref": n.mcue("computing/vm"), "package": package})
+        manager = invoke(client, n.root, n.action("register-resource"), {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/manager", "mcue_ref": n.mcue("computing/vm")})
         assert manager["resource"] == child["managed_by"]
+        other = invoke(client, n.root, n.action("register-resource"), {
+            "resource_id": n.name("resources", "other-manager"), "mcue_ref": n.mcue("computing/vm"),
+        })["resource"]
         created = invoke(client, n.root, n.action("register-resource"), child)
+        assert invoke(client, n.root, n.action("register-resource"), child) == created
         invoke(client, n.root, n.action("register-resource"), {**child, "state": "ready"})
         assert exchange(client, created["resource"])["body"]["resource"]["metadata"]["state"] == "ready"
-        assert exchange(client, n.root, action=n.action("register-resource"), input={**child, "package": other})["error_code"] == "invalid_input"
+        assert exchange(client, n.root, action=n.action("register-resource"), input={**child, "managed_by": other})["error_code"] == "invalid_input"
 
 
 def test_interface_package_model_has_no_runtime_body() -> None:

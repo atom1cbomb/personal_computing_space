@@ -102,7 +102,6 @@ async def test_explicit_backfill_is_atomic_and_preserves_identity_and_bindings(t
     other = repo.names.name("resources", "vm", "another")
     original = {
         "resource_ref": {"resource_id": vm}, "state": "running",
-        "package_ref": {"resource_id": repo.names.name("packages", "existing", "v1"), "version_or_digest": "a" * 64},
         "managed_by_ref": None,
     }
     async with repo.sessions() as session, session.begin():
@@ -117,7 +116,7 @@ async def test_explicit_backfill_is_atomic_and_preserves_identity_and_bindings(t
     assert await backfill_resource_mcue(repo, scope, mapping) == 2
     resource = await repo.get_resource(scope, vm)
     assert resource.resource_ref.resource_id == vm and resource.state == "running"
-    assert resource.package_ref.model_dump(mode="json", exclude_defaults=True) == original["package_ref"]
+    assert "package_ref" not in resource.model_dump()
     await repo.update_resource_attributes(scope, vm, expected_attributes_revision=1, patch={"display_name": "Edited"})
     assert await backfill_resource_mcue(repo, scope, mapping) == 0
     assert (await repo.get_resource(scope, vm)).attributes == {"display_name": "Edited"}

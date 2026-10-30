@@ -39,7 +39,7 @@ async def connect(client: LoomClient, *, package: str, slave: str, name: str,
     if existing is None:
         resource = await client.invoke(client.names.root, client.names.action("register-resource"), {
             "resource_id": requested_uri, "mcue_ref": mcue["resource"], "attributes": attributes,
-            "package": package, "state": "registered",
+            "state": "registered",
         })
         target = resource["resource"]
     else:

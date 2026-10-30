@@ -518,7 +518,6 @@ class ManagedResource(ContractModel):
     mcue_ref: URI
     attributes: dict[str, Any] = Field(default_factory=dict)
     attributes_revision: int = Field(default=1, ge=1)
-    package_ref: ResourceRef | None = None
     managed_by_ref: ResourceRef | None = None
     state: str = "unknown"
 

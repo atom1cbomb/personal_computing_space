@@ -77,7 +77,7 @@ class WorkspaceCapabilityPackageRow(Base):
 
 
 class WorkspaceResourceRow(Base):
-    """Workspace-owned resource handle and its usage package binding."""
+    """Workspace-owned resource identity, attributes, and lifecycle state."""
 
     __tablename__ = "workspace_resources"
 

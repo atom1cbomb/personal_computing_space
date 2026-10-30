@@ -9,8 +9,8 @@ Use this procedure whenever a task mentions a concrete service or resource.
 
 1. Call the public inventory/list action and enumerate the relevant resource and
    activation records. Keep each returned URI as an opaque value. For each
-   record retain the system metadata (`package`, `managed_by`, `state`,
-   `activations`, revision) and public MCUE attributes. Inventory is an index,
+   domain resource retain `managed_by`, `state`, computed `activations`, revision
+   and public MCUE attributes; retain `package` and `target` from each activation. Inventory is an index,
    not a behavior contract.
    Retain `metadata.dependencies` and read each entry's declared meaning; an
    absent declaration is unknown. DESCRIBE supplies the same runtime references.

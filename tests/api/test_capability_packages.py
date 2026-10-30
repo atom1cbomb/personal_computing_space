@@ -86,7 +86,7 @@ async def test_uploaded_workspace_package_can_be_activated_without_run(resource_
         target_fields = {}
         if resource_bound:
             resource = invoke(client, n.root, n.action("register-resource"), {
-                "resource_id": "grip://loom.local/workspaces/workspace-default/resources/test/vm", "package": package, "state": "running",
+                "resource_id": "grip://loom.local/workspaces/workspace-default/resources/test/vm", "state": "running",
                 "mcue_ref": n.mcue("computing/vm"),
             })
             target_fields = {"target": resource["resource"], "instance_name": "vm-test"}

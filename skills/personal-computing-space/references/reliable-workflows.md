@@ -16,8 +16,8 @@ history. DESCRIBE remains authoritative for each selected action.
 
 When a task depends on ownership, provenance, or a relationship between
 resources, enumerate the relevant MCUE resources and inspect their returned
-system metadata (`package`, `managed_by`, `state`, and `activations`) together
-with the public attributes and the selected capability package's descriptors.
+system metadata (`managed_by`, `state`, and computed `activations`), the selected
+activation's `package` and `target`, together with the public attributes and the selected capability package's descriptors.
 Use relationship and identity fields only when the deployed MCUE or capability
 package contract declares their meaning, then match those identities exactly
 against the corresponding public action result. Keep distinct resource URIs

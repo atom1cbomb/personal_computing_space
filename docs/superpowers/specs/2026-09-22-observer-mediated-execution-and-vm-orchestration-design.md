@@ -1,5 +1,7 @@
 # Observer 中继执行与 Suanli VM 编排
 
+> 资源包关联更新（2026-10-30，Issue #4）：本文保留历史设计语境。领域资源的 `package_ref` / `metadata.package` 已移除，登记不再接受包引用；访问包由 activation 确定，`resource.activations` 和 offers 从真实绑定派生。本文涉及资源级包字段、换包冲突及登记示例的旧约定已被替代，当前接口见 [GRIP 指南](../../grip-resource-usage.md#领域资源登记和服务包发布)，数据归档见 [008 迁移说明](../../../migrations/alembic/README.md#008-resource-access-bindings)。
+
 状态：已实现基础链路；Suanli VM 的真实云端 E2E 仍需凭据和可访问环境。遵循
 [spec 设计规范](../spec-design-guidance.md)。
 

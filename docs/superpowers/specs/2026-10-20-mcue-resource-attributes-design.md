@@ -1,5 +1,7 @@
 # MCUE 资源类型与扩展属性
 
+> 资源包关联更新（2026-10-30，Issue #4）：本文保留历史设计语境。领域资源的 `package_ref` / `metadata.package` 已移除，登记不再接受包引用；访问包由 activation 确定，`resource.activations` 和 offers 从真实绑定派生。本文涉及资源级包字段、换包冲突及登记示例的旧约定已被替代，当前接口见 [GRIP 指南](../../grip-resource-usage.md#领域资源登记和服务包发布)，数据归档见 [008 迁移说明](../../../migrations/alembic/README.md#008-resource-access-bindings)。
+
 日期：2026-10-20。状态：已实现，并完成本地验证及 9.0.16.66 生产部署验证。
 生产记录见 [MCUE 生产升级报告](../reports/2026-10-20-mcue-production-upgrade.md)。
 遵循 [spec 设计原则](../spec-design-guidance.md)，协议依据 `/root/computility_named_resource/grip协议整理v2.md`。

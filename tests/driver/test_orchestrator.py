@@ -128,7 +128,7 @@ async def test_resource_mcue_and_attributes_cross_real_sandbox_protocol(monkeypa
         assert arguments == {
             "step_id": "vm", "mcue_ref": "grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1",
             "identity": "test", "attributes": {"display_name": "Development"},
-            "package_ref": None, "managed_by_ref": None,
+            "managed_by_ref": None,
         }
         return target
 

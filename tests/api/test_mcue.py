@@ -75,7 +75,7 @@ async def test_attributes_patch_validation_revision_and_stable_identity(mcue_cli
         "display_name": "Build", "labels": {"project": "loom", "environment": "test"},
         "cpu_cores": 4, "disks": [{"name": "system", "size_bytes": 1024}],
     }
-    assert metadata["package"] is None
+    assert "package" not in metadata
     assert current["resource"]["uri"] == target
     assert current["revision"] != before["revision"]
     assert await update(client, target, {}, revision=2) == result

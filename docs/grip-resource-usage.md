@@ -240,7 +240,7 @@ description = await client.describe(package_uri)
 包列表、详情和 GRIP read 也返回这个字段；SDK 与脚本不再自行拼接发布包的名称。
 `ServicePackage.publish` 直接返回该 URI，可作为 `activate-package` 的 `package` 输入。
 
-先从 `grip/mcue-type` 目录取得类型定义，再对 workspace 调用 `register-resource`。包引用可选：
+先从 `grip/mcue-type` 目录取得类型定义，再对 workspace 调用 `register-resource`。领域资源登记不接受包引用：
 
 ```python
 types = await client.resources(mcue="grip/mcue-type")
@@ -249,15 +249,18 @@ vm_type = next(r for r in types if r["metadata"]["mcue"] == "computing/vm"
 registered = await client.invoke(client.names.root, client.names.action("register-resource"), {
     "resource_id": client.names.name("resources", "vm", "development"),
     "mcue_ref": vm_type["uri"],
-    "package": ssh_package_uri,
     "state": "running",
     "attributes": {"display_name": "开发测试机", "labels": {"project": "loom"}},
 })
 vm_resource_uri = registered["resource"]
 ```
 
-可选 `managed_by` 指向当前工作空间另一已登记资源的 GRIP URI。重复相同绑定登记幂等，
-改变包或管理关系会拒绝。登记不创建 VM、不激活包；随后以该 URI 作为 activate-package 的 target。
+可选 `managed_by` 指向当前工作空间另一已登记资源的 GRIP URI。重复登记幂等，
+改变管理关系会拒绝。登记不创建 VM、不激活包；随后以该 URI 作为 activate-package 的 target，
+在激活时选择包版本。`activation.target_resource_ref` 是实例绑定的存储依据；
+`resource.activations` 是读取时计算的就绪实例列表，待认证或停止的实例仍可在 activation 目录查询。
+资源 offers 由就绪实例和平台动作生成；多个就绪实例时应显式选择实例，不能按顺序选择。
+同一资源可以绑定不同包的实例，升级访问包不需要改写资源登记记录。
 完整编排内的 `ctx.register_resource` 等原语属于持久执行内部协议。
 
 ## MCUE 与动态描述属性
@@ -270,7 +273,8 @@ MCUE（Multipurpose Computing Utility Extension）使用 `category/subtype` 描�
 对 MCUE 定义调用 read 返回 `mcue`、`version`、`description` 和 `attributes_schema`。
 computing/vm/v1 定义 `display_name`、`description`、`labels`、`cpu_cores`、`memory_bytes`、`os`、`disks`；
 这些字段全部可选。公开值统一位于 `metadata.attributes`。
-`package`、`managed_by`、`state` 和 `activations` 是系统 metadata。
+领域资源的 `managed_by`、`state` 和派生的 `activations` 是系统 metadata。
+`package` 仅在 activation 等有明确包身份的记录中提供，领域资源不保存该字段。
 
 ```python
 description = await client.describe(vm_resource_uri)

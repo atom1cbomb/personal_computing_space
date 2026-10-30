@@ -54,7 +54,6 @@ class RegisterInput(Model):
     resource_id: URI
     mcue_ref: URI
     attributes: dict[str, Any] = Field(default_factory=dict)
-    package: URI | None = None
     managed_by: URI | None = None
     state: str = "unknown"
 
@@ -469,7 +468,6 @@ class GripService:
             for activation in bindings:
                 bound.setdefault(activation.target_resource_ref.resource_id, []).append((package, activation, self.app.state.service_access.project(package, activation, exports)))
 
-        package_names = {p.version_ref: self.package_uri(p) for p, _ in states}
         for resource in resources:
             uri = resource.resource_ref.resource_id
             candidates = bound.get(uri, [])
@@ -481,7 +479,6 @@ class GripService:
                 "attributes_revision": resource.attributes_revision,
                 "dependencies": resource_dependencies(definitions[resource.mcue_ref]["attributes_schema"], resource.attributes),
                 "state": resource.state,
-                "package": package_names.get(resource.package_ref.resource_id) if resource.package_ref else None,
                 "activations": [self.activation_uri(p, a) for p, a, _ in candidates],
                 "managed_by": resource.managed_by_ref.resource_id if resource.managed_by_ref else None,
                 **(self.app.state.service_access.metadata(*candidates[0][:2]) if len(candidates) == 1 else {}),
@@ -774,13 +771,6 @@ class GripService:
             return {"resource": request.target, "attributes_revision": resource.attributes_revision}
         if request.action == n.action("register-resource"):
             payload = RegisterInput.model_validate(data)
-            package_ref = None
-            if payload.package is not None:
-                package_entry = await self.resolve(payload.package)
-                if not isinstance(package_entry.value, CapabilityPackageVersion):
-                    raise GripError("not_found")
-                package = package_entry.value
-                package_ref = ResourceRef(resource_id=package.version_ref, version_or_digest=package.package_digest)
             manager = None
             if payload.managed_by:
                 for resource in await self.repo.list_resources(self.settings.workspace_id):
@@ -792,7 +782,6 @@ class GripService:
             resource = await self.repo.register_resource(self.settings.workspace_id, {
                 "resource_ref": ResourceRef(resource_id=payload.resource_id),
                 "mcue_ref": payload.mcue_ref,
-                **({"package_ref": package_ref} if "package" in payload.model_fields_set else {}),
                 **({"managed_by_ref": manager} if "managed_by" in payload.model_fields_set else {}),
                 **({"state": payload.state} if "state" in payload.model_fields_set else {}),
                 **({"attributes": payload.attributes} if "attributes" in payload.model_fields_set else {}),

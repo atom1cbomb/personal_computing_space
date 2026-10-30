@@ -1,5 +1,7 @@
 # 资源 how-to-use Action 设计
 
+> 资源包关联更新（2026-10-30，Issue #4）：本文保留历史设计语境。领域资源的 `package_ref` / `metadata.package` 已移除，登记不再接受包引用；访问包由 activation 确定，`resource.activations` 和 offers 从真实绑定派生。本文涉及资源级包字段、换包冲突及登记示例的旧约定已被替代，当前接口见 [GRIP 指南](../../grip-resource-usage.md#领域资源登记和服务包发布)，数据归档见 [008 迁移说明](../../../migrations/alembic/README.md#008-resource-access-bindings)。
+
 ## 问题
 
 GRIP DESCRIBE 能列出资源的 `offers`、`managed_by`、`package` 和
