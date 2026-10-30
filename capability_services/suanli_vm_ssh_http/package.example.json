@@ -25,7 +25,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/exec",
-        "version_or_digest": "6d362495734aa29dc05123dfe35d734851297b33184c849290bf7a4463f1a024",
+        "version_or_digest": "91454ad83bb259cb5c10ab5f1889bf25a4481603b4b29b3b5a1c78e1b87b62fd",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -44,7 +44,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/files-upload",
-        "version_or_digest": "c9648a40965d13f7844791fe96bffea6a15096b2a76144ecd5b6a7d506376f89",
+        "version_or_digest": "5b33499b8a37da4734186eecd346d74429416a94e5e90990cb6cf1fdca5bac18",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -64,7 +64,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/files-download",
-        "version_or_digest": "fc8ae3600f626b66a2d01247568aeb25ddf6efe24c1f86915cd250994ca6871c",
+        "version_or_digest": "a3305b07d9c0e9a5b9e5f2121d63a8f79b37cc787b4fb2de99d9a7ded79aa107",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {

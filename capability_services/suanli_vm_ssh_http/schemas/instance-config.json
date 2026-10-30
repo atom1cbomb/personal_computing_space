@@ -1,4 +1,5 @@
 {
+  "description": "SSH activation connection settings selected by the operator and shared by exec and file transfers.",
   "type": "object",
   "required": ["host", "port", "user"],
   "properties": {

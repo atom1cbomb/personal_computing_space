@@ -24,7 +24,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/exec",
-        "version_or_digest": "e39b5790b111c040cc7444bd905e2ee54cc573cff0b11d76928c3b19d6a20103",
+        "version_or_digest": "3c93fad858454dead7a77aff21dbe143eb8e038a64948aa25349edd913c3c7e6",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -43,7 +43,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/files-upload",
-        "version_or_digest": "112d9f4b79b19b9c37df799cbc51e0f97e969004a32ab3d643e92b4f35af80ea",
+        "version_or_digest": "a6be899f5551666f0a18236aa592ade4797ffb100b672f4b71c45de003c54308",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -63,7 +63,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/files-download",
-        "version_or_digest": "8a651bf0564973a8685bd601d7039c050bdc75edec1e81b14c3802c145f05b58",
+        "version_or_digest": "65756128536204abd29955f59ecca6592b10ac444bba639bf91630eeb6351485",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {

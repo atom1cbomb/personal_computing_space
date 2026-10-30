@@ -35,6 +35,27 @@ async def test_service_authoring_uploads_declared_configuration_dependency_schem
         assert (await repo.content_store.stat(ref)).media_type == "application/vnd.loom.instance-config-schema+json"
 
 
+@pytest.mark.parametrize("service", ["vm_ssh_http", "suanli_vm_ssh_http"])
+async def test_vm_file_package_publishes_after_legacy_config_schema(service):
+    settings = Settings(grip_token="test", public_base_url="http://observer")
+    repo = ObserverRepository(settings=settings)
+    root = Path(__file__).resolve().parents[2] / "capability_services" / service
+    legacy = json.loads((root / "schemas/instance-config.json").read_text())
+    legacy.pop("description")
+    async with LoomClient("http://observer", token="test", allow_insecure_grip=True,
+                          transport=httpx.ASGITransport(app=create_app(repo, settings=settings))) as client:
+        previous = await client.upload_content(legacy, media_type="application/schema+json",
+                                               name=service.replace("_", "-") + "/schemas/instance-config")
+        uri = await ServicePackage(root).publish(client, image_ref="example/vm@sha256:" + "d" * 64)
+        package = await repo.get_capability_package(uri)
+        descriptor = await repo.get_action_descriptor(package.action_exports[0].action_descriptor_ref)
+        ref = ResourceRef.model_validate(descriptor["instance_config_schema_ref"])
+        assert (await repo.content_store.stat(ref)).media_type == "application/vnd.loom.instance-config-schema+json"
+        old_ref = ResourceRef.model_validate(previous.model_dump())
+        assert (await repo.content_store.stat(old_ref)).media_type == "application/schema+json"
+        assert await client.read_json(previous) == legacy
+
+
 @pytest.mark.parametrize("model", [ResourceRef, SdkRef])
 @pytest.mark.parametrize("old", ["content://sha256/" + "a" * 64, "loom://suanlicloud/instances-list", "capability-package://test/v1", "slave-a"])
 def test_legacy_resource_identities_are_rejected(model, old):
