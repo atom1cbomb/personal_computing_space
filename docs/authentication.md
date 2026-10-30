@@ -18,7 +18,7 @@ SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_servi
 在用户浏览器所在机器安装 SDK 的 `auth` 可选依赖，再安装 Chromium：
 
 ```sh
-python -m pip install './loom_orchestration-0.9.3-py3-none-any.whl[auth]'
+python -m pip install './loom_orchestration-0.9.4-py3-none-any.whl[auth]'
 python -m playwright install chromium
 python -m loom_orchestration.auth \
   --observer https://observer.example \
@@ -40,6 +40,17 @@ SDK 0.9.3 默认在 `~/.loom/auth-profiles/browser` 保存当前用户的私有�
 权限原子保存并于下次打开恢复。资源自己的授权确认和服务端验证仍须完成。
 不同账号可使用不同的 `--auth-state-dir`；`--no-auth-state` 使用独立的临时上下文。
 升级前按 IdP 分散保存的旧档案不自动合并，首次登录建立新档案，旧文件保留。
+
+SDK 0.9.4 的页面提供默认关闭的“自动复用会话登录”开关。开启后依次检查所有
+选定资源：已经 ready/authenticated 的直接显示就绪，其余在后台尝试复用会话，
+无需逐项点击。无法在自动尝试时限内完成的资源列入“需要处理的资源”，保留
+“手动登录”按钮；网络、配置或验证故障显示各自原因，不混同为需要扫码。
+手动完成一次登录后，开启中的助手会再尝试其余未完成资源。
+
+自动浏览器等待最多 20 秒，单资源完整尝试最多 60 秒（不含排队），不自动输入
+密码或点击上游授权确认。关闭开关停止后续自动尝试，并结束当前自动等待；手动
+发起的登录继续。刷新页面保留当前开关状态，重启默认关闭。启动时可显式添加
+`--auto-login`；它不能与 `--no-auth-state` 同时使用。
 
 多个登录请求按顺序执行，前一个完成后才为后一个获取最新 revision 并创建挑战，
 排队不会消耗挑战有效期。不能同时用两个助手进程打开同一档案；档案被占用或无法

@@ -31,6 +31,17 @@ temporary contexts. Old per-IdP profiles are retained but not merged; the first 
 after upgrading establishes the new shared profile. Do not prepare package-specific
 Python helpers or session files.
 
+SDK 0.9.4 adds an opt-in “自动复用会话登录” switch. It checks all selected
+resources, skips those already ready/authenticated, and silently tries the saved
+browser session for the rest. Resources that do not complete within the automatic
+interaction window are listed for manual login; connection/configuration failures
+retain their separate error reasons. Successful manual login triggers one retry
+of the unfinished resources while the switch remains enabled. Turning it off
+stops automatic work without cancelling manual login. The switch survives page
+refresh but defaults off after helper restart. Use `--auto-login` for explicit
+startup opt-in; it cannot be combined with `--no-auth-state`. Automatic work does
+not enter credentials or click consent, and each resource still verifies ready.
+
 For expiry, closed windows or failed authentication, use the same portal's
 reauthentication button. Do not recreate the activation or resubmit a waiting
 business Run just to log in. A new auth-start invalidates the old browser challenge;

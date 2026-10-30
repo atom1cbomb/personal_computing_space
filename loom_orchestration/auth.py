@@ -21,6 +21,8 @@ from .client import LoomClient
 
 
 CALLBACK = "http://localhost:3000/login-callback"
+AUTO_INTERACTION_SECONDS = 20
+AUTO_ATTEMPT_SECONDS = 60
 METHODS = {"redirect", "browser-cookie", "device-code", "credential-profile"}
 ERRORS = {"authentication_expired", "authentication_failed", "activation_changed",
           "activation_binding_unavailable",
@@ -29,6 +31,7 @@ ERRORS = {"authentication_expired", "authentication_failed", "activation_changed
           "browser_auth_open_failed", "browser_session_not_found",
           "browser_login_verification_failed", "saved_auth_rejected",
           "browser_profile_unavailable",
+          "automatic_login_incomplete", "automatic_login_timeout",
           "browser_login_location_invalid", "login_cancelled", "operator_credentials_required"}
 
 
@@ -117,6 +120,8 @@ class Login:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._automatic = False
+        self.on_authenticated = None
         self._state = {"resource": target, "phase": "idle", "error": None}
         self._phase_started = time.monotonic()
 
@@ -130,15 +135,23 @@ class Login:
         with self._lock:
             return {**self._state, "elapsed_seconds": int(time.monotonic() - self._phase_started)}
 
-    def start(self):
+    def start(self, *, automatic=False):
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
-                return
+                return None
             self._stop.clear()
-            self._state = {"resource": self.target, "phase": "starting", "error": None}
+            self._automatic = automatic
+            self._state = {"resource": self.target, "phase": "starting", "error": None,
+                           "automatic": automatic}
             self._phase_started = time.monotonic()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
+            return self._thread
+
+    def cancel_automatic(self):
+        with self._lock:
+            if self._automatic and self._thread is not None and self._thread.is_alive():
+                self._stop.set()
 
     def _run(self):
         try:
@@ -148,7 +161,15 @@ class Login:
             code = str(exc) if isinstance(exc, RuntimeError) else "authentication_failed"
             if code not in ERRORS:
                 code = "authentication_failed"
-            self._update("expired" if code == "authentication_expired" else "failed", error=code)
+            if self._automatic and code == "login_cancelled":
+                self._update("idle", error=None)
+            elif self._automatic and code == "automatic_login_incomplete":
+                self._update("needs_manual", error=code)
+            else:
+                self._update("expired" if code == "authentication_expired" else "failed", error=code)
+        else:
+            if not self._automatic and self.status()["phase"] == "completed" and self.on_authenticated:
+                self.on_authenticated()
 
     def _check_deadline(self, expires_at):
         if self._stop.is_set():
@@ -241,13 +262,13 @@ class Login:
             if profile_dir is not None:
                 try:
                     context = await playwright.chromium.launch_persistent_context(
-                        str(profile_dir), headless=False, executable_path=self.browser_executable,
+                        str(profile_dir), headless=self._automatic, executable_path=self.browser_executable,
                         viewport={"width": 1120, "height": 840}, args=["--disable-dev-shm-usage"])
                 except (BrowserError, OSError):
                     # Do not silently lose SSO by opening an empty profile.
                     raise RuntimeError("browser_profile_unavailable") from None
             else:
-                browser = await playwright.chromium.launch(headless=False, executable_path=self.browser_executable,
+                browser = await playwright.chromium.launch(headless=self._automatic, executable_path=self.browser_executable,
                                                            args=["--disable-dev-shm-usage"])
                 context = await browser.new_context(viewport={"width": 1120, "height": 840})
 
@@ -282,9 +303,12 @@ class Login:
                 except BrowserError:
                     if callback is None:
                         raise
-                self._update("awaiting_login")
+                interaction_deadline = time.monotonic() + AUTO_INTERACTION_SECONDS
+                self._update("trying_saved_session" if self._automatic else "awaiting_login")
                 while True:
                     self._check_deadline(expires_at)
+                    if self._automatic and callback is None and time.monotonic() >= interaction_deadline:
+                        raise RuntimeError("automatic_login_incomplete")
                     if page.is_closed():
                         raise RuntimeError("login_window_closed")
                     if method == "device-code":
@@ -314,7 +338,7 @@ class Login:
                         if method == "browser-cookie" and accepted == {"status": "pending"}:
                             saved_cookie_attempt = False
                             callback = None
-                            self._update("awaiting_login")
+                            self._update("trying_saved_session" if self._automatic else "awaiting_login")
                             await asyncio.sleep(1)
                             continue
                         if accepted != {"status": "accepted"}:
@@ -336,23 +360,39 @@ class Login:
                         await browser.close()
 
     async def authenticate(self):
+        async def attempt():
+            if not self._automatic:
+                return await self._authenticate()
+            try:
+                async with asyncio.timeout(AUTO_ATTEMPT_SECONDS):
+                    return await self._authenticate()
+            except TimeoutError:
+                raise RuntimeError("automatic_login_timeout") from None
+
         if self.profile_store is None:
-            await self._authenticate()
+            await attempt()
         else:
             self._update("waiting_for_browser")
             async with self.profile_store.lock(self._stop):
-                await self._authenticate()
+                await attempt()
 
     async def _authenticate(self):
         async with self.client_factory() as client:
             description = await client.describe(self.target)
             metadata = description["resource"]["metadata"]
             revision = metadata["revision"]
+            if (self._automatic and metadata["desired_state"] == "running" and metadata["state"] == "ready"
+                    and metadata.get("authentication", {}).get("status") == "authenticated"
+                    and not metadata.get("service_access", {}).get("issues")):
+                self._update("completed", completed_via="already_ready")
+                return
             action = client.names.action("auth-start")
             if action not in {o["action"]["uri"] for o in description["offers"]}:
                 raise RuntimeError("login_method_unsupported")
             self._update("preparing_auth")
             for auth_round in range(2):
+                if self._stop.is_set():
+                    raise RuntimeError("login_cancelled")
                 result = await client.invoke(self.target, action, {"expected_revision": revision})
                 if result["resource"] != self.target or result["revision"] != revision:
                     raise RuntimeError("activation_changed")
@@ -371,7 +411,7 @@ class Login:
                         self._check_deadline(expires_at)
                         ready, observed = await self._state_from_observer(client, revision)
                         if ready:
-                            self._update("completed")
+                            self._update("completed", completed_via="automatic" if self._automatic else "manual")
                             return
                         auth.update(observed)
                         await asyncio.sleep(1)
@@ -386,7 +426,7 @@ class Login:
                         raise
                 self._update("verifying")
                 await self._wait_ready(client, revision, expires_at)
-                self._update("completed")
+                self._update("completed", completed_via="automatic" if self._automatic else "manual")
                 return
 
     def close(self):
@@ -395,9 +435,81 @@ class Login:
             self._thread.join(timeout=2)
 
 
+class AutoLogin:
+    """Opt-in batches; a completed manual login enables one pending-resource retry."""
+
+    def __init__(self, logins: dict[str, Login]):
+        self.logins = logins
+        self.available = bool(logins) and all(x.profile_store is not None and x.profile_store.root is not None
+                                             for x in logins.values())
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._enabled = self._running = self._closed = self._scan_all = False
+        for login in logins.values():
+            login.on_authenticated = self._retry_pending
+        self._thread = threading.Thread(target=self._work, daemon=True)
+        self._thread.start()
+
+    def status(self):
+        with self._lock:
+            return {"available": self.available, "enabled": self._enabled, "running": self._running}
+
+    def set_enabled(self, enabled: bool):
+        with self._lock:
+            if self._closed or (enabled and not self.available):
+                raise ValueError("automatic_login_unavailable")
+            self._enabled = enabled
+            if enabled:
+                self._scan_all = True
+                self._wake.set()
+            else:
+                for login in self.logins.values():
+                    login.cancel_automatic()
+
+    def _retry_pending(self):
+        with self._lock:
+            if self._enabled and not self._closed:
+                self._wake.set()
+
+    def _work(self):
+        while True:
+            self._wake.wait()
+            with self._lock:
+                self._wake.clear()
+                if self._closed:
+                    return
+                if not self._enabled:
+                    continue
+                scan_all, self._scan_all = self._scan_all, False
+                self._running = True
+            try:
+                for login in self.logins.values():
+                    with self._lock:
+                        if self._closed or not self._enabled:
+                            break
+                        if not scan_all and login.status()["phase"] == "completed":
+                            continue
+                        thread = login.start(automatic=True)
+                    if thread is not None:
+                        thread.join()
+            finally:
+                with self._lock:
+                    self._running = False
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            self._enabled = False
+            for login in self.logins.values():
+                login.cancel_automatic()
+            self._wake.set()
+        self._thread.join(timeout=2)
+
+
 class Handler(BaseHTTPRequestHandler):
     logins: dict[str, Login]
     csrf: str
+    automatic: AutoLogin | None = None
 
     def log_message(self, *_args):
         return
@@ -422,6 +534,9 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(403, b"{}")
         elif self.path == "/status":
             self._reply(200, json.dumps([x.status() for x in self.logins.values()]).encode())
+        elif self.path == "/auto-login":
+            self._reply(200, json.dumps(self.automatic.status() if self.automatic else {
+                "available": False, "enabled": False, "running": False}).encode())
         elif self.path == "/":
             self._reply(200, PAGE.replace("__CSRF__", self.csrf).encode(), "text/html; charset=utf-8")
         elif urlsplit(self.path).path == "/login-callback":
@@ -430,7 +545,7 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(404, b"{}")
 
     def do_POST(self):  # noqa: N802
-        if not self._local() or self.path != "/login":
+        if not self._local() or self.path not in {"/login", "/auto-login"}:
             self._reply(403, b"{}")
             return
         try:
@@ -441,26 +556,49 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(value, dict) or not secrets.compare_digest(str(value.get("csrf", "")), self.csrf):
                 self._reply(403, b"{}")
                 return
-            login = self.logins[value["resource"]]
+            if self.path == "/auto-login":
+                if self.automatic is None or type(value.get("enabled")) is not bool:
+                    raise ValueError()
+                self.automatic.set_enabled(value["enabled"])
+            else:
+                login = self.logins[value["resource"]]
         except (ValueError, KeyError, TypeError):
             self._reply(400, b"{}")
             return
-        login.start()
+        if self.path == "/login":
+            login.start()
         self._reply(202, b'{"accepted":true}')
 
 
 PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Loom 登录</title>
 <style>body{font:17px system-ui;max-width:1000px;margin:40px auto;padding:0 20px;line-height:1.7}
-article{border-bottom:1px solid #ddd;padding:20px 0}p{overflow-wrap:anywhere}button{font:inherit;padding:6px 18px}</style>
+article{border-bottom:1px solid #ddd;padding:20px 0}p,li{overflow-wrap:anywhere}button{font:inherit;padding:6px 18px}
+.controls{background:#f4f6f8;padding:18px;border-radius:8px}input[type=checkbox]{width:18px;height:18px;margin-right:8px}
+#attention{border-left:3px solid #c87918;padding-left:16px}#summary{font-weight:600}</style>
 <h1>Loom 资源登录</h1><p>选择实例，在弹出的窗口完成登录。客户端会按实际登录站点复用本地会话；入口过期或登录失败后，可以直接重新认证。</p>
+<div class="controls"><label><input id="automatic" type="checkbox">自动复用会话登录</label>
+<p>开启后自动尝试所有选定资源，需要扫码或授权的会列在下方。手动完成一次登录后，会继续尝试其余未完成资源。</p>
+<p id="automatic-note" role="status"></p></div><p id="summary" aria-live="polite"></p>
+<section id="attention" hidden><h2>需要处理的资源</h2><ul id="attention-list"></ul></section>
 <main id="logins"></main><script>
-const phases={waiting_for_browser:'等待其他登录完成',idle:'待开始',starting:'正在连接算力空间',preparing_auth:'正在准备远端认证',opening_login:'正在建立认证连接',opening_browser:'正在打开浏览器',restoring_session:'正在尝试本地登录信息',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
-const errors={browser_profile_unavailable:'无法打开或保存登录档案；请关闭使用同一档案的其他助手，或检查目录权限',activation_binding_unavailable:'节点服务入口未就绪，请联系节点管理员',authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',observer_bridge_timeout:'远端认证连接超时，请重试',browser_auth_open_failed:'远端登录入口未能打开，请重试',browser_callback_failed:'远端未接受认证回调，请重试',browser_session_not_found:'认证会话已失效，请重新认证',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
-async function refresh(){try{const values=await(await fetch('/status',{cache:'no-store'})).json();
+const phases={waiting_for_browser:'等待其他登录完成',idle:'待开始',starting:'正在连接算力空间',preparing_auth:'正在准备远端认证',opening_login:'正在建立认证连接',opening_browser:'正在打开浏览器',restoring_session:'正在尝试本地登录信息',trying_saved_session:'正在自动复用会话',needs_manual:'需手动登录或授权',awaiting_login:'请在登录窗口完成认证',verifying:'正在验证',completed:'已完成',expired:'入口已过期',failed:'登录未完成'};
+const errors={automatic_login_incomplete:'已有会话未能自动完成，请手动登录或授权',automatic_login_timeout:'自动认证或验证超时，请检查连接后重试',browser_profile_unavailable:'无法打开或保存登录档案；请关闭使用同一档案的其他助手，或检查目录权限',activation_binding_unavailable:'节点服务入口未就绪，请联系节点管理员',authentication_expired:'请重新认证',login_window_closed:'登录窗口已关闭',browser_dependency_missing:'请安装浏览器登录组件',authentication_failed:'认证或服务检查失败，请重试',activation_changed:'实例已发生变更，请重新认证',login_method_unsupported:'当前能力包尚不支持统一登录',observer_bridge_failed:'认证连接未完成，请重试',observer_bridge_timeout:'远端认证连接超时，请重试',browser_auth_open_failed:'远端登录入口未能打开，请重试',browser_callback_failed:'远端未接受认证回调，请重试',browser_session_not_found:'认证会话已失效，请重新认证',operator_credentials_required:'此实例需要操作员更新凭据配置后重新验证'};
+const busy=['waiting_for_browser','starting','preparing_auth','opening_login','opening_browser','restoring_session','trying_saved_session','awaiting_login','verifying'];
+const autoSwitch=document.getElementById('automatic'),note=document.getElementById('automatic-note');let changing=false;
+autoSwitch.onchange=async()=>{changing=true;autoSwitch.disabled=true;try{
+const response=await fetch('/auto-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:autoSwitch.checked,csrf:'__CSRF__'})});
+if(!response.ok)throw new Error();}catch{note.textContent='未能切换自动登录，请刷新后重试'}finally{changing=false;await refresh()}};
+async function refresh(){try{const [values,automatic]=await Promise.all(['/status','/auto-login'].map(async path=>(await fetch(path,{cache:'no-store'})).json()));
+if(!changing){autoSwitch.checked=automatic.enabled;autoSwitch.disabled=!automatic.available;
+note.textContent=!automatic.available?'启用本地会话保存后可使用自动登录':automatic.running?(automatic.enabled?'正在依次尝试，未完成的资源会列在下方':'正在停止自动尝试'):(automatic.enabled?'自动尝试已完成；手动登录成功后会继续尝试未完成资源':'自动登录已关闭，可逐项登录');}
+const count=phase=>values.filter(x=>x.phase===phase).length;
+document.getElementById('summary').textContent=`已完成 ${count('completed')} · 需手动 ${count('needs_manual')} · 失败或过期 ${count('failed')+count('expired')} · 进行中 ${values.filter(x=>busy.includes(x.phase)).length} · 待开始 ${count('idle')}`;
+const pending=values.filter(x=>['needs_manual','failed','expired'].includes(x.phase)),list=document.getElementById('attention-list');list.replaceChildren();
+document.getElementById('attention').hidden=pending.length===0;for(const x of pending){const item=document.createElement('li');item.textContent=x.resource+'：'+(errors[x.error]||phases[x.phase]);list.append(item)}
 const root=document.getElementById('logins');root.replaceChildren();for(const x of values){
 const row=document.createElement('article'),name=document.createElement('p'),state=document.createElement('p'),button=document.createElement('button');
-name.textContent=x.resource;state.textContent=phases[x.phase]+(x.user_code?'；授权码：'+x.user_code:'')+(x.error?'；'+(errors[x.error]||'请重新认证'):'')+(['waiting_for_browser','starting','preparing_auth','opening_login','opening_browser','restoring_session','verifying'].includes(x.phase)?'；已等待 '+x.elapsed_seconds+' 秒':'');
-button.textContent=x.phase==='idle'?'登录':'重新认证';button.disabled=['waiting_for_browser','starting','preparing_auth','opening_login','opening_browser','restoring_session','awaiting_login','verifying'].includes(x.phase);
+name.textContent=x.resource;state.textContent=(x.completed_via==='already_ready'?'已就绪，无需重新登录':phases[x.phase])+(x.user_code?'；授权码：'+x.user_code:'')+(x.error?'；'+(errors[x.error]||'请重新认证'):'')+(busy.includes(x.phase)?'；已等待 '+x.elapsed_seconds+' 秒':'');
+button.textContent=x.phase==='needs_manual'?'手动登录':x.phase==='idle'?'登录':'重新认证';button.disabled=busy.includes(x.phase);
 button.onclick=async()=>{button.disabled=true;await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resource:x.resource,csrf:'__CSRF__'})});await refresh()};
 row.append(name,state,button);root.append(row)}}catch{}}
 refresh();setInterval(refresh,1500);</script></html>'''
@@ -480,9 +618,13 @@ def main():
                         help="private shared browser profile for this user; use a separate directory for another account")
     parser.add_argument("--no-auth-state", action="store_true",
                         help="disable local browser profile reuse for this helper")
+    parser.add_argument("--auto-login", action="store_true",
+                        help="automatically try saved sessions for all selected resources")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("port must be between 1024 and 65535")
+    if args.auto_login and args.no_auth_state:
+        parser.error("--auto-login requires local auth state; remove --no-auth-state")
     token = args.token_file.read_text().strip()
 
     def client_factory():
@@ -493,16 +635,21 @@ def main():
     logins = {target: Login(target, client_factory, browser_executable=args.browser_executable,
                              profile_store=profile_store)
               for target in args.activation}
-    handler = type("LoginHandler", (Handler,), {"logins": logins, "csrf": secrets.token_urlsafe(32)})
+    automatic = AutoLogin(logins)
+    handler = type("LoginHandler", (Handler,), {"logins": logins, "automatic": automatic,
+                                               "csrf": secrets.token_urlsafe(32)})
     server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
     print(f"Open http://localhost:{args.port}/", flush=True)
     try:
+        if args.auto_login:
+            automatic.set_enabled(True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
+        automatic.close()
         for login in logins.values():
             login.close()
 
