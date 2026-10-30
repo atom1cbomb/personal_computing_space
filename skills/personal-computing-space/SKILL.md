@@ -42,6 +42,16 @@ that waits for authentication on an existing instance, read
 Use Python 3.12+ and the independent `loom-orchestration` package. A release
 skill archive includes its wheel under `assets/wheels/`; install that wheel
 in the external agent's environment, not in the orchestration sandbox.
+Before first use, check that `loom-orchestration` is installed and importable in
+the chosen Python environment; a source checkout alone is not an installation.
+If it is missing, explicitly tell the user that the Loom Python SDK must be
+installed, provide the Observer's matching wheel download URL and installation
+command, and install within the task's existing authorization. Do not silently
+substitute server imports or leave the missing dependency unexplained.
+Observer releases serve this skill at `/downloads/personal-computing-space.zip`
+and the SDK filename, version and SHA-256 at `/downloads/manifest.json`.
+Download the wheel at `/downloads/<sdk.filename>` from the operator-provided
+Observer URL; refresh this manifest after an Observer upgrade.
 See [references/sdk.md](references/sdk.md) for installation, discovery, and
 source-checkout fallback. Do not assume the package is published on PyPI.
 SDK 0.9 includes `inventory`, `action_contract`, `execute_action`, `CallLedger`,

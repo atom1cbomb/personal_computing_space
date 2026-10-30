@@ -12,3 +12,4 @@ data/
 logs/
 .worktrees/
 production/
+loom_v2/web/downloads/

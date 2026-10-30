@@ -9,3 +9,4 @@ __pycache__
 .env.*
 *.pem
 *.key
+loom_v2/web/downloads

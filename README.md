@@ -251,16 +251,33 @@ export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 
 ### 外部 agent 的 SDK 与 skill 分发
 
-`loom-orchestration` 当前版本为 **0.10.0**，是独立 Python 包，源码保留在 `loom_orchestration/`，
-不复制到 skill。发布时可将同版本 SDK wheel 附在 skill 中：
+`loom-orchestration` 是独立 Python 包，源码保留在 `loom_orchestration/`，不复制到 skill。
+Observer 提供无需 GRIP token 的发布文件下载（以部署的 Observer URL 为前缀）：
+
+- `/downloads/personal-computing-space.zip`：完整 skill，含配套 SDK wheel。
+- `/downloads/manifest.json`：技能包和 SDK 的文件名、大小、SHA-256，以及 SDK 版本。
+- `/downloads/<sdk.filename>`：清单所列的独立 SDK wheel，可直接下载安装。
+
+默认 Dockerfile 在构建镜像时，从同一份源码生成三个文件；技能、SDK 或其构建脚本
+变更后，下一次构建会自动更新。发布新 Observer 镜像即可同时更新下载内容，无需
+手动复制文件到运行中的容器。文件响应要求缓存重新验证。SDK 源码或依赖发生变化时，
+同时维护 `packages/loom-orchestration/pyproject.toml` 的版本号。
+
+也可以手工构建分发文件：
 
 ```bash
 python -m pip install 'setuptools>=68' 'wheel>=0.45'
 python scripts/build_agent_skill.py --output dist
 ```
 
-将生成的 `dist/personal-computing-space.zip` 交给外部 agent，解压后 skill 的
-`assets/wheels/` 包含可安装的 SDK；安装方式见其 `references/sdk.md`。
+输出目录同时包含 ZIP、独立 wheel 和 `manifest.json`。本地源码运行 Observer 时，
+可用 `--output loom_v2/web/downloads` 构建到默认位置，或通过
+`LOOM_CLIENT_DOWNLOAD_DIR` 指向完整的发布目录。运行时不会临时构建或联网获取 SDK；
+尚未构建的下载返回 404。
+
+将 ZIP 交给外部 agent，解压后的 `assets/wheels/` 包含可安装 SDK。
+技能会先检查 SDK；未安装时提示用户安装，并提供 Observer 下载地址和安装命令。
+安装、升级与完整性校验见 [SDK 使用说明](skills/personal-computing-space/references/sdk.md)。
 
 普通 Python 计算的完整发布契约见 [函数包指南](skills/personal-computing-space/references/function-packages.md)。GRIP `mode=request-reply` 表示协议交互方式，业务是否创建 Run 应结合 `interaction` 与输出 Schema 判断。使用已有命名实例时，直接调用该实例，或通过 SDK 的只读 `activation_ref()` 构造编排引用；不要把 Slave 的默认实例调用当作已认证命名实例，详见 [已有实例编排](skills/personal-computing-space/references/existing-activations.md)。
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。

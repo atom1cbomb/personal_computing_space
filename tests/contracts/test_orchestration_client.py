@@ -2,6 +2,7 @@ import sys
 import subprocess
 import zipfile
 import json
+import hashlib
 from pathlib import Path
 
 import httpx
@@ -261,8 +262,17 @@ def test_skill_bundle_contains_installable_standalone_sdk(tmp_path):
         archive.extractall(tmp_path / "unpacked")
     skill = tmp_path / "unpacked" / "personal-computing-space"
     wheel, = (skill / "assets" / "wheels").glob("*.whl")
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["sdk"]["filename"] == wheel.name
+    assert (tmp_path / wheel.name).read_bytes() == wheel.read_bytes()
+    for artifact in (manifest["skill"], manifest["sdk"]):
+        data = (tmp_path / artifact["filename"]).read_bytes()
+        assert len(data) == artifact["size"]
+        assert hashlib.sha256(data).hexdigest() == artifact["sha256"]
     with zipfile.ZipFile(wheel) as archive:
         assert not any(name.startswith("loom_v2/") for name in archive.namelist())
+        metadata = archive.read(next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+        assert f"Version: {manifest['sdk']['version']}\n" in metadata
     target = tmp_path / "installed"
     subprocess.run([
         sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(target), str(wheel),

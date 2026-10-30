@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     internal_api_secret: str = ""
     observer_url: str = "http://observer:8080"
     public_base_url: str = ""
+    # Defaults to client artifacts packaged with this Observer build.
+    client_download_dir: str | None = None
     grip_authority: str = "loom.local"
     grip_token: str = ""
     # Operator-owned endpoints; package authors never choose their public routes.

@@ -30,6 +30,7 @@ from loom_v2.auth import InternalAuth
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
 
 from .repository import ObserverRepository
+from .downloads import client_downloads
 
 
 def create_app(
@@ -85,6 +86,8 @@ def create_app(
     app.state.workers = {}
     static_dir = Path(__file__).resolve().parents[1] / "web" / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    download_dir = Path(settings.client_download_dir) if settings.client_download_dir else static_dir.parent / "downloads"
+    app.include_router(client_downloads(download_dir))
 
     from .grip import GripService
     app.state.grip = GripService(app, settings)

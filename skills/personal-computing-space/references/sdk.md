@@ -6,6 +6,65 @@ The SDK is independent of the skill instructions and the Loom server.
 Release archives include one SDK wheel in `assets/wheels/`; the source skill
 directory does not contain a checked-in binary.
 
+Check the Python environment that will actually run the agent:
+
+```sh
+python -m pip show loom-orchestration
+python -c "from loom_orchestration import LoomClient"
+```
+
+If the distribution is missing, tell the user: “当前 Python 环境未安装 Loom Python
+SDK（loom-orchestration），需要先安装。” Include the exact matching download URL
+and a `python -m pip install` command. Install into the selected environment when
+covered by the task's authorization; do not treat a checkout on `sys.path` as an
+installed SDK. If the distribution exists but import fails, report that error
+and repair its installation/dependencies instead of claiming it is ready.
+
+The operator-provided Observer base URL exposes public release downloads:
+
+| Path | Artifact |
+| --- | --- |
+| `/downloads/personal-computing-space.zip` | Skill, references and matching bundled SDK wheel |
+| `/downloads/manifest.json` | `skill` and `sdk` filenames, sizes and SHA-256; SDK version |
+| `/downloads/<sdk.filename>` | Standalone Python SDK wheel, using the filename returned by the manifest |
+
+These downloads need no GRIP token. They contain release files only; resource
+operations still need the operator's authentication. Use a trusted Observer URL.
+Each Observer image builds both artifacts from its own source. After an Observer
+upgrade, fetch its manifest again and install the matching SDK when an update is
+needed; do not reuse a filename or infer the installed version from this skill.
+
+For a skill copied from source or to download the current standalone wheel, set
+`LOOM_OBSERVER_URL` to the operator's Observer URL. This bootstrap uses only the
+Python standard library and verifies the downloaded bytes:
+
+```sh
+python - <<'PY'
+import hashlib, json, os, shlex, sys, urllib.request
+from pathlib import Path
+
+base = os.environ["LOOM_OBSERVER_URL"].rstrip("/")
+with urllib.request.urlopen(base + "/downloads/manifest.json", timeout=30) as response:
+    sdk = json.load(response)["sdk"]
+name = sdk["filename"]
+assert Path(name).name == name and name.startswith("loom_orchestration-") and name.endswith(".whl")
+url = base + "/downloads/" + name
+with urllib.request.urlopen(url, timeout=60) as response:
+    content = response.read()
+assert len(content) == sdk["size"]
+assert hashlib.sha256(content).hexdigest() == sdk["sha256"]
+wheel = Path(name).resolve()
+wheel.write_bytes(content)
+print("SDK", sdk["version"], url)
+print(shlex.join([sys.executable, "-m", "pip", "install", "--upgrade", str(wheel)]))
+PY
+```
+
+Run the printed installation command in the chosen Python environment, then
+repeat the import check. A 404 means this Observer has no published client
+artifact at that address; use its release bundle or ask the deployment operator
+to upgrade it, rather than guessing an alternate server route or a PyPI package.
+
 Using Python 3.12+, set `SKILL_DIR` to this installed skill's directory:
 
 ```sh
@@ -19,11 +78,10 @@ compatible wheels from the operator as well; the skill archive contains only
 the Loom SDK wheel. No server modules, Docker SDK, database or model provider
 are required in the external agent environment.
 
-If using a skill copied directly from a source checkout, install from an
-available trusted checkout with `python -m pip install /path/to/loom_v2/packages/loom-orchestration`,
-or obtain the matching release archive/wheel from the deployment operator.
-Do not invent a download URL or assume `pip install loom-orchestration` resolves
-to this project's release.
+If Observer downloads and a release bundle are unavailable, an available trusted
+checkout can be installed with
+`python -m pip install /path/to/loom_v2/packages/loom-orchestration`.
+Do not assume `pip install loom-orchestration` resolves to this project's release.
 
 ## Resource Discovery and Invocation
 
