@@ -106,20 +106,40 @@ def test_restart_resumes_renewal_once_and_verifies_real_ssh_access(tmp_path, mon
     assert gateway.auth_status() == {"status": "auth_failed"}
 
 
-def test_refresh_failure_recovers_but_revocation_requires_login(tmp_path, monkeypatch):
+@pytest.mark.parametrize("renewal", ["authenticated", "auth_failed", "auth_required"])
+@pytest.mark.parametrize("access", ["authenticated", "auth_failed", "auth_required"])
+def test_renewal_failure_does_not_override_current_ssh_access(tmp_path, monkeypatch, renewal, access):
     (tmp_path / "renewal.json").write_text("{}")
-    status = tmp_path / "renewal-status.json"
+    (tmp_path / "renewal-status.json").write_text(json.dumps({"status": renewal}))
     gateway = VmSshGateway(state_root=tmp_path)
     gateway._login_process = SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: access)
+    assert gateway.auth_status() == {"status": access}
+
+
+def test_rejected_refresh_is_not_replayed_and_exited_worker_is_reaped(tmp_path, monkeypatch):
+    (tmp_path / "renewal.json").write_text("{}")
+    (tmp_path / "renewal-status.json").write_text('{"status":"auth_required"}')
+    gateway = VmSshGateway(state_root=tmp_path)
+    gateway._login_process = SimpleNamespace(poll=lambda: 0)
+    monkeypatch.setattr(gateway, "_start_login", lambda *_: pytest.fail("rejected token retried"))
     monkeypatch.setattr(gateway, "_ssh_probe", lambda: "authenticated")
-    status.write_text('{"status":"auth_failed"}')
-    assert gateway.auth_status() == {"status": "auth_failed"}
-    status.write_text('{"status":"authenticated"}')
     assert gateway.auth_status() == {"status": "authenticated"}
-    status.write_text('{"status":"auth_required"}')
-    gateway._login_process = None
-    monkeypatch.setattr(gateway, "_start_login", lambda *_: pytest.fail("revoked token retried"))
-    assert gateway.auth_status() == {"status": "auth_required"}
+    assert gateway._login_process is None
+
+
+def test_command_uses_valid_ssh_credentials_after_refresh_rejection(tmp_path, monkeypatch):
+    import capability_services.suanli_vm_ssh_http.server as module
+    (tmp_path / "renewal.json").write_text("{}")
+    (tmp_path / "renewal-status.json").write_text('{"status":"auth_required"}')
+    gateway = VmSshGateway(state_root=tmp_path)
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: "authenticated")
+    monkeypatch.setattr(gateway, "_ssh_args", lambda: ["ssh"])
+    monkeypatch.setattr(module, "execute_ssh", lambda *args: {"exit_code": 0})
+    assert gateway.exec("true") == {"exit_code": 0}
+    monkeypatch.setattr(gateway, "_ssh_probe", lambda: "auth_required")
+    with pytest.raises(module.GatewayError, match="ssh_authentication_required"):
+        gateway.exec("true")
 
 
 def test_expired_access_token_does_not_prompt_while_refresh_is_available(tmp_path, monkeypatch):

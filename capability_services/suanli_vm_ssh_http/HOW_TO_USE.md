@@ -1,9 +1,8 @@
 # 算礼云 VM SSH 使用说明
 
 这个包为已登记的 VM 提供远程 shell。activation 必须绑定目标 VM，并在
-`instance_config` 中提供 `host`、`port`、`user`；SSH 私钥和算礼云登录状态由
-operator credential profile 管理，不能放入配置或 action 参数。使用 `suanli-vm-ssh-http/v5`
-时通过统一登录入口完成认证，等待 activation 达到 `authenticated`/`ready` 后再执行。
+`instance_config` 中提供 `host`、`port`、`user`；SSH 私钥和算礼云登录状态保存在
+每个激活独立的私有持久卷，不能放入配置或 action 参数。使用此包时通过统一登录入口完成认证，等待 activation 达到 `authenticated`/`ready` 后再执行。
 
 唯一业务 action 是 `exec`：输入 `{command, timeout_seconds}`，命令通过 SSH stdin
 交给 `sh -s`。`timeout_seconds` 为 1–3600 秒，默认 300 秒；命令最多 1 MiB，每个

@@ -7,6 +7,9 @@ RUN CGO_ENABLED=0 go build -trimpath -o /loom-opkssh .
 
 FROM python:3.12-slim
 
+ARG SSH_REFRESH_INTERVAL=0s
+ENV LOOM_SSH_REFRESH_INTERVAL=${SSH_REFRESH_INTERVAL}
+
 WORKDIR /app
 RUN pip install --no-cache-dir httpx==0.28.1
 RUN apt-get update \

@@ -164,7 +164,7 @@ func TestCancellationStopsWaitAndStatusContainsNoCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(root, "renewal-status.json"))
-	if string(raw) != `{"status":"auth_failed"}` {
+	if !bytes.Contains(raw, []byte(`"status":"auth_failed"`)) {
 		t.Fatal("unexpected public status")
 	}
 }
@@ -194,7 +194,7 @@ func TestRenewalLoopRecoversWithoutNewLogin(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- renew(ctx, p, c, root, key) }()
+	go func() { done <- renew(ctx, p, c, root, key, 0) }()
 	sawFailure, recovered := false, false
 	for ctx.Err() == nil {
 		raw, _ := os.ReadFile(filepath.Join(root, "renewal-status.json"))
@@ -227,11 +227,11 @@ func TestRevocationStopsLoopAndResumeRestoresPrivateState(t *testing.T) {
 	if err := save(root, key, c); err != nil {
 		t.Fatal(err)
 	}
-	if err := renew(context.Background(), &fakeRefresher{err: oidc.ErrInvalidGrant()}, c, root, key); err != nil {
+	if err := renew(context.Background(), &fakeRefresher{err: oidc.ErrInvalidGrant()}, c, root, key, 0); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(root, "renewal-status.json"))
-	if string(raw) != `{"status":"auth_required"}` {
+	if !bytes.Contains(raw, []byte(`"status":"auth_required"`)) {
 		t.Fatal("revocation status", string(raw))
 	}
 	// Restart a still-authorized session without a browser or network call.
@@ -251,7 +251,7 @@ func TestRevocationStopsLoopAndResumeRestoresPrivateState(t *testing.T) {
 	_ = os.Remove(key + "-cert.pub")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err = run(ctx, "resume", config, root, key); err != nil {
+	if err = run(ctx, "resume", config, root, key, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(key + "-cert.pub"); err != nil {
@@ -261,7 +261,7 @@ func TestRevocationStopsLoopAndResumeRestoresPrivateState(t *testing.T) {
 	if err = save(root, key, c); err != nil {
 		t.Fatal(err)
 	}
-	if run(ctx, "resume", config, root, key) == nil {
+	if run(ctx, "resume", config, root, key, 0) == nil {
 		t.Fatal("wrong provider state accepted")
 	}
 }

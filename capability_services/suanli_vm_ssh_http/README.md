@@ -30,7 +30,7 @@ registered with the OIDC client. The package does not invent a device-code
 protocol.
 
 Use the [unified SDK login portal](../../docs/authentication.md) with
-`suanli-vm-ssh-http/v5`. The package declares `interaction.mode=redirect`.
+`suanli-vm-ssh-http/v6`. The package declares `interaction.mode=redirect`.
 The client manages the shared browser session and follows the actual provider
 redirects without a package-level IdP declaration. The client opens a browser,
 captures the registered localhost callback,
@@ -42,9 +42,18 @@ permissions in the activation volume before publishing the new certificate.
 Restart resumes this state without a browser. A provider-config change cannot
 reuse an unrelated checkpoint.
 
+Refresh responses are checkpointed privately before validation. Validation retries
+and restarts reuse that response, preserving a rotated refresh token without
+replaying its consumed predecessor. A refreshed nonce may be omitted; if present,
+it must match the original. Signature, issuer, audience, identity, expiry and
+access-token hash are still verified before publishing an SSH certificate.
+
 Transient renewal failures retain credentials and retry with 2–60 second
-backoff. Explicit OAuth `invalid_grant` requires login; network and host-key
-errors remain `auth_failed`. Readiness always includes a real SSH access check.
+backoff. OAuth `invalid_grant` stops renewal, but current SSH authorization is
+checked independently: a valid key remains usable until the server rejects it.
+Network and host-key errors remain `auth_failed`. Exited workers are reaped.
+Private `renewal-status.json` and bounded `renewal-events.jsonl` record timestamps,
+stages and allowlisted error codes, never raw provider errors or credentials.
 An explicit new login stops the old worker and removes its credentials and
 challenge before starting another attempt. Reuse the same activation to retry.
 
@@ -54,9 +63,9 @@ deadline; client refresh cannot change that policy. This package does not modify
 the VM's SSH authorization policy. The IdP must issue a usable refresh token.
 Plain SSH-key capability `vm-ssh-http` is unrelated and remains unchanged.
 
-The package is now v5. Its new digest has a separate credential volume, so the
+The package is now v6. Its new digest has a separate credential volume, so the
 first activation needs its own login; subsequent same-version restarts resume
-automatically. The `suanlicloud-http/v6` creation descriptor selects this version.
+automatically. The `suanlicloud-http/v7` creation descriptor selects this version.
 
 Run the worker tests with `cd capability_services/suanli_vm_ssh_http/renewal &&
 go test -race ./...`; Python gateway lifecycle tests are in
@@ -80,3 +89,20 @@ and require the activation to reach `authenticated` before invoking `/v1/exec`.
 发布 `descriptors/exec.json` 前先上传 `schemas/instance-config.json`，保留返回的
 不可变 `instance_config_schema_ref`。配置只接受 `host`、`port`、`user`；认证凭据
 仍由 capability 认证协议管理，不放入配置或 ContentStore。
+
+## Accelerated soak validation
+
+Production builds keep `SSH_REFRESH_INTERVAL=0s`, which refreshes one minute
+before actual ID-token expiry. Build an isolated validation image with
+`--build-arg SSH_REFRESH_INTERVAL=60s` to cap the delay between real refreshes
+at one minute. This does not change the IdP's token lifetime or server policy.
+Publish it under a distinct immutable test package version and authenticate its
+named activation through the unified portal.
+
+`scripts/soak_ssh_renewal.py` observes selected activations for ten minutes by
+default, executing a harmless SSH probe once a minute through GRIP. It writes
+`status.json`, `events.jsonl` and a call ledger to the requested output directory.
+Only `status=passed` means the timed business checks completed. Independently
+check the test instances' private `renewal_count` and structured renewal events
+to prove that real token exchanges occurred; SSH success alone is insufficient
+when the target server allows the original key for 24 hours.
