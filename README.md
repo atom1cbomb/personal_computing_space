@@ -154,6 +154,8 @@ SDK 提供紧凑资源目录、契约校验调用、持久调用预算账本和�
 
 例如，一台 VM 的 SSH 访问实例使用 VM SSH 包，而管理它的云资源通过 Suanli Cloud 实例提供管理动作：**在 VM 上执行命令**和**创建、停止或销毁 VM**是两套不同职责，不需要混在同一个包里。
 
+VM 访问包还提供 `files.upload`、`files.download` 流式动作，复用 activation 的 SSH 认证并校验大小和 SHA-256。SDK 0.12 的 `VmFileClient` 和 `loom-vm-files` 命令行支持上传、下载及显式覆盖，见 [VM 文件传输](docs/vm-file-transfers.md)。使用前确认已部署包确实声明这些动作。
+
 同一个包可以在同一 Slave 上创建多个命名实例，每个实例绑定自己的目标资源和配置。因此可以为每台 VM 启动一个独立的 SSH 能力容器，分别保存认证状态和 `known_hosts`，不必为每台机器复制一份包版本。
 
 ### 发布、检查、激活与认证

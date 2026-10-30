@@ -7,12 +7,12 @@ paths below describe the private runtime-to-container binding.
 
 This is one ordinary `service + container:http/1` package. The runtime mounts
 the activation-specific `/run/loom/instance.json` and persistent
-`/var/lib/loom/service` volume. The service exposes only `GET /healthz`, the
-generic authentication paths, and `POST /v1/exec`.
+`/var/lib/loom/service` volume. The ASGI service exposes `GET /healthz`, the generic authentication paths,
+`POST /v1/exec`, and GRIP WebSocket file transfer routes.
 
 `/v1/exec` accepts `{command, timeout_seconds}`. The VM host, user and port
 are never accepted from a request; they come from the activation config.
-The v3 execution contract accepts up to 1,048,576 command characters and an
+The execution contract accepts up to 1,048,576 command characters and an
 8 MiB JSON request. The script is sent on SSH stdin to `sh -s`; the default
 timeout is 300 seconds and the accepted range is 1–3600 seconds. Each output
 stream retains at most 16 MiB with `truncated=true` on overflow. See the
@@ -30,7 +30,7 @@ registered with the OIDC client. The package does not invent a device-code
 protocol.
 
 Use the [unified SDK login portal](../../docs/authentication.md) with
-`suanli-vm-ssh-http/v6`. The package declares `interaction.mode=redirect`.
+`suanli-vm-ssh-http/v7`. The package declares `interaction.mode=redirect`.
 The client manages the shared browser session and follows the actual provider
 redirects without a package-level IdP declaration. The client opens a browser,
 captures the registered localhost callback,
@@ -61,11 +61,13 @@ The SSH server must permit refreshed ID tokens (`oidc_refreshed` in its opkssh
 provider policy). A fixed `24h`/`oidc` policy still enforces its original login
 deadline; client refresh cannot change that policy. This package does not modify
 the VM's SSH authorization policy. The IdP must issue a usable refresh token.
-Plain SSH-key capability `vm-ssh-http` is unrelated and remains unchanged.
+The ordinary SSH-key package uses the same file transport with its credential profile.
 
-The package is now v6. Its new digest has a separate credential volume, so the
+The package is now v7. Its new digest has a separate credential volume, so the
 first activation needs its own login; subsequent same-version restarts resume
-automatically. The `suanlicloud-http/v7` creation descriptor selects this version.
+automatically. File actions use that same authentication and renewal state as exec.
+The `suanlicloud-http/v7` creation descriptor remains pinned to SSH v6; this change
+does not republish the cloud creation package.
 
 Run the worker tests with `cd capability_services/suanli_vm_ssh_http/renewal &&
 go test -race ./...`; Python gateway lifecycle tests are in
@@ -106,3 +108,10 @@ Only `status=passed` means the timed business checks completed. Independently
 check the test instances' private `renewal_count` and structured renewal events
 to prove that real token exchanges occurred; SSH success alone is insufficient
 when the target server allows the original key for 24 hours.
+
+## Streaming files (v7)
+
+`files.upload` and `files.download` reuse `execution_ssh_args`, including refresh
+recovery and current-credential authorization. Private WebSocket routes are
+`/v1/files/upload` and `/v1/files/download`. See [HOW_TO_USE.md](HOW_TO_USE.md)
+for protocol framing, integrity/commit rules and SDK/CLI examples.

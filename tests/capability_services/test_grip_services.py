@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from http.server import ThreadingHTTPServer
 from importlib import import_module
 import json
+import hashlib
 import shutil
 from pathlib import Path
 from threading import Thread
@@ -193,7 +194,7 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
                                        state_root=state, transport=httpx.MockTransport(provider))
     elif directory in {"vm_ssh_http", "suanli_vm_ssh_http"}:
         command = tmp_path / "ssh"
-        command.write_text('#!/bin/sh\nexec /bin/sh\n')
+        command.write_text('#!/bin/sh\nfor last do :; done\nexec /bin/sh -c "$last"\n')
         command.chmod(0o755)
         if directory == "vm_ssh_http":
             (credentials / "id_ed25519").write_text("fixture-key")
@@ -262,6 +263,9 @@ def gateway_fixture(directory, tmp_path, monkeypatch):
             access.channels[ref]={"state":"ready","port":external["local_port"],"streams":set(),"task":None}
         access.start=start
         return gateway, module.create_app(gateway,access), external
+    if directory in {"vm_ssh_http", "suanli_vm_ssh_http"}:
+        from capability_services.ssh_app import create_app
+        return gateway, create_app(gateway), external
     handler = type("FixtureHandler", (module.Handler,), {"gateway": gateway})
     return gateway, handler, external
 
@@ -285,7 +289,7 @@ def arguments(directory, action_name):
 async def test_real_service_package_grip_lifecycle_and_every_export(directory, tmp_path, monkeypatch):
     gateway, handler, external = gateway_fixture(directory, tmp_path, monkeypatch)
     settings = Settings(grip_token="service-test", public_base_url="http://observer", coding_agent_backend="none", agent_lease_ttl_seconds=300)
-    if directory == "kubernetes_http":
+    if directory in {"kubernetes_http", "vm_ssh_http", "suanli_vm_ssh_http"}:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
         key=Ed25519PrivateKey.generate()
@@ -311,7 +315,10 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
             async with LoomClient("http://observer", token=settings.grip_token, transport=httpx.ASGITransport(app=app), allow_insecure_grip=True) as client:
                 dependencies = {}
                 if directory == "suanlicloud_http":
-                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v6"] = await ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http").publish(client, image_ref=IMAGE)
+                    # The cloud creation descriptor remains pinned to SSH v6.
+                    dependency = ServicePackage(ROOT / "capability_services/suanli_vm_ssh_http")
+                    dependency.manifest["package_version"] = "v6"
+                    dependencies["grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v6"] = await dependency.publish(client, image_ref=IMAGE)
                 package = await bundle.publish(client, image_ref=IMAGE, dependencies=dependencies)
                 raw = await client.invoke(package, client.names.action("read"), {})
                 assert raw["publication_state"] == "published"
@@ -370,7 +377,8 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                         for report in await worker.inspect_activation_health():
                             await repo.record_capability_health(report)
                             worker.acknowledge_health_report(report.report_id)
-                    assert (await client.describe(target))["resource"]["metadata"]["state"] == "ready"
+                    observed = (await client.describe(target, refresh=True))["resource"]["metadata"]
+                    assert observed["state"] == "ready", observed
                 else:
                     assert activation["state"] == "ready", activation
                     if auth is not None:
@@ -409,11 +417,30 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                         continue
                     if interaction == "byte-stream":
                         from loom_orchestration.grip import Request
-                        _, payload, _, _ = await client._prepare(target,action["uri"],arguments(directory,action_name),mode="byte-stream")
+                        args = arguments(directory,action_name)
+                        if "ssh" in directory:
+                            remote = tmp_path / "transferred"
+                            args = {"path": str(remote)}
+                            if action_name == "files-upload":
+                                args.update(size=3, sha256=hashlib.sha256(b"abc").hexdigest())
+                        _, payload, _, _ = await client._prepare(target,action["uri"],args,mode="byte-stream")
                         opened=await app.state.service_access.open_stream(Request.model_validate(payload))
                         try:
-                            await opened.stream.write(b"GET /healthz HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n")
-                            assert b"200 OK" in await opened.stream.read(65536)
+                            if "ssh" in directory:
+                                from loom_orchestration.vm_files import frame, read_frame, read_exact
+                                if action_name == "files-upload":
+                                    assert (await read_frame(opened.stream))["status"] == "ready"
+                                    await opened.stream.write(b"abc" + frame({"type":"commit","size":3,"sha256":args["sha256"]}))
+                                    assert (await read_frame(opened.stream))["status"] == "uploaded"
+                                    assert remote.read_bytes() == b"abc"
+                                else:
+                                    assert (await read_frame(opened.stream))["size"] == 3
+                                    assert await read_exact(opened.stream,3) == b"abc"
+                                    assert (await read_frame(opened.stream))["sha256"] == hashlib.sha256(b"abc").hexdigest()
+                                assert await opened.stream.read(1) == b""
+                            else:
+                                await opened.stream.write(b"GET /healthz HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n")
+                                assert b"200 OK" in await opened.stream.read(65536)
                         finally:await opened.stream.aclose()
                         continue
                     data = {"arguments": arguments(directory, action_name), "expected_revision": activation["revision"], "idempotency_key": action_name}

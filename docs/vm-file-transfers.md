@@ -1,0 +1,77 @@
+# VM 文件上传与下载
+
+`vm-ssh-http/v6` 和 `suanli-vm-ssh-http/v7` 提供 `files.upload`、`files.download`。
+两者都是 GRIP `byte-stream` 动作，复用所选 activation 的 SSH 目标、用户、密钥、
+known_hosts 和认证续期逻辑，不接受调用方指定其他主机或凭据。原 `exec` 动作保留。
+
+先通过 DESCRIBE 确认两个动作可用、activation 已就绪。包版本不可变；旧版本不会
+自动增加动作。发布新包时，普通 SSH 可以选择原 credential profile；云 SSH 新包
+摘要使用独立状态卷，仍须按现有流程完成该 activation 的首次认证。文件动作不会
+创建另一个认证会话，也不需要重新登记 VM。云创建包仍固定引用其原有 SSH v6。
+
+目标 VM 需要 Python 3 和可用的 POSIX 文件系统；不安装常驻文件服务。文件内容沿
+GRIP WebSocket 和已有 SSH 连接分块传输，不经 Base64、不进入 Run 或 ContentStore。
+内存缓冲按 64 KiB 分块，传输大小不受 `exec` 的命令/输出上限限制；仍受可用磁盘、
+请求超时和 GRIP 授权期限约束。默认超时 300 秒，可设为 1–3600 秒。
+
+## Python SDK
+
+安装 `loom-orchestration 0.12.0` 后，使用发现所得的 activation URI：
+
+```python
+from loom_orchestration import LoomClient, VmFileClient
+
+async with LoomClient(observer_url, token=token) as client:
+    files = await VmFileClient.discover(client, activation_uri)
+    uploaded = await files.upload("./input.bin", "/home/worker/input.bin")
+    downloaded = await files.download("/home/worker/result.bin", "./result.bin")
+    print(downloaded["size"], downloaded["sha256"])
+```
+
+`overwrite=True` 显式允许替换目标文件。SDK 不自动重试上传；返回成功之前会校验
+最终结果、字节数、SHA-256 和正常 EOF。下载只有在完整校验后才替换本地目标。
+
+## 命令行
+
+```sh
+loom-vm-files --observer "$LOOM_OBSERVER_URL" --token-file /private/grip-token \
+  --activation "$ACTIVATION_URI" upload ./input.bin /home/worker/input.bin
+
+loom-vm-files --observer "$LOOM_OBSERVER_URL" --token-file /private/grip-token \
+  --activation "$ACTIVATION_URI" download /home/worker/result.bin ./result.bin
+```
+
+HTTP Observer 需要显式 `--allow-http`。子命令可加 `--overwrite` 和 `--timeout 600`。
+调用方只提供业务路径；不要从 activation 提取 SSH 私钥或把凭据放进文件动作参数。
+
+## 文件行为
+
+- 远端路径必须为绝对路径，父目录须已存在；上传和下载仅处理普通文件，不跟随最终文件名处的符号链接。
+- 默认拒绝覆盖；目标出现竞争创建时也会失败。显式覆盖采用同目录临时文件和原子替换，不会原地破坏旧文件。
+- 上传提交前会验证声明大小和 SHA-256。提前断线、校验失败或不完整提交会清理临时文件，保留原目标。
+- 上传和本地下载产生的文件权限为 `0600`，包括显式覆盖；不复制原文件的权限、属主或时间戳。
+- 下载从一个打开的文件描述符读取；若发现源文件在传输期间改变则拒绝结果。客户端对数据逐块计算摘要。
+- 流不是可重放任务，不支持断点续传。若发送完整上传提交后连接丢失，远端可能已经完成替换；调用方应通过下载比对大小和摘要确认结果，不自动重新覆盖。
+- 进程或主机异常终止可能遗留以 `.loom-upload-` 开头的临时文件；普通连接关闭和超时会尝试关闭 SSH 输入并清理。
+
+## `vm-file.v1` 字节协议
+
+控制帧为 4 字节网络序无符号长度和 UTF-8 JSON，JSON 最多 65536 字节。文件主体为
+原始字节，可以跨任意数量的传输帧；网络帧边界不代表文件边界。无需 half-close。
+
+stream-open 回执仅为 `{"protocol":"vm-file.v1","direction":"upload"或"download"}`，
+表示通道接纳；之后的结果帧才说明文件操作是否成功。
+
+上传输入为 `{path, size, sha256, overwrite?, timeout_seconds?}`，sha256 为小写十六进制。
+
+1. 服务端先检查目标并创建临时文件，返回 `{status:"ready", path, size, sha256}` 控制帧。
+2. 客户端发送恰好 `size` 字节，再发送 `{type:"commit", size, sha256}` 控制帧。
+3. 服务端核对实际大小、摘要和 commit，flush/fsync 后原子落盘，返回
+   `{status:"uploaded", path, size, sha256}` 控制帧，然后正常 EOF。commit 是提交边界。
+
+下载输入为 `{path, timeout_seconds?}`：先返回 `{status:"downloading", path, size}`，
+随后恰好 `size` 字节，最后返回 `{status:"downloaded", path, size, sha256}` 和正常 EOF。
+调用方必须验证尾帧及实际数据摘要后才使用文件。
+
+操作失败尽可能返回 `{status:"error", error_code}` 控制帧；中途文件缩短、网络断开或
+授权到期也可能直接导致不完整流。无有效成功尾帧和完整性校验，就不能报告传输成功。

@@ -234,3 +234,16 @@ observed `expected_attributes_revision`.
 
 
 Resource names are GRIP URIs throughout, including uploaded content and package internals. Use `upload_content(..., name="cloud/schemas/instances-output")` for a readable immutable content name; use `read_json(ref)` to read it through GRIP. Content names end in `/sha256/<digest>` but always include a readable purpose before that suffix. Use the package URI returned by Observer in `resource`; the immutable digest is an explicit contract field. Pass the returned URI unchanged: do not wrap it under another `resources/` path. `ServicePackage.publish` relocates template references to the client's configured authority and workspace.
+
+## VM file streams (SDK 0.12)
+
+For an activation declaring `files.upload` and `files.download` with byte-stream
+interaction, use `VmFileClient.discover(client, activation_uri)`, then
+`upload(local_path, remote_path)` or `download(remote_path, local_path)`. The
+`loom-vm-files` CLI provides the same operations. Overwrite is explicit, and the
+helper verifies byte length and SHA-256 before reporting success or publishing
+a downloaded file. Read the selected package HOW_TO_USE for framing, paths,
+permissions, authentication and uncertain-upload handling. Existing packages
+without these declarations require a matching package upgrade; SDK installation
+alone does not add file actions. File bytes do not go into Run inputs or content
+uploads.

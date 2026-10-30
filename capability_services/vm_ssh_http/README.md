@@ -5,12 +5,11 @@ artifact directory with `scripts/publish_service_package.py`, activate the packa
 on a Slave, then invoke the ready activation's discovered action URI. The HTTP
 paths below describe the private runtime-to-container binding.
 
-This package exposes one fixed `container:http/1` capability, `/v1/exec`, for
+This package exposes `exec` and two `byte-stream` file actions for
 an ordinary SSH-accessible VM. The activation-owned `/run/loom/instance.json`
-provides the host, user, and port. The request can provide only a shell command
-and timeout; it cannot select a target or pass SSH options.
+provides the host, user, and port. Requests provide a command or file operation; they cannot select a target or pass SSH options.
 
-The v4 execution contract accepts up to 1,048,576 command characters and an
+The execution contract accepts up to 1,048,576 command characters and an
 8 MiB JSON request. The command is sent on SSH stdin to `sh -s`. The default
 timeout is 300 seconds; callers may request 1–3600 seconds. Each output stream
 retains at most 16 MiB, with `truncated=true` when bytes are discarded. See the
@@ -42,3 +41,11 @@ The package declares `interaction.mode=credential-profile`. The
 activation's configured credentials. When they are missing or invalid, update
 the operator-managed profile and verify again on the same activation; this
 method does not launch a browser login.
+
+## Streaming files (v6)
+
+`files.upload` and `files.download` use the existing activation SSH arguments,
+credential profile and host-key checks. The shared ASGI server retains exec/auth
+HTTP hooks and adds private GRIP WebSocket routes `/v1/files/upload` and
+`/v1/files/download`. See [HOW_TO_USE.md](HOW_TO_USE.md) for the wire protocol and
+SDK/CLI examples, and [the transfer guide](../../docs/vm-file-transfers.md).

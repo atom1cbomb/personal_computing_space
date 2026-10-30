@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanli-vm-ssh-http",
-  "package_version": "v6",
+  "package_version": "v7",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -39,6 +39,46 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/exec"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/files-upload",
+        "version_or_digest": "c9648a40965d13f7844791fe96bffea6a15096b2a76144ecd5b6a7d506376f89",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-vm-ssh-http/contracts/files-upload/sha256/3d92c672c8bd697f0b2d82ecd357318bc1febd3db3b3c3b45f9eb7dd6b79a534",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "RemoteWrite",
+      "permissions": [
+        "suanli.vm.ssh.files.upload"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/files/upload",
+        "interaction": "byte-stream"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-vm/files-download",
+        "version_or_digest": "fc8ae3600f626b66a2d01247568aeb25ddf6efe24c1f86915cd250994ca6871c",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-vm-ssh-http/contracts/files-download/sha256/de98ffd701174bab62597b1ffc514e566826b83db8e3f6c338d1b3777e17c7a4",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ReadOnly",
+      "permissions": [
+        "suanli.vm.ssh.files.download"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/files/download",
+        "interaction": "byte-stream"
       }
     }
   ]

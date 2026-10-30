@@ -19,9 +19,11 @@ from .submission import SubmissionBuilder
 from .metadata import ResourceEffect, resource_attributes, validate_action_descriptor
 from .mcue import McueDefinition
 from .auth import AuthProfileStore
+from .vm_files import VmFileClient, FileTransferError
 from .workflows import CallLedger, action_contract, execute_action, inventory, publish_function, read_package_source, submit_map_reduce, wait_run
 
 __all__ = [
+    "VmFileClient", "FileTransferError",
     "CallLedger", "action_contract", "execute_action", "inventory", "publish_function",
     "read_package_source", "submit_map_reduce", "wait_run",
     "DependencyContext", "WebSocketStream", "StreamAborted", "AccessCredential",

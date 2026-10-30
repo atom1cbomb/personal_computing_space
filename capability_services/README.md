@@ -23,14 +23,14 @@
 | volcano_http | [HOW_TO_USE](volcano_http/HOW_TO_USE.md) | [README](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
 | grafana_http | [HOW_TO_USE](grafana_http/HOW_TO_USE.md) | [README](grafana_http/README.md) | grafana-http/v5 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
 | outline_http | [HOW_TO_USE](outline_http/HOW_TO_USE.md) | [README](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
-| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v6 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
-| vm_ssh_http | [HOW_TO_USE](vm_ssh_http/HOW_TO_USE.md) | [README](vm_ssh_http/README.md) | vm-ssh-http/v5 | 1 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
-| suanli_vm_ssh_http | [HOW_TO_USE](suanli_vm_ssh_http/HOW_TO_USE.md) | [README](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v5 | 1 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
+| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v7 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| vm_ssh_http | [HOW_TO_USE](vm_ssh_http/HOW_TO_USE.md) | [README](vm_ssh_http/README.md) | vm-ssh-http/v6 | 3 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
+| suanli_vm_ssh_http | [HOW_TO_USE](suanli_vm_ssh_http/HOW_TO_USE.md) | [README](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v7 | 3 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
 
 ## 发布
 
 先构建并推送相应目录的 Dockerfile，记录仓库返回的真实 `registry/repository@sha256:...`。
-两个 SSH 镜像共用 `capability_services/ssh_execution.py`；K8s、embedding 和 Overleaf 镜像需要 SDK。
+两个 SSH 镜像共用命令执行与文件流模块；SSH、K8s、embedding 和 Overleaf 镜像均安装 SDK。文件流的协议、校验和调用示例见 [VM 文件传输](../docs/vm-file-transfers.md)。
 这些镜像都从仓库根目录构建：
 
 ```sh
@@ -57,10 +57,10 @@ python scripts/publish_service_package.py capability_services/outline_http \
 本地 HTTP 部署显式加 `--allow-http`。镜像、credential profile 和 egress network 由部署者准备。
 发布不会激活容器或调用业务动作。已经发布的包版本不可改写；升级镜像或契约时，应在模板中选择新 `package_version`，并同步依赖映射的坐标。
 
-Suanli Cloud 的创建 VM descriptor 引用 Suanli SSH 使用包。先发布 SSH 包，再创建依赖映射文件：
+当前 Suanli Cloud 创建 descriptor 固定引用 SSH v6。依赖映射应填写该版本已发布的 URI；文件传输版 v7 不会自动替换已有创建契约：
 
 ```json
-{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v5": "<刚发布的 SSH 包完整 GRIP URI>"}
+{"grip://loom.local/workspaces/workspace-default/packages/suanli-vm-ssh-http/v6": "<已发布 SSH v6 的完整 GRIP URI>"}
 ```
 
 发布 Suanli Cloud 时用 `--dependencies dependencies.json`，发布工具会校验引用的包坐标和真实 digest。
