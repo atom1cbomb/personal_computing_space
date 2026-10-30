@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "loom-business-skills",
+  "version": "0.1.0",
+  "description": "Learn and reuse bounded business workflows with fresh checks against public Loom contracts.",
+  "extensions": {
+    "com.openai": {"requires_local_executor": true}
+  }
+}

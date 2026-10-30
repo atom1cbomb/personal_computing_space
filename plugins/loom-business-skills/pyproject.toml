@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loom-business-skills"
+version = "0.1.0"
+description = "Agent-side business workflow memory for the public Loom SDK"
+requires-python = ">=3.12"
+dependencies = ["loom-orchestration>=0.10,<0.11"]
+
+[project.scripts]
+loom-business-skills = "loom_business_skills.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
