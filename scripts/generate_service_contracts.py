@@ -448,7 +448,8 @@ def write_json(path: Path, value: Any) -> None:
 
 def generate(package_dir: Path, definition_factory: Any, *, check: bool = False) -> None:
     definitions = definition_factory() if definition_factory else {
-        "exec": {direction: json.loads((package_dir / "schemas" / f"exec-{direction}.json").read_text()) for direction in ("input", "output")}
+        action: {direction: json.loads((package_dir / "schemas" / f"{action}-{direction}.json").read_text()) for direction in ("input", "output")}
+        for action in ("exec", "files-upload", "files-download")
     }
     manifest_path = package_dir / "package.example.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

@@ -1,5 +1,6 @@
 """All resource identities, including package artifacts, are named GRIP URIs."""
 from pathlib import Path
+import json
 
 import httpx
 import pytest
@@ -73,9 +74,14 @@ async def test_service_publication_rewrites_every_artifact_to_deployment_namespa
     root = Path(__file__).resolve().parents[2] / "capability_services"
     options = dict(token="test-token", allow_insecure_grip=True, grip_authority=settings.grip_authority, workspace_id=settings.workspace_id)
     async with LoomClient("http://observer", transport=httpx.ASGITransport(app=app), **options) as client:
-        ssh = await ServicePackage(root / "suanli_vm_ssh_http").publish(client, image_ref="example/ssh@sha256:" + "a" * 64)
-        package_uri = await ServicePackage(root / "suanlicloud_http").publish(client, image_ref="example/cloud@sha256:" + "b" * 64, dependencies={Names().name("packages", "suanli-vm-ssh-http", "v5"): ssh})
-        assert package_uri == client.names.name("packages", "suanlicloud-http", "v6")
+        cloud = ServicePackage(root / "suanlicloud_http")
+        effect = json.loads((root / "suanlicloud_http/descriptors/instances-run.json").read_text())["resource_effects"][0]
+        coordinate = effect["access_requirements"][0]["package_ref"]["resource_id"]
+        dependency = ServicePackage(root / "suanli_vm_ssh_http")
+        dependency.manifest["package_version"] = coordinate.rsplit("/", 1)[-1]
+        ssh = await dependency.publish(client, image_ref="example/ssh@sha256:" + "a" * 64)
+        package_uri = await cloud.publish(client, image_ref="example/cloud@sha256:" + "b" * 64, dependencies={coordinate: ssh})
+        assert package_uri == client.names.name("packages", cloud.manifest["package_id"], cloud.manifest["package_version"])
         package = await client.invoke(package_uri, client.names.action("read"), {})
         assert package["resource"] == package_uri
         assert package["how_to_use_ref"]["resource_id"].startswith(client.names.root + "/content/suanlicloud-http/how-to-use/")
@@ -100,7 +106,7 @@ async def test_service_publication_rewrites_every_artifact_to_deployment_namespa
                 assert (await client.read_json(ref))["type"] == "object"
                 assert (await client.describe(ref.resource_id))["resource"]["uri"] == ref.resource_id
         exported = (await client.describe(package_uri))["resource"]["metadata"]["actions"]
-        assert any("/suanlicloud-http/v6/instances-list/sha256/" in e["uri"] for e in exported)
+        assert any(f"/suanlicloud-http/{cloud.manifest['package_version']}/instances-list/sha256/" in e["uri"] for e in exported)
         assert all("%3A" not in e["uri"] for e in exported)
         ref = await client.upload_content([1, 2, 3], name="reports/sample-values")
         assert await client.read_json(ref) == [1, 2, 3]

@@ -1,7 +1,7 @@
 """Small SSH-over-HTTP gateway for one immutable VM activation.
 
 The target is supplied by the runtime-owned ``/run/loom/instance.json`` file;
-requests can only provide a remote command and timeout.  Credentials and
+requests provide command or file arguments. Credentials and
 OpenSSH trust state live in the activation's persistent service volume.
 """
 
@@ -16,14 +16,13 @@ import subprocess
 import threading
 import time
 import httpx
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
 from capability_services.ssh_execution import (
-    DEFAULT_TIMEOUT, MAX_BODY, GatewayError, execute_ssh, validate_exec,
+    DEFAULT_TIMEOUT, GatewayError, execute_ssh, validate_exec,
 )
 
 # Browser responses remain independent of the larger command request budget.
@@ -368,11 +367,14 @@ class VmSshGateway:
 
     def exec(self, command: Any, timeout_seconds: Any = DEFAULT_TIMEOUT) -> dict[str, Any]:
         timeout = validate_exec(command, timeout_seconds)
+        return execute_ssh(self.execution_ssh_args(), command, timeout)
+
+    def execution_ssh_args(self) -> list[str]:
         with self._lock:
             self._resume_renewal()
             if self._renewal_status() == "auth_required" and self._ssh_probe() == "auth_required":
                 raise GatewayError("ssh_authentication_required", 401)
-        return execute_ssh(self._ssh_args(), command, timeout)
+        return self._ssh_args()
 
     def handle(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path == "/v1/auth/start":
@@ -386,49 +388,15 @@ class VmSshGateway:
         raise GatewayError("not_found", 404)
 
 
-class Handler(BaseHTTPRequestHandler):
-    gateway: VmSshGateway
-
-    def _reply(self, status: int, value: Any) -> None:
-        raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def do_GET(self) -> None:  # noqa: N802
-        self._reply(200, {"status": "ok"} if self.path == "/healthz" else {"error": "not_found"})
-
-    def do_POST(self) -> None:  # noqa: N802
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if length < 0 or length > MAX_BODY:
-                raise GatewayError("request_too_large", 413)
-            payload = json.loads(self.rfile.read(length) or b"{}")
-            if not isinstance(payload, dict):
-                raise GatewayError("request_json_invalid")
-            self._reply(200, self.gateway.handle(self.path.split("?", 1)[0], payload))
-        except GatewayError as exc:
-            self._reply(exc.status, {"error": exc.code})
-        except (ValueError, json.JSONDecodeError):
-            self._reply(400, {"error": "request_json_invalid"})
-        except Exception:
-            self._reply(500, {"error": "gateway_error"})
-
-    def log_message(self, _format: str, *_args: Any) -> None:
-        return
-
-
 def main() -> None:
-    Handler.gateway = VmSshGateway(
+    gateway = VmSshGateway(
         instance_path=Path(os.getenv("LOOM_INSTANCE_CONFIG", "/run/loom/instance.json")),
         state_root=Path(os.getenv("LOOM_SERVICE_STATE", "/var/lib/loom/service")),
     )
-    try:
-        ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Handler).serve_forever()
-    finally:
-        Handler.gateway.close()
+    import uvicorn
+    from capability_services.ssh_app import create_app
+    uvicorn.run(create_app(gateway), host="0.0.0.0", port=int(os.getenv("PORT", "8080")),
+                ws_max_size=65536, ws_max_queue=16)
 
 
 if __name__ == "__main__":

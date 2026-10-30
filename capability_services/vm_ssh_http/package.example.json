@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "vm-ssh-http",
-  "package_version": "v5",
+  "package_version": "v6",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -38,6 +38,46 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/exec"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/files-upload",
+        "version_or_digest": "112d9f4b79b19b9c37df799cbc51e0f97e969004a32ab3d643e92b4f35af80ea",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/contracts/files-upload/sha256/e02f49531ffd82885cb5673f77cf234056386e3cd999e6841cca932c4e7d2149",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "RemoteWrite",
+      "permissions": [
+        "vm.ssh.files.upload"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/files/upload",
+        "interaction": "byte-stream"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/vm/files-download",
+        "version_or_digest": "8a651bf0564973a8685bd601d7039c050bdc75edec1e81b14c3802c145f05b58",
+        "identity_criterion": "descriptor_digest"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/contracts/files-download/sha256/acb8b862e783209a021833343c45b253d1930177d6bc365cf38335197c62153d",
+        "identity_criterion": "content_digest"
+      },
+      "effect_class": "ReadOnly",
+      "permissions": [
+        "vm.ssh.files.download"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/files/download",
+        "interaction": "byte-stream"
       }
     }
   ]
