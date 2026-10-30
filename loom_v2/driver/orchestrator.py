@@ -138,8 +138,8 @@ class OrchestrationContext:
             raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})
         return message["ref"]
 
-    async def register_resource(self, *, step_id, mcue_ref, identity, package_ref=None, managed_by_ref=None, attributes=None):
-        _send({"type": "register_resource", "step_id": step_id, "mcue_ref": mcue_ref, "identity": identity, "package_ref": package_ref, "managed_by_ref": managed_by_ref, "attributes": attributes})
+    async def register_resource(self, *, step_id, mcue_ref, identity, managed_by_ref=None, attributes=None):
+        _send({"type": "register_resource", "step_id": step_id, "mcue_ref": mcue_ref, "identity": identity, "managed_by_ref": managed_by_ref, "attributes": attributes})
         message = _receive()
         if message.get("type") != "ref" or not isinstance(message.get("ref"), dict):
             raise OrchestrationFailure({"code": "orchestration_protocol_invalid"})

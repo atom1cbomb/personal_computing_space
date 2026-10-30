@@ -19,8 +19,9 @@ of rewriting a registration or calling an internal API.
   Observer-returned GRIP URI and its discovered `read` action.
 - `metadata.attributes` holds public values validated by that definition's
   `attributes_schema`; `metadata.attributes_revision` protects their updates.
-- `package`, `managed_by`, `state`, and computed `activations` remain system
-  metadata. They are not entries in the user-editable attributes object.
+- `managed_by`, `state`, and computed `activations` remain domain-resource system
+  metadata. Package identity belongs to the activation, not the domain resource.
+  These fields are not entries in the user-editable attributes object.
 
 The SDK filter is `client.resources(mcue="<category/subtype>")`; the
 `list-resources` action likewise takes `mcue`. Replace the placeholder with the
@@ -69,9 +70,9 @@ When the deployment supports MCUE, discover the following actions:
   `attributes_schema`; retain its authoritative definition URI. Definitions
   cannot be overwritten with different content at the same type/version.
 - Workspace `register-resource`: provide `resource_id`, `mcue_ref`, and initial
-  `attributes`; `package` and `managed_by` are optional. Resource-producing
-  effects supply an explicit `mcue_ref`. Re-registration is not an attribute
-  editing path.
+  `attributes`; `managed_by` is optional. Registration accepts no package
+  reference. Resource-producing effects supply an explicit `mcue_ref`.
+  Re-registration is not an attribute editing path.
 - Resource `update-attributes`: send `expected_attributes_revision` and `patch`.
   Objects merge recursively, omitted keys remain, arrays replace, and null
   deletes a key. The complete merged object must pass the MCUE schema.

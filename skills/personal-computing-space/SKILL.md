@@ -103,8 +103,9 @@ model, or document service does. Treat the selected capability package as the
 source of that behavior:
 
 1. Enumerate the relevant resources and activations through the public
-   Observer API. Keep the exact resource and activation URIs, package URI,
-   revision, `managed_by`, `state`, and public attributes as evidence.
+   Observer API. Keep the exact resource and activation URIs, the activation's
+   package URI and target, revision, `managed_by`, `state`, and public attributes
+   as evidence. Domain resources do not carry a package reference.
 2. Resolve the returned `metadata.mcue_ref` through its exact public MCUE read
    action before interpreting attributes. DESCRIBE the selected resource and
    activation, then read the offered action, input/output schema, interaction

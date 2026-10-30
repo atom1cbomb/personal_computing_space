@@ -150,9 +150,9 @@ SDK 提供紧凑资源目录、契约校验调用、持久调用预算账本和�
 
 ### 资源类型、描述与访问能力
 
-资源通过 MCUE 定义公开描述属性，通过可选的 `package_ref` 保留来源或接入包，通过可选的 `managed_by_ref` 指向管理者。登记资源不要求先有能力包。使用方通过 GRIP DESCRIBE 一次取得可调用的 offers 与 Schema 引用；Observer 根据实际激活绑定生成执行动作。
+资源通过 MCUE 定义类型和公开描述属性，通过可选的 `managed_by_ref` 指向管理者。登记资源不接受包引用；访问能力由 activation 的包版本和 `target_resource_ref` 绑定决定。Observer 在读取时计算资源的就绪 `activations` 和可调用 `offers`，无需在新增或停止实例时维护资源记录。访问包升级绑定同一资源 URI 即可。已有部署的字段移除与归档见 [迁移说明](migrations/alembic/README.md#008-resource-access-bindings)。
 
-例如，一台 VM 的使用包是 VM SSH 包，而管理它的云资源使用 Suanli Cloud 包：**在 VM 上执行命令**和**创建、停止或销毁 VM**是两套不同职责，不需要混在同一个包里。
+例如，一台 VM 的 SSH 访问实例使用 VM SSH 包，而管理它的云资源通过 Suanli Cloud 实例提供管理动作：**在 VM 上执行命令**和**创建、停止或销毁 VM**是两套不同职责，不需要混在同一个包里。
 
 同一个包可以在同一 Slave 上创建多个命名实例，每个实例绑定自己的目标资源和配置。因此可以为每台 VM 启动一个独立的 SSH 能力容器，分别保存认证状态和 `known_hosts`，不必为每台机器复制一份包版本。
 
@@ -208,7 +208,7 @@ SDK 提供紧凑资源目录、契约校验调用、持久调用预算账本和�
 
 1. 查询 Workspace 的 Slave、Suanli Cloud 包和可用激活实例。
 2. 调用云包创建 VM，保存 InstanceId，并轮询状态和 IP，不能只把创建请求成功当作 VM 已就绪。
-3. 在 Observer 登记 VM 资源，关联使用包及管理资源。
+3. 在 Observer 登记 VM 资源的 MCUE 类型、公开属性和管理资源。
 4. 在 Slave 上为这台 VM 激活一个有独立名字的 VM SSH 包实例，配置目标地址。
 5. 通过 Observer 发起认证，用户运行本地助手并完成浏览器登录；确认实例为 `ready/authenticated`。
 6. 通过 VM SSH 包执行计算，取回输出并按任务标准验收。

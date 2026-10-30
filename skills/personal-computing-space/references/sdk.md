@@ -179,8 +179,7 @@ paths and incompatible mapping types rather than choosing a relationship.
 ## Durable Cleanup
 
 Inside an orchestration program, call `ctx.register_resource` with `mcue_ref`,
-`identity`, optional public `attributes` and an optional published workspace
-`package_ref`, then `defer_cleanup`
+`identity`, optional public `attributes` and optional `managed_by_ref`, then `defer_cleanup`
 with a distinct stable step id. Registration reserves one node from `max_nodes`;
 budget for both normal nodes and cleanup. `resource_budget.cleanup_timeout_seconds`
 is a separate terminal cleanup deadline (default 60 seconds, allowed 1–300).
@@ -226,8 +225,11 @@ Observer-returned references, never placeholder digests. Publication does not
 activate or invoke the package. Outside a program, domain resource registration
 uses the workspace's GRIP `register-resource` action. Read its offered input
 schema for the deployed fields. Registration requires `resource_id` and
-`mcue_ref`, accepts initial `attributes`, and has optional `package` and
-`managed_by`. Update existing attributes with `update-attributes` and an
+`mcue_ref`, accepts initial `attributes`, and has optional `managed_by`.
+SDK 0.11 and the matching Observer remove the domain resource's `package_ref`/`package`;
+select the access package when activating an instance bound to the resource.
+`metadata.activations` is computed from ready bindings on each read, not stored
+on the domain resource. Update existing attributes with `update-attributes` and an
 observed `expected_attributes_revision`.
 
 

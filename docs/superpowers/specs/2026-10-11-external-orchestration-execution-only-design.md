@@ -1,5 +1,7 @@
 # 外部 Agent 编排与 Driver 执行专用化
 
+> 资源包关联更新（2026-10-30，Issue #4）：本文保留历史设计语境。领域资源的 `package_ref` / `metadata.package` 已移除，登记不再接受包引用；访问包由 activation 确定，`resource.activations` 和 offers 从真实绑定派生。本文涉及资源级包字段、换包冲突及登记示例的旧约定已被替代，当前接口见 [GRIP 指南](../../grip-resource-usage.md#领域资源登记和服务包发布)，数据归档见 [008 迁移说明](../../../migrations/alembic/README.md#008-resource-access-bindings)。
+
 > 2026-10-30 接口更新：完整计划提交、查询和 Run 生命周期已统一为 GRIP Driver/Run actions；本文的任务 REST 路径为历史记录。现行契约见 [原生任务实施计划](../plans/2026-10-30-grip-native-tasks.md) 和 [GRIP 指南](../../grip-resource-usage.md)。
 
 > 2026-10-20 术语更新：本文保留当时的设计或验收记录；现行能力包业务接口统一为 action，字段、命名和实例描述以 [action 设计](2026-10-20-grip-actions-and-activation-description-design.md) 为准。旧示例需按新契约重新生成后使用。

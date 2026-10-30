@@ -160,7 +160,7 @@ async def test_resource_binding_is_explicit_and_ambiguous_instances_are_not_chos
         "state": "running",
     })
     target = resource_id
-    assert (await client.describe(target))["resource"]["metadata"]["package"] is None
+    assert "package" not in (await client.describe(target))["resource"]["metadata"]
     assert [o["action"]["uri"] for o in (await client.describe(target))["offers"]] == [client.names.action("update-attributes"), client.names.action("how-to-use")]
     activation = await client.invoke(slave, client.names.action("activate-package"), {
         "package": package, "instance_name": "vm-one", "target": target, "idempotency_key": "vm-one",
@@ -199,6 +199,77 @@ async def test_activation_stopped_after_enqueue_is_rejected_at_slave(setup):
     assert app.state.slaves["slave-a"].attempts == {}
 
 
+async def test_access_package_upgrade_changes_only_derived_resource_views(setup):
+    from loom_v2.contracts.types import CapabilityHealthReport
+
+    app, repo, client, raw = setup
+    slave, old_package, old_action = await identities(client)
+    target = client.names.name("resources", "vm", "autopaper-vm")
+    await client.invoke(client.names.root, client.names.action("register-resource"), {
+        "resource_id": target, "mcue_ref": client.names.mcue("computing/vm"),
+        "attributes": {"display_name": "autopaper-vm"}, "state": "running",
+    })
+    stored_before = (await repo.get_resource("workspace-default", target)).model_dump(mode="json")
+    old = await client.invoke(slave, client.names.action("activate-package"), {
+        "package": old_package, "instance_name": "access", "target": target, "idempotency_key": "old-access",
+    })
+    manifest = {key: raw[key] for key in ("package_id", "package_version", "package_type", "execution", "action_exports", "body")}
+    published = await client.register_package({**manifest, "package_version": "v2"})
+    assert (await client.describe(target))["resource"]["metadata"]["activations"] == [old["resource"]]
+    new = await client.invoke(slave, client.names.action("activate-package"), {
+        "package": published["resource"], "instance_name": "access", "target": target, "idempotency_key": "new-access",
+    })
+
+    async def report(state):
+        await repo.record_capability_health(CapabilityHealthReport(
+            report_id=f"upgrade-{state}", package_version_ref=published["resource"],
+            package_digest=published["package_digest"], target_slave="slave-a", instance_name="access",
+            activation_revision=new["revision"], activation_state=state,
+        ))
+
+    await report("pending_auth")
+    pending = await client.describe(new["resource"])
+    assert pending["resource"]["metadata"]["state"] == "pending_auth"
+    assert pending["resource"]["metadata"]["package"] == published["resource"]
+    assert all(not action["available"] for action in pending["resource"]["metadata"]["actions"])
+    assert (await client.describe(target))["resource"]["metadata"]["activations"] == [old["resource"]]
+    assert old_action in {o["action"]["uri"] for o in (await client.describe(target))["offers"]}
+
+    await report("ready")
+    ambiguous = await client.describe(target)
+    assert set(ambiguous["resource"]["metadata"]["activations"]) == {old["resource"], new["resource"]}
+    assert {o["action"]["uri"] for o in ambiguous["offers"]} == {
+        client.names.action("update-attributes"), client.names.action("how-to-use"),
+    }
+    await client.invoke(old["resource"], client.names.action("stop"), {
+        "expected_revision": old["revision"], "idempotency_key": "retire-old-access",
+    })
+    description = await client.describe(target)
+    assert "package" not in description["resource"]["metadata"]
+    assert description["resource"]["metadata"]["activations"] == [new["resource"]]
+    current = await client.describe(new["resource"])
+    action = current["resource"]["metadata"]["actions"][0]["uri"]
+    assert action != old_action
+    assert action in {o["action"]["uri"] for o in description["offers"]}
+    assert old_action not in {o["action"]["uri"] for o in description["offers"]}
+    assert (await repo.get_resource("workspace-default", target)).model_dump(mode="json") == stored_before
+    listed = next(row for row in await client.resources(mcue="computing/vm") if row["uri"] == target)
+    assert listed["metadata"] == description["resource"]["metadata"]
+    instances = await client.resources(mcue="capability/activation")
+    assert next(row for row in instances if row["uri"] == old["resource"])["metadata"]["state"] == "stopped"
+    submitted = await client.invoke(target, action, {
+        "arguments": {"value": 21}, "expected_revision": new["revision"], "idempotency_key": "new-access-call",
+    })
+    result = await wait_result(app, client, submitted["run"])
+    assert result["state"] == "completed" and result["outcome"]["value"] == {"value": 42}
+    executed = await repo.get_run(result["run_id"])
+    binding, = executed.committed.snapshot.compute_bindings
+    frozen_package = binding.capability_package_ref
+    assert frozen_package.resource_id == published["resource"]
+    assert frozen_package.digest == published["package_digest"]
+    assert binding.instance_name == "access" and binding.expected_activation_revision == new["revision"]
+
+
 async def test_directory_and_queued_action_survive_repository_reload(setup, tmp_path):
     from sqlalchemy.ext.asyncio import create_async_engine
     from loom_v2.contracts.types import CapabilityHealthReport
@@ -221,7 +292,7 @@ async def test_directory_and_queued_action_survive_repository_reload(setup, tmp_
     package = await repo.register_workspace_package("workspace-default", manifest)
     await repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="persist", instance_name="saved", credential_profile="saved-account")
     await repo.record_capability_health(CapabilityHealthReport(report_id="saved-ready", package_version_ref=package.version_ref, package_digest=package.package_digest, target_slave="slave-a", instance_name="saved", activation_state="ready", activation_revision=1))
-    await repo.register_resource("workspace-default", {"resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/persisted"}, "mcue_ref": repo.names.mcue("computing/vm"), "package_ref": {"resource_id": package.version_ref, "version_or_digest": package.package_digest}})
+    await repo.register_resource("workspace-default", {"resource_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/resources/persisted"}, "mcue_ref": repo.names.mcue("computing/vm")})
     app = create_app(repo, settings=settings)
     async with LoomClient("http://observer", token="persistent", allow_insecure_grip=True, transport=httpx.ASGITransport(app=app)) as client:
         slave, package_uri, action = await identities(client)

@@ -325,7 +325,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     volcano_uri = client.names.name("resources", "volcano", "beijing")
                     related_kubernetes = client.names.name("activations", "kubernetes-http", "v4", "slave-a", "beijing")
                     await client.invoke(client.names.root, client.names.action("register-resource"), {
-                        "resource_id": volcano_uri, "mcue_ref": client.names.mcue("computing/volcano"), "package": package,
+                        "resource_id": volcano_uri, "mcue_ref": client.names.mcue("computing/volcano"),
                         "attributes": {"dashboard_url": "https://volcano.example:7443", "kubernetes_ref": related_kubernetes},
                     })
                     binding = {"target": volcano_uri}
@@ -335,7 +335,7 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     grafana_uri = client.names.name("resources", "grafana", "bj")
                     related_kubernetes = client.names.name("activations", "kubernetes-http", "v4", "slave-a", "beijing")
                     await client.invoke(client.names.root, client.names.action("register-resource"), {
-                        "resource_id": grafana_uri, "mcue_ref": client.names.mcue("computing/grafana"), "package": package,
+                        "resource_id": grafana_uri, "mcue_ref": client.names.mcue("computing/grafana"),
                         "attributes": {"dashboard_url": "https://grafana.example:7443", "kubernetes_ref": related_kubernetes},
                     })
                     binding = {"target": grafana_uri}

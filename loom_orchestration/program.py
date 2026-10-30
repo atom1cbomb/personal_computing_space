@@ -25,7 +25,6 @@ class OrchestrationContext(Protocol):
         step_id: str,
         mcue_ref: str,
         identity: str,
-        package_ref: ResourceRef | None = None,
         managed_by_ref: ResourceRef | None = None,
         attributes: dict[str, Any] | None = None,
     ) -> ResourceRef: ...

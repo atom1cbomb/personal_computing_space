@@ -35,7 +35,9 @@ python scripts/migrate_resource_mcue.py --mapping /path/to/resource-mcue-map.jso
 ```
 
 命令读取既有 `LOOM_DATABASE_URL`、`LOOM_WORKSPACE_ID`、`LOOM_GRIP_AUTHORITY` 和 ContentStore 环境配置，
-应用 Alembic `006_mcue_attributes`，登记内置类型定义，然后原子回填映射中的旧资源。
+应用当前 Alembic head（包含 `006_mcue_attributes` 与 `008_resource_access_bindings`），
+登记内置类型定义，然后原子回填映射中的旧资源。008 会先归档并移除旧资源的包字段，
+详见[资源访问绑定迁移](../migrations/alembic/README.md#008-resource-access-bindings)。
 映射遗漏旧资源、包含不存在的 URI、属性不符合 Schema 或与已迁移类型冲突时拒绝资源回填。
 重复执行相同映射不会覆盖已经修改过的属性。空数据库可使用 `{}` 作为映射。
 新增自定义类型的旧资源应先在定义注册表中准备对应的定义，再回填其引用。

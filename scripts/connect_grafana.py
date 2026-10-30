@@ -40,7 +40,7 @@ async def connect(client: LoomClient, *, package: str, slave: str, name: str,
                 or volcano["metadata"]["attributes"]["kubernetes_ref"] != related["resource"]["uri"]):
             raise ValueError("volcano_kubernetes_binding_mismatch")
         attributes["volcano_ref"] = volcano["uri"]
-    configuration = {"api_origin": endpoint, "browser_origin": public_origin}
+    configuration: dict[str, object] = {"api_origin": endpoint, "browser_origin": public_origin}
     if datasource_uid is not None:
         configuration["datasource_uid"] = uid(datasource_uid)
     if gpu_metric is not None:
@@ -52,7 +52,7 @@ async def connect(client: LoomClient, *, package: str, slave: str, name: str,
     if existing is None:
         registered = await client.invoke(client.names.root, client.names.action("register-resource"), {
             "resource_id": requested, "mcue_ref": mcue["resource"], "attributes": attributes,
-            "package": package, "state": "registered",
+            "state": "registered",
         })
         target = registered["resource"]
     else:

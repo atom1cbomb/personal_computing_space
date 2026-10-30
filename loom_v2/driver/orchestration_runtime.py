@@ -110,10 +110,10 @@ class DynamicOrchestrationRuntime:
                 run_id, execution_id=record.execution_id, step_id=step_id, value=value,
             )
 
-        async def register_resource(*, step_id: str, mcue_ref: str, identity: str, package_ref: ResourceRef | None = None, managed_by_ref: ResourceRef | None = None, attributes: dict[str, Any] | None = None) -> ResourceRef:
+        async def register_resource(*, step_id: str, mcue_ref: str, identity: str, managed_by_ref: ResourceRef | None = None, attributes: dict[str, Any] | None = None) -> ResourceRef:
             return await self.repository.register_program_resource(
                 run_id, execution_id=record.execution_id, step_id=step_id,
-                mcue_ref=mcue_ref, identity=identity, package_ref=package_ref,
+                mcue_ref=mcue_ref, identity=identity,
                 managed_by_ref=managed_by_ref, attributes=attributes,
             )
 

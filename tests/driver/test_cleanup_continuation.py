@@ -59,7 +59,7 @@ async def lifecycle_run(repo, *, max_nodes=4, register=True):
     record = await repo.get_run(submission["run_id"])
     if not register:
         return record, node_ref, None
-    resource = await repo.register_program_resource(record.run_id, execution_id=record.execution_id, step_id="resource", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="vm-test", package_ref=node_ref)
+    resource = await repo.register_program_resource(record.run_id, execution_id=record.execution_id, step_id="resource", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="vm-test")
     await repo.register_cleanup(record.run_id, execution_id=record.execution_id, step_id="delete", resource_ref=resource,
                                 cleanup_action_ref=ResourceRef.model_validate(descriptor.model_dump(mode="json")), input_mapping={"id": "$resource.identity"})
     return record, node_ref, resource
@@ -334,7 +334,7 @@ async def test_one_run_create_authenticate_use_cleanup_without_duplicate_create(
         async def run(self, program, input_ref, **context):
             created = await context["emit_node"]("create", package_ref, descriptor, [input_ref])
             await context["result"](created)
-            resource = await context["register_resource"](step_id="resource", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="vm-test", package_ref=package_ref)
+            resource = await context["register_resource"](step_id="resource", mcue_ref="grip://loom.local/workspaces/workspace-default/mcue-types/computing/vm/v1", identity="vm-test")
             await context["defer_cleanup"](step_id="delete", resource_ref=resource, cleanup_action_ref=descriptor, input_mapping={"id": "$resource.identity"})
             activation = await context["ensure_activation"](step_id="access", package_ref=package_ref, target_resource_ref=resource,
                 instance_name="vm-test", instance_config={"host": "192.0.2.1", "port": 22, "user": "root"}, requires_authentication=True)

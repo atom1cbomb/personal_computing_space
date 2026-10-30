@@ -86,14 +86,19 @@ async def test_mcue_upgrade_preserves_existing_resource_and_serializes_writers(d
     repo = ObserverRepository(engine)
     scope = "workspace-default"
     target = repo.names.name("resources", "vm", "pre-mcue")
+    legacy_package = {"resource_id": repo.names.name("packages", "legacy-ssh", "v1"), "version_or_digest": "a" * 64}
     async with engine.begin() as connection:
         await connection.run_sync(lambda sync: command.upgrade(_config("observer", sync), "005_slave_action_name"))
         await connection.execute(text(
             "INSERT INTO workspace_resources (workspace_id, resource_id, resource) "
             "VALUES (:workspace, :target, CAST(:resource AS jsonb))"
-        ), {"workspace": scope, "target": target, "resource": json.dumps({"resource_ref": {"resource_id": target}, "state": "running"})})
+        ), {"workspace": scope, "target": target, "resource": json.dumps({
+            "resource_ref": {"resource_id": target}, "state": "running", "package_ref": legacy_package,
+        })})
         await apply_migrations(connection, "observer")
         assert (await connection.execute(text("SELECT attributes_revision FROM workspace_resources"))).scalar_one() == 1
+        archived = (await connection.execute(text("SELECT resource FROM workspace_resource_package_archive"))).scalar_one()
+        assert archived["package_ref"] == legacy_package and "mcue_ref" not in archived
     await repo.ensure_mcue_definitions(scope)
     assert await backfill_resource_mcue(repo, scope, {target: {"mcue_ref": repo.names.mcue("computing/vm")}}) == 1
     other = ObserverRepository(engine, content_store=repo.content_store)
@@ -147,7 +152,7 @@ async def test_failed_migration_rolls_back_schema_and_version(database, monkeypa
         assert (await connection.execute(text(f"SELECT to_regclass('{other_table}')"))).scalar() is None
         assert (await connection.execute(text(
             f"SELECT version_num FROM loom_{role}_alembic_version"
-            ))).scalar_one() == "007_activation_credentials"
+            ))).scalar_one() == "008_resource_access_bindings"
 
 
 @pytest.mark.parametrize("role", ["observer", "slave"])
@@ -193,7 +198,7 @@ asyncio.run(main())
         async with engine.connect() as connection:
             assert (await connection.execute(text(
                 f"SELECT version_num FROM loom_{role}_alembic_version"
-                ))).scalars().all() == ["007_activation_credentials"]
+                ))).scalars().all() == ["008_resource_access_bindings"]
     finally:
         for process in processes:
             if process.returncode is None:
@@ -247,3 +252,106 @@ async def test_activation_credential_migration_preserves_packages_and_existing_s
             assert all(a['package_payload'] == original for a in updated)
         assert [a['credential_profile'] for a in updated] == ['legacy-profile', 'keep-me', None]
         assert all(a['activation_revision'] == 7 and a['package_digest'] == original['package_digest'] for a in updated)
+
+
+@pytest.mark.parametrize("fail_after_archive", [False, True])
+async def test_resource_package_migration_archives_exact_rows_and_preserves_execution(database, monkeypatch, fail_after_archive):
+    from loom_v2.db.models import RunRow, WorkspaceCapabilityPackageRow, WorkspaceResourceRow
+    from tests.slave.test_container_http_runtime import _package
+
+    engine, _ = database
+    repo = ObserverRepository(engine)
+    scope = "workspace-default"
+    target = repo.names.name("resources", "vm", "autopaper-vm")
+    original = {
+        "resource_ref": {"resource_id": target},
+        "mcue_ref": repo.names.mcue("computing/vm"),
+        "attributes": {"display_name": "autopaper-vm", "cpu_cores": 4},
+        "state": "running",
+        "package_ref": {"resource_id": repo.names.name("packages", "old-access", "v3"), "version_or_digest": "a" * 64},
+        "managed_by_ref": {"resource_id": repo.names.name("resources", "manager")},
+    }
+    rows = [
+        {"workspace_id": scope, "resource_id": target, "resource": original, "attributes_revision": 4},
+        {"workspace_id": scope, "resource_id": target + "-null", "resource": {
+            **original, "resource_ref": {"resource_id": target + "-null"}, "package_ref": None,
+        }, "attributes_revision": 2},
+        {"workspace_id": scope, "resource_id": target + "-absent", "resource": {
+            **{k: v for k, v in original.items() if k != "package_ref"},
+            "resource_ref": {"resource_id": target + "-absent"},
+        }, "attributes_revision": 7},
+    ]
+    package = _package(["/v1/echo"]).model_dump(mode="json")
+    package_uri = repo.names.name("packages", package["package_id"], package["package_version"])
+    from loom_v2.contracts.types import CapabilityPackageActivation
+    activation = CapabilityPackageActivation(
+        package_version_ref=package_uri, package_digest=package["package_digest"], target_slave="slave-a",
+        activation_closure_version_ref="closure-1", compute_binding_ref="", desired_state="running",
+        activation_state="ready", activation_revision=5, last_idempotency_key="keep-key",
+        instance_name="access", target_resource_ref={"resource_id": target}, credential_profile="keep-profile",
+        instance_config={"host": "vm.example"}, runtime_profile={"authentication": {"status": "authenticated"}},
+    ).model_dump(mode="json")
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda sync: command.upgrade(_config("observer", sync), "007_activation_credentials"))
+        await connection.execute(WorkspaceResourceRow.__table__.insert(), rows)
+        await connection.execute(WorkspaceCapabilityPackageRow.__table__.insert().values(
+            workspace_id=scope, package_ref=package_uri, package=package,
+            capability_activations=[activation], events=[{"phase": "unchanged"}]))
+        await connection.execute(RunRow.__table__.insert().values(
+            run_id="historic", task_ref="task", goal="existing", draft={}, state="completed",
+            committed={"snapshot": {"program_systems": {"package_ref": original["package_ref"]}}},
+            capability_packages=[package], capability_activations=[activation],
+            events=[{"phase": "program_resource_registered", "arguments": original}],
+            outcome={"value": "unchanged"}))
+        package_before = (await connection.execute(WorkspaceCapabilityPackageRow.__table__.select())).mappings().one()
+        run_before = (await connection.execute(RunRow.__table__.select())).mappings().one()
+
+    if fail_after_archive:
+        execute = op.execute
+
+        def fail_on_resource_update(sql, *args, **kwargs):
+            if "UPDATE workspace_resources" in str(sql):
+                raise RuntimeError("injected_after_resource_archive")
+            return execute(sql, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(op, "execute", fail_on_resource_update)
+            with pytest.raises(RuntimeError, match="injected_after_resource_archive"):
+                async with engine.begin() as connection:
+                    await apply_migrations(connection, "observer")
+        async with engine.connect() as connection:
+            assert (await connection.execute(text("SELECT to_regclass('workspace_resource_package_archive')"))).scalar() is None
+            assert (await connection.execute(text("SELECT version_num FROM loom_observer_alembic_version"))).scalar_one() == "007_activation_credentials"
+            assert [dict(row) for row in (await connection.execute(
+                WorkspaceResourceRow.__table__.select().order_by(WorkspaceResourceRow.resource_id)
+            )).mappings()] == sorted(rows, key=lambda row: row["resource_id"])
+
+    async with engine.begin() as connection:
+        await apply_migrations(connection, "observer")
+        await apply_migrations(connection, "observer")
+        archive = (await connection.execute(text(
+            "SELECT workspace_id, resource_id, resource, attributes_revision, archived_at "
+            "FROM workspace_resource_package_archive ORDER BY resource_id"
+        ))).mappings().all()
+        assert len(archive) == 2
+        for row, old in zip(archive, rows[:2]):
+            assert row["archived_at"] is not None
+            assert {key: row[key] for key in old} == old
+        for row in (await connection.execute(WorkspaceResourceRow.__table__.select())).mappings():
+            old = next(item for item in rows if item["resource_id"] == row["resource_id"])
+            assert row["resource"] == {key: value for key, value in old["resource"].items() if key != "package_ref"}
+            assert row["attributes_revision"] == old["attributes_revision"]
+        assert (await connection.execute(WorkspaceCapabilityPackageRow.__table__.select())).mappings().one() == package_before
+        assert (await connection.execute(RunRow.__table__.select())).mappings().one() == run_before
+
+    restored = await ObserverRepository(engine).get_resource(scope, target)
+    assert restored.resource_ref.resource_id == target
+    assert restored.attributes_revision == 4 and restored.attributes == original["attributes"]
+    assert "package_ref" not in restored.model_dump()
+    # Later edits affect the live resource only, never the migration snapshot.
+    await repo.update_resource_attributes(scope, target, expected_attributes_revision=4, patch={"cpu_cores": 8})
+    async with engine.connect() as connection:
+        saved = (await connection.execute(text(
+            "SELECT resource FROM workspace_resource_package_archive WHERE resource_id = :target"
+        ), {"target": target})).scalar_one()
+        assert saved == original

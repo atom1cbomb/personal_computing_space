@@ -1706,9 +1706,7 @@ class ObserverRepository:
             resource_payload = args.get("resource")
             if resource_payload is None:
                 resource_payload = {
-                    key: args[key]
-                    for key in ("resource_ref", "mcue_ref", "attributes", "package_ref", "managed_by_ref", "state")
-                    if key in args
+                    key: value for key, value in args.items() if key not in {"workspace_id", "run_id"}
                 }
             if not isinstance(resource_payload, dict):
                 raise ValueError("resource_payload_invalid")
@@ -2117,12 +2115,6 @@ class ObserverRepository:
         if not resource.resource_ref.resource_id.startswith(names.root + "/resources/"):
             raise ValueError("resource_namespace_invalid")
         definition = await self.get_mcue_definition(workspace_id, resource.mcue_ref)
-        if resource.package_ref is not None:
-            if resource.package_ref.digest is None:
-                raise ValueError("package_digest_required")
-            package = await self.get_capability_package(resource.package_ref)
-            if package.workspace_id != workspace_id or package.publication_state != "published":
-                raise ValueError("resource_package_unavailable")
         if resource.managed_by_ref is not None:
             if resource.managed_by_ref.resource_id == resource.resource_ref.resource_id:
                 raise ValueError("resource_manager_self_reference")
@@ -2135,10 +2127,7 @@ class ObserverRepository:
                 row = await session.get(WorkspaceResourceRow, key, with_for_update=True)
                 existing = self._resource_from_row(row) if row else None
             if existing is not None:
-                if any(
-                    field in resource.model_fields_set and getattr(existing, field) != getattr(resource, field)
-                    for field in ("package_ref", "managed_by_ref")
-                ):
+                if "managed_by_ref" in resource.model_fields_set and existing.managed_by_ref != resource.managed_by_ref:
                     raise ValueError("resource_binding_conflict")
                 if existing.mcue_ref != resource.mcue_ref:
                     raise ValueError("resource_mcue_conflict")
@@ -3648,11 +3637,8 @@ class ObserverRepository:
                 else "workspace-default"
             )
         if target_resource_ref is not None:
-            # A managed resource's package describes the resource domain
-            # (for example a VM API), while an activation's package describes
-            # the action used to access it (for example SSH).  They are
-            # intentionally different identities; only workspace ownership
-            # and the explicit target_resource_ref binding are required.
+            # The activation selects the access package. Its explicit target
+            # binds it to a stable domain resource in the same workspace.
             await self.get_resource(record_workspace, target_resource_ref)
         if workspace_id is not None and workspace_id != record_workspace:
             raise ValueError("workspace_binding_mismatch")
