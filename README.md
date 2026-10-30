@@ -6,6 +6,10 @@
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
+外部 agent 通过独立 SDK 和通用 skill 使用 Loom；可选的业务经验插件把探索得到的方法保存在 agent 本地，复用前重新核验线上资源。业务经验的学习与检索由插件承担，Observer、Driver、Slave 保持通用运行职责。
+
+按使用目的阅读：[使用已有工作空间](skills/personal-computing-space/SKILL.md) · [部署 Loom](#快速开始) · [接入服务](capability_services/README.md) · [统一登录](docs/authentication.md) · [业务经验插件](plugins/loom-business-skills/README.md)。
+
 ## 能做什么
 
 - **通过 agent 发起计算任务**：向外部 agent 描述目标、输入、约束和验收标准；它使用 GRIP 或提交完整计划，Web 界面用于查看执行状态和结果。
@@ -13,6 +17,7 @@
 - **接入外部服务**：把 Kubernetes、云平台、文档服务等封装成能力包，让 agent 通过明确的接口使用它们，而不是把每个服务的逻辑写进系统核心。
 - **使用任务创建的新资源**：例如通过云能力包创建 VM，再为 VM 部署 SSH 访问能力包，完成认证后在 VM 上执行命令。
 - **沉淀可复用能力**：任务中生成的能力包可以显式发布，供后续任务复用；也可以直接向 Workspace 上传已有能力包，不必先创建 Run。
+- **复用已验证的业务方法**：外部 agent 可用独立插件记录参数化步骤、契约和验收证据；下次按目标检索，检查当前资源后再执行。只注册一个入口 skill，经验增加不会扩充自动加载的 skill 目录。
 - **查询与核验执行事实**：查看可用 Slave、能力包、资源、激活状态、任务尝试和失败原因；按内容引用取回实际结果。
 
 仓库内已有的服务能力包如下。它们需要各自的镜像、网络、服务账号或凭据配置，不会随着 Loom 启动自动获得外部服务权限。
@@ -20,10 +25,11 @@
 | 能力包（使用说明） | 当前源码版本 | 提供的能力 |
 | --- | --- | --- |
 | [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v8` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
-| [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v1` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
+| [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v2` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
 | [Volcano](capability_services/volcano_http/HOW_TO_USE.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
 | [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v5` | 查询仪表盘、Prometheus 指标、GPU 利用率及 GPU Arena，按 namespace 统计 GPU 小时 |
 | [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v2` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
+| [Overleaf](capability_services/suanli_overleaf_http/HOW_TO_USE.md) | `suanli-overleaf-http/v1` | 查询项目、下载源码、检查版本、同步修改和导入新项目；在外部 agent 本地编辑与编译 |
 | [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v6` | 查询区域、节点、镜像和实例，创建及管理 VM |
 | [Suanli VM SSH](capability_services/suanli_vm_ssh_http/HOW_TO_USE.md) | `suanli-vm-ssh-http/v5` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
 | [普通 VM SSH](capability_services/vm_ssh_http/HOW_TO_USE.md) | `vm-ssh-http/v5` | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
@@ -40,7 +46,7 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 **AI 的决策与实际执行可以分别检查。** 系统保留执行时使用的计划版本、能力包引用、输入、尝试记录和输出。模型说“完成”不等于任务成功，最终以 Run 状态、结果及验收证据为准。
 
-**一次任务的成果可以复用。** 程序、契约和能力包不必每次重新生成；发布后的包可以被其他 Run 使用，同一个包也可以部署多个有名字的实例。
+**一次任务的成果可以复用。** 程序、契约和能力包不必每次重新生成；发布后的包可以被其他 Run 使用，同一个包也可以部署多个有名字的实例。业务经验插件进一步保存如何组合这些能力的方法，后续任务仍读取新结果并重新验收。
 
 **错误更容易定位。** 能力未就绪、外部认证失败、执行失败和需要人工验收是不同状态；系统用持久化记录、幂等键和版本检查帮助对账，不把超时直接当作“没有执行”。这不等于对任意外部服务提供 exactly-once 保证。
 
@@ -68,6 +74,8 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 **外部 agent 负责编排，Driver 负责执行。** GRIP 目录中的 `computing/driver` 是单一逻辑执行资源，URI 不随 Driver 进程重启变化。外部 agent 对它调用 `submit-plan`，Observer 校验完整 `ClosureContract`、冻结版本并排队；Driver 领取队列项，在沙箱中运行普通程序或 `container:python_orchestrator/1`。它不接收 prompt、不维护会话，也不持有模型 secret。`accepting_submissions` 表示入口可接受提交，`available` 表示 Driver 租约在线；离线时仍可持久化排队。
 
+当前每个 Workspace 使用一个活跃 Driver，逻辑资源为 `drivers/default`；多 Driver 自动路由尚未实现。
+
 **Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
 
 持久化任务的执行路径是 **Driver → Observer → Slave**。Driver 按计划选择逻辑执行目标，不直接连接 Slave endpoint；Observer 根据已注册的节点信息中继。直接服务调用与字节流按 offer 选择服务入口、Slave 数据入口或 Observer 中转，不经过 Driver。服务内部地址和容器端点由 Slave/runtime 管理，Observer 不需要认识 Kubernetes、Suanli Cloud 等业务协议。
@@ -85,7 +93,7 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 ## 统一使用资源：GRIP
 
-Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` URI 发现。使用流程是 `DESCRIBE(target)` 获取动作与 binding，再 `INVOKE(target, action, input)`。例如对 Slave 调用 `run-package`，input 引用能力包与业务输入，结果返回可查询的任务资源。激活实例直接提供自身的业务动作。
+Driver、Slave、能力包、激活实例、领域资源、Plan 和 Run 都可通过稳定的 `grip://` URI 发现。使用流程是 `DESCRIBE(target)` 获取动作与 binding，再 `INVOKE(target, action, input)`。例如对 Slave 调用 `run-package`，input 引用能力包与业务输入，结果返回可查询的任务资源。激活实例直接提供自身的业务动作。
 
 包导出的 `runtime_binding.interaction` 决定调用方式：
 
@@ -97,7 +105,7 @@ Slave、能力包、激活后的实例和 Run 都可通过稳定的 `grip://` UR
 
 任务提交本身也使用 GRIP 的 request-reply mode，调用时应同时读取 offer 的 Schema，不能仅凭 mode 判断结果格式。需要执行记录时，可用 `run-package` 将普通服务动作作为任务运行；字节流动作不能作为任务节点。
 
-SDK 0.8 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_preference` 选择已发布路由。服务授权限定目标、动作、激活修订和有效期；请求发送后失败不会自动换路重放。协议和流限制见 [GRIP 服务 binding 与字节流](docs/grip-service-bindings.md)。
+SDK 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_preference` 选择已发布路由。服务授权限定目标、动作、激活修订和有效期；请求发送后失败不会自动换路重放。协议和流限制见 [GRIP 服务 binding 与字节流](docs/grip-service-bindings.md)。
 
 所有资源引用都使用可读 GRIP 名称，包括包内 Schema、IoContract、descriptor 和程序内容。例如 `content/suanlicloud-http/schemas/instances-list-output/sha256/<摘要>`；摘要用于校验，不再单独充当整个资源名字。SDK 和资源目录使用相同 URI。
 
@@ -109,7 +117,7 @@ SDK 0.8 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_pre
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
 同包不同实例可以使用不同账号或集群。旧部署引入实例凭据时需执行 Alembic 007，见
 [激活凭据升级说明](docs/activation-credentials-upgrade.md)。使用当前服务 binding 时需匹配
-SDK 0.8、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部署说明](docs/service-bindings-deployment.md)。
+当前 SDK、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部署说明](docs/service-bindings-deployment.md)。
 
 ## 能力包、资源和实例
 
@@ -127,7 +135,7 @@ SDK 0.8、Observer、Slave 和 `runtime-plugin/2`，见 [节点服务入口部�
 
 输入输出契约不仅描述 JSON 字段，也可以表达成功语义及验证器。**格式正确、HTTP 成功或命令退出成功，不自动等于用户的业务目标已经达成。** 声明了成功语义但没有自动验证器时，系统可以要求人工确认。
 
-SDK 0.9 提供紧凑资源目录、契约校验调用、持久调用预算账本和分布式 map/reduce 构造器，见 [常用工作流](skills/personal-computing-space/references/reliable-workflows.md)。预算账本只约束使用该 helper 的调用，不能替代服务端授权或独立验收。
+SDK 提供紧凑资源目录、契约校验调用、持久调用预算账本和分布式 map/reduce 构造器，见 [常用工作流](skills/personal-computing-space/references/reliable-workflows.md)。预算账本只约束使用该 helper 的调用，不能替代服务端授权或独立验收。
 
 发布者可以显式选取文件，给服务包附加与不可变镜像关联的只读诊断源码。外部 agent 无需主机 SSH 即可检查参数映射和实现；读取源码不授予修改、激活或替换生产实例的权限。修复应发布新版本并单独验证，源码摘要也不等同于镜像构建证明。流程见 [能力包诊断](skills/personal-computing-space/references/diagnostics.md)。
 
@@ -162,14 +170,37 @@ SDK 0.9 提供紧凑资源目录、契约校验调用、持久调用预算账本
 
 需要外部认证的包会报告 `pending_auth`；认证和健康检查通过后才进入 `ready`，后台检查继续更新状态。服务凭据由 operator 通过受控 profile 提供，或由用户完成交互式登录，不应写入包内容、对话或任务输出。
 
-统一认证使用实例的 `auth-start` 与 SDK 的 `loom-auth`，支持设备登录、浏览器回调和浏览器 Cookie 登录；声明同一 IdP 的资源会复用本机受保护的浏览器档案，API key、AK/SK 或 SSH 密钥由 credential profile 提供。浏览器助手运行在用户电脑上：
+统一认证使用实例的 `auth-start` 与 SDK 的 `loom-auth`，支持设备登录、浏览器回调和浏览器 Cookie 登录。登录助手让选定资源共用本机受保护的浏览器档案，按照实际跳转和浏览器 Cookie 规则复用 SSO 会话；**能力包无需声明 `idp`**，登录提供方变化时由浏览器跟随新的流程。各资源仍分别完成授权和凭据验证。API key、AK/SK 或 SSH 密钥由 credential profile 提供。浏览器助手运行在用户电脑上：
 
 ```text
 用户浏览器 ↔ loom-auth ↔ Observer ↔ Slave ↔ 能力容器
                               认证转发不经过 Driver
 ```
 
+助手提供默认关闭的“自动复用会话登录”开关，也可启动时传入 `--auto-login`。开启后依次检查选定资源，跳过已就绪实例并自动尝试复用会话；仍需扫码、授权或故障处理的实例会列在“需要处理的资源”中，显示原因和手动登录入口。手动完成一次登录后，助手继续尝试其余未完成资源。该开关用于批量登录，持续续期能力取决于各服务的认证实现。
+
 首次登录和凭据失效后的重新认证都从同一客户端发起，重新认证无需创建新激活。助手运行在有浏览器的本机即可；认证绑定远端资源实例，其他机器上的 agent 通过公开接口调用同一已认证实例，无需复制 Cookie 或在测试机重新登录。以实例 DESCRIBE 的当前状态判断是否就绪，助手旧会话过期不等于资源认证失效。浏览器登录需安装 SDK 的 `auth` 可选依赖及 Chromium，详见 [统一认证说明](docs/authentication.md)。助手只转发固定认证消息，短期桥接 token 不进入 Run 或 ContentStore；公网部署应使用 HTTPS 保护这条链路。
+
+## 外部 agent 的业务经验插件
+
+[`loom-business-skills`](plugins/loom-business-skills/README.md) 是可选、独立分发的外部 agent 插件，只依赖公开的 `loom-orchestration 0.10.x` SDK。它在客户端保存业务经验，使用现有公开接口核验和调用资源，无需修改 Loom 核心、公共 SDK、协议或通用 skill。
+
+| 组件 | 职责 |
+| --- | --- |
+| 通用 skill `personal-computing-space` | 发现资源、读取契约、认证、发布能力包和编排任务的通用方法 |
+| 入口 skill `loom-business-memory` | 指导 agent 按当前目标检索经验、检查适用性、执行并记录验收 |
+| 插件本地 CLI 与私有缓存 | 保存参数化步骤、契约引用和执行证据，处理失效、刷新及跨环境重绑定 |
+
+入口采用**摘要检索 → 选一条经验 → 实时检查 → 按需读取步骤与契约**的流程：
+
+1. `find '<业务目标>'` 对标题、摘要和关键词做本地文本匹配，默认最多返回 3 条摘要，上限 5 条。
+2. `prepare <id>` 重新描述所选经验的全部绑定及依赖，检查包、动作、契约、修订、权限声明、认证和可用性；只有 `ready` 才返回简短步骤。契约变更、离线、受阻和需要重绑定会分别报告。
+3. agent 用当前参数执行步骤并检查新结果。插件区分 `documented`、`executed`、`verified`；`accept` 记录 agent 对本次结果的验收，Run 的人工决策仍按正常任务流程处理。
+4. agent 可用 `learn` 保存方法，或用 `refresh` 更新已有经验。切换环境或实例需重新发现目标并显式 `rebind`；删除经验后仍可走通用发现流程。
+
+插件始终只注册一个[入口 SKILL.md](plugins/loom-business-skills/skills/loom-business-memory/SKILL.md)。经验默认存入 `~/.local/share/loom-business-skills/` 的 SQLite 缓存，生成的历史 `SKILL.md` 位于缓存内，不加入自动发现目录或整批注入上下文。单条经验最多 8 个步骤、合计 5,000 字符的步骤说明；大型契约通过文件按需读取。
+
+经验保存方法和证据引用，业务参数与原始结果留在单独的私有文件中。插件由 agent 按任务调用；新的业务经验不会自动变成额外入口 skill。具体安装与命令见[插件 README](plugins/loom-business-skills/README.md)和[工作流参考](plugins/loom-business-skills/references/workflow.md)，实现取舍见[设计文档](plugins/loom-business-skills/DESIGN.md)。
 
 ## 示例：创建一台 VM 并使用它计算
 
@@ -218,7 +249,7 @@ export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 
 ### 外部 agent 的 SDK 与 skill 分发
 
-`loom-orchestration` 当前版本为 **0.8.1**，是独立 Python 包，源码保留在 `loom_orchestration/`，
+`loom-orchestration` 当前版本为 **0.10.0**，是独立 Python 包，源码保留在 `loom_orchestration/`，
 不复制到 skill。发布时可将同版本 SDK wheel 附在 skill 中：
 
 ```bash
@@ -229,9 +260,19 @@ python scripts/build_agent_skill.py --output dist
 将生成的 `dist/personal-computing-space.zip` 交给外部 agent，解压后 skill 的
 `assets/wheels/` 包含可安装的 SDK；安装方式见其 `references/sdk.md`。
 
-普通 Python 计算的完整发布契约见 [函数包指南](skills/personal-computing-space/references/function-packages.md)。GRIP `mode=request-reply` 表示协议交互方式，业务是否创建 Run 应结合 `interaction` 与输出 Schema 判断。使用已有命名实例时，直接调用该实例，或通过 SDK 0.8.1 的只读 `activation_ref()` 构造编排引用；不要把 Slave 的默认实例调用当作已认证命名实例，详见 [已有实例编排](skills/personal-computing-space/references/existing-activations.md)。
+普通 Python 计算的完整发布契约见 [函数包指南](skills/personal-computing-space/references/function-packages.md)。GRIP `mode=request-reply` 表示协议交互方式，业务是否创建 Run 应结合 `interaction` 与输出 Schema 判断。使用已有命名实例时，直接调用该实例，或通过 SDK 的只读 `activation_ref()` 构造编排引用；不要把 Slave 的默认实例调用当作已认证命名实例，详见 [已有实例编排](skills/personal-computing-space/references/existing-activations.md)。
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
+
+需要业务经验复用时，用解压得到的 SDK wheel 构建独立插件，将下面的路径替换为实际位置：
+
+```bash
+python plugins/loom-business-skills/scripts/build_plugin.py \
+  --sdk-wheel /path/to/personal-computing-space/assets/wheels/loom_orchestration-0.10.0-py3-none-any.whl \
+  --output dist/loom-business-skills-0.1.0.zip
+```
+
+插件 ZIP 包含 `plugin.json`、一个入口 skill、CLI 和未修改的 SDK wheel。解压后安装所附 SDK，再按宿主 agent 的插件安装流程加载目录；其他 agent 也可读取该单一入口并调用 CLI。构建和解压不会自动启用插件或修改全局 agent 配置。详细步骤见[插件安装说明](plugins/loom-business-skills/README.md#use-the-distributable)。
 
 metadata 发布校验与发现已支持资源身份、readiness 映射和访问/清理引用检查。
 终态 cleanup continuation 复用执行队列，使用预留节点及独立清理 deadline；
@@ -285,21 +326,24 @@ Python 开发环境要求 3.12 或更新版本：
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e '.[test]'
-.venv/bin/pytest -q
+.venv/bin/python -m pytest tests -q
 ```
 
-部分集成和 E2E 测试需要运行中的数据库或 Compose 栈。`./scripts/test-e2e.sh` 仅检查已启动栈的基础健康和节点发现，不代表完整任务验收。HTTP 能力包和多节点执行可分别参考 `scripts/accept-container-http.py`、`tests/e2e/`。
+业务经验插件有独立测试目录，可在上述环境中单独运行：
+
+```bash
+.venv/bin/python -m pytest plugins/loom-business-skills/tests -q
+```
+
+部分测试需要可用的 Docker runtime，集成和 E2E 测试还可能需要运行中的数据库或 Compose 栈。`./scripts/test-e2e.sh` 仅检查已启动栈的基础健康和节点发现，不代表完整任务验收。HTTP 能力包和多节点执行可分别参考 `scripts/accept-container-http.py`、`tests/e2e/`。
 
 外部 agent 的真实使用验收见 [仅凭 skill 的 Codex 验证流程](docs/validation/skill-only-codex.md)：在隔离环境中只提供发布版 skill、任务和连接认证配置，禁止主机 SSH 与项目 checkout；可以通过公开接口读取当前能力包主动发布的诊断源码。按资源发现、远端计算、服务调用及生命周期分别核验。[初轮报告](docs/validation/2026-10-27-skill-only-live.md) 保留原始失败，[修复后完整用例复测](docs/validation/2026-10-27-skill-only-rerun.md) 记录各轮独立结果、认证状态及当前部署限制。
 
 [六任务基线复测](docs/validation/2026-10-27-skill-only-expanded.md) 保留资源漏发现、参数与编排错误、超预算误报通过和凭据输出等问题。[修复与源码诊断复测](docs/validation/2026-10-28-skill-only-repair.md) 记录 Outline 正文修复、Observer 并发状态修复、SDK 0.9、凭据代理及真实任务结果。业务调用成功与完整验收分开统计，目前仍不能宣称仅凭 skill 可以稳定独立交付。
 
-不依赖真实模型服务的测试栈使用 Fake coding agent：
+GRIP Driver 与原生任务的[自动化验证](docs/superpowers/reports/2026-10-30-grip-native-tasks-validation.md)和[生产部署验收](docs/superpowers/reports/2026-10-30-grip-native-tasks-production.md)覆盖完整计划、普通函数任务、幂等找回、冻结计划与 Run 生命周期；各路径的测试环境和限制分别记录。
 
-```bash
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
-  --profile test up --build --abort-on-container-exit --exit-code-from driver
-```
+业务经验插件的[验证记录](plugins/loom-business-skills/VALIDATION.md)包含 42 项自动化测试、独立安装包检查、1,000 条经验的上下文边界测试，以及 AutoPaper 与 Overleaf 的真实只读调用和新进程复用。当前尚未完成独立模型会话的冷启动/复用 A/B，未测得模型 token 节省或跨模型成功率；既有通用 skill 冷启动验收保持独立。
 
 ## 代码与文档导航
 
@@ -311,7 +355,8 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
 - `capability_services/`：业务能力服务、IO contract 和随包提供的客户端。
 - `loom_orchestration/`、`packages/loom-orchestration/`：独立 SDK、GRIP 客户端、认证助手与分发配置。
 - `skills/personal-computing-space/`：外部 agent 使用指南及 SDK、认证、服务 binding 参考。
+- [`plugins/loom-business-skills/`](plugins/loom-business-skills/README.md)：独立的业务经验插件、单一入口 skill、私有缓存 CLI 和专项测试。
 - `loom_v2/content_store.py`、`loom_v2/db/`、`migrations/`：内容存储、数据库模型和 Alembic 迁移。
 - `deploy/`、`scripts/`、`tests/`：部署配置、运维脚本与验证。
 
-进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。最新的 [能力包部署前检查验证记录](docs/superpowers/reports/2026-10-26-package-deployment-preflight-validation.md) 说明了本地回归范围与生产升级边界。
+进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。[能力包部署前检查验证记录](docs/superpowers/reports/2026-10-26-package-deployment-preflight-validation.md) 说明了对应功能的本地回归范围与生产升级边界。
