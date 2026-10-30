@@ -1,5 +1,7 @@
 # GRIP Driver 与原生任务生产部署
 
+> 后续已部署数据库迁移 008。本文末尾的仅镜像回退命令不适用于当前生产，参见 [资源与访问包解耦部署记录](2026-10-30-resource-access-bindings-production.md)。
+
 2026-10-30，按用户要求将合并提交 `e4008b9e8c572e94b66dbf7bf281ed8fff08faf9` 部署到现有生产环境。实现范围见 [合并验证记录](2026-10-30-grip-native-tasks-validation.md)。
 
 ## 发布内容
