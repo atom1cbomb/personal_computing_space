@@ -27,7 +27,7 @@
 | [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v8` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
 | [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v2` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
 | [Volcano](capability_services/volcano_http/HOW_TO_USE.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
-| [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v5` | 查询仪表盘、Prometheus 指标、GPU 利用率及 GPU Arena，按 namespace 统计 GPU 小时 |
+| [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v6` | 查询仪表盘、Prometheus 指标及 GPU Arena；GPU 利用率动作需要显式或实例默认的指标映射 |
 | [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v2` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
 | [Overleaf](capability_services/suanli_overleaf_http/HOW_TO_USE.md) | `suanli-overleaf-http/v1` | 查询项目、下载源码、检查版本、同步修改和导入新项目；在外部 agent 本地编辑与编译 |
 | [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v6` | 查询区域、节点、镜像和实例，创建及管理 VM |

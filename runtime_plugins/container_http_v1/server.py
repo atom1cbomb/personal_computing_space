@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from fastapi import Request, WebSocket
 
-from .runtime import DockerContainerHTTPRuntimeV1, RUNTIME_DESCRIPTOR
+from .runtime import CapabilityServiceHTTPError, DockerContainerHTTPRuntimeV1, RUNTIME_DESCRIPTOR
 
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
@@ -108,7 +108,7 @@ class PluginServer:
                             "runtime_plugin_unavailable",
                         },
                         "safe_message": code,
-                        "details": {},
+                        "details": exc.details if isinstance(exc, CapabilityServiceHTTPError) else {},
                     },
                 },
                 "application/json",

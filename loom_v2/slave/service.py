@@ -1228,6 +1228,10 @@ class SlaveService:
         closure: TaskClosure | None,
         action_export: ActionExport | None,
     ) -> ExecutionResult:
+        # A failed invocation has no successful output to validate. Preserve its
+        # original error rather than replacing it with output_schema_mismatch.
+        if result.terminal_state == "failed":
+            return result
         contract_ref = action_export.io_contract_ref if action_export is not None else closure.program.io_contract_ref if closure is not None else None
         if contract_ref is None:
             return result
@@ -1445,7 +1449,22 @@ class SlaveService:
                     deadline_seconds=self.capability_action_timeout_seconds,
                 )
             except (RuntimePluginError, RuntimeError) as exc:
-                raise RuntimeError(getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable") from exc
+                if (isinstance(exc, RuntimePluginError)
+                        and exc.code == "capability_service_http_error"
+                        and type(exc.details.get("http_status")) is int
+                        and 300 <= exc.details["http_status"] <= 599):
+                    response = {
+                        "value": {},
+                        "terminal_state": "failed",
+                        "terminal_error": {
+                            "code": exc.details.get("service_error_code") or exc.code,
+                            "category": exc.code,
+                            "http_status": exc.details["http_status"],
+                        },
+                        "runtime_plugin_id": "container-http-v1",
+                    }
+                else:
+                    raise RuntimeError(getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable") from exc
             if "value" not in response:
                 raise RuntimeError("runtime_plugin_protocol_error")
             value = response["value"]

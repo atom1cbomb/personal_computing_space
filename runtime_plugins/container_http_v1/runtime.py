@@ -30,6 +30,23 @@ IMAGE_RE = re.compile(
 )
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+SERVICE_ERROR_CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,95}")
+SERVICE_ERROR_MAX_BYTES = 4096
+
+
+class CapabilityServiceHTTPError(RuntimeError):
+    """Public service error metadata; never retain response text or headers."""
+
+    def __init__(self, status: int, body: bytes = b"") -> None:
+        super().__init__("capability_service_http_error")
+        self.details: dict[str, Any] = {"http_status": status}
+        try:
+            value = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            return
+        code = value.get("error") if isinstance(value, dict) else None
+        if isinstance(code, str) and SERVICE_ERROR_CODE_RE.fullmatch(code):
+            self.details["service_error_code"] = code
 
 RUNTIME_DESCRIPTOR: dict[str, Any] = {
     "plugin_id": "container-http-v1",
@@ -1013,7 +1030,13 @@ class DockerContainerHTTPRuntimeV1:
                         },
                     ) as response:
                         if not 200 <= response.status_code < 300:
-                            raise RuntimeError("capability_service_http_error")
+                            error_body = bytearray()
+                            async for chunk in response.aiter_bytes():
+                                if len(error_body) + len(chunk) > SERVICE_ERROR_MAX_BYTES:
+                                    error_body.clear()
+                                    break
+                                error_body.extend(chunk)
+                            raise CapabilityServiceHTTPError(response.status_code, bytes(error_body))
                         body = bytearray()
                         async for chunk in response.aiter_bytes():
                             body.extend(chunk)

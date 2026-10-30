@@ -5046,7 +5046,9 @@ class ObserverRepository:
         # is a failed Attempt/ExecutionOutcome and a decision point for the
         # coding agent; it must never be projected as completed.
         observer_evidence: dict[str, Any] | None = None
-        if output_schema_ref is not None:
+        # Failed invocations have no successful output. Keep their original
+        # terminal error, while still checking attempt/evidence identity above.
+        if output_schema_ref is not None and result.get("terminal_state") != "failed":
             try:
                 schema = await self._load_json_content(output_schema_ref)
                 validate_schema(schema)
@@ -5106,7 +5108,7 @@ class ObserverRepository:
                 return record
 
         validator_terminal_error: dict[str, Any] | None = None
-        if expected_validator_ref is not None:
+        if expected_validator_ref is not None and result.get("terminal_state") != "failed":
             validator_errors: list[dict[str, Any]] = []
             validator_status = "fail"
             try:
@@ -5903,7 +5905,7 @@ class ObserverRepository:
                 if not same_ref(evidence_validator, contract.success_validator_ref):
                     raise ValueError("validation_evidence_validator_mismatch")
             schema_errors: list[SchemaValidationError] = []
-            if output_schema_ref is not None:
+            if output_schema_ref is not None and reported_terminal_state != "failed":
                 schema = await self._load_json_content(output_schema_ref)
                 validate_schema(schema)
                 schema_errors = validate(schema, value)
@@ -5920,7 +5922,7 @@ class ObserverRepository:
                 )
             ]
 
-        if not schema_errors and contract is not None and contract.success_validator_ref is not None:
+        if reported_terminal_state != "failed" and not schema_errors and contract is not None and contract.success_validator_ref is not None:
             validator_errors: list[dict[str, Any]] = []
             validator_status = "fail"
             try:

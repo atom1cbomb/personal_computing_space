@@ -44,6 +44,25 @@ def provider_with_metrics(calls, value):
     return handle
 
 
+def test_gpu_mapping_precondition_is_independent_of_authenticated_readiness(tmp_path):
+    calls = []
+    service = gateway(tmp_path, provider_with_metrics(calls, upstream([sample(value="0")])),
+                      config={"api_origin": "https://grafana.example"})
+    try:
+        assert service.auth_status() == {"status": "authenticated"}
+        before = len(calls)
+        with pytest.raises(GatewayError) as failure:
+            service.handle("/v1/gpu/utilization", {"hostname": "node-a"})
+        assert (failure.value.code, failure.value.status) == ("gpu_metric_not_configured", 400)
+        assert len(calls) == before
+        result = service.handle("/v1/gpu/utilization", {"hostname": "node-a", "gpu_metric": GPU})
+        assert result["status"] == "ok"
+        assert result["samples"][0]["utilization_percent"] == 0
+        assert service.gpu_metric is None  # Per-call override does not reconfigure the instance.
+    finally:
+        service.close()
+
+
 def test_datasources_hide_private_configuration_and_use_activation_credentials(tmp_path):
     calls = []
     service = gateway(tmp_path, provider_with_metrics(calls, upstream()), credential=("grafana_token", "fixture-secret"))

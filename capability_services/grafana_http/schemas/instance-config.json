@@ -1,5 +1,6 @@
 {
   "type": "object",
+  "description": "Grafana activation connection settings and optional verified GPU query defaults. Authentication/readiness does not require a GPU mapping; gpu_utilization requires one here or in its call arguments.",
   "required": [
     "api_origin"
   ],
@@ -16,6 +17,7 @@
     },
     "gpu_metric": {
       "type": "object",
+      "description": "Optional default mapping for gpu_utilization. Configure only after verifying the metric, case-sensitive labels and unit against this datasource. Enables hostname-only calls; explicit action gpu_metric overrides it. If neither supplies a mapping, the action fails with gpu_metric_not_configured (HTTP 400).",
       "required": [
         "name",
         "node_label",

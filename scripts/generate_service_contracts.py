@@ -218,6 +218,20 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
     gpu_metric = obj(["name", "node_label", "index_label", "unit"],
                      name=string(), node_label=string(), index_label=string(), uuid_label=string(),
                      unit=string(enum=["percent", "ratio"]))
+    gpu_metric["description"] = (
+        "Verified Prometheus metric and case-sensitive label mapping. Overrides the activation default. "
+        "Required at call time when the activation has no default gpu_metric; omission then fails with "
+        "gpu_metric_not_configured (HTTP 400). Discover the metric, labels and unit with dashboard_get / "
+        "gpu_arena_describe and metrics_query before supplying this mapping."
+    )
+    for key, description in {
+        "name": "Actual GPU utilization metric name discovered from this Grafana datasource.",
+        "node_label": "Exact, case-sensitive node label, for example hostname or Hostname; verify actual samples.",
+        "index_label": "Label containing the numeric GPU index, verified from actual samples.",
+        "uuid_label": "Optional label containing the GPU UUID, verified from actual samples.",
+        "unit": "Metric unit: percent is already 0–100; ratio is 0–1 and is multiplied by 100.",
+    }.items():
+        gpu_metric["properties"][key]["description"] = description
     query_output = obj(
         ["status", "complete", "datasource_uid", "queried_at", "query", "parameters",
          "result_type", "result", "warnings", "infos"],
@@ -296,9 +310,15 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
             "output": query_output,
         },
         "gpu-utilization": {
-            "input": obj(["hostname"], hostname={"type": "string", "minLength": 1, "maxLength": 253},
+            "input": {"description": (
+                "Query GPU utilization using an explicitly supplied gpu_metric or the activation's verified "
+                "default mapping. hostname alone works only when that default exists. Ready/authenticated "
+                "does not establish a default GPU mapping. Missing configuration is gpu_metric_not_configured "
+                "(HTTP 400); no_data means a successful query returned no samples."
+            ), **obj(["hostname"], hostname={"type": "string", "minLength": 1, "maxLength": 253,
+                         "description": "Exact node-label value from Prometheus samples; not inferred from a VM display name."},
                          gpu_index={"type": "integer", "minimum": 0}, time=at,
-                         datasource_uid=identity, gpu_metric=gpu_metric),
+                         datasource_uid=identity, gpu_metric=gpu_metric)},
             "output": obj(["status", "complete", "hostname", "unit", "metric", "datasource_uid",
                            "queried_at", "query_time", "samples", "warnings", "infos"],
                           status=string(enum=["ok", "no_data"]), complete=boolean, hostname=string(),

@@ -14,12 +14,52 @@ from loom_v2.contracts.types import (
     ResourceRef,
 )
 from runtime_plugins.container_http_v1.runtime import (
+    CapabilityServiceHTTPError,
     DockerCommandResult,
     DockerContainerHTTPRuntimeV1,
 )
 
 
 IMAGE_REF = "registry.example/loom/http-test@sha256:" + "d" * 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,body,code", [
+    (400, b'{"error":"gpu_metric_not_configured"}', "gpu_metric_not_configured"),
+    (502, b'{"error":"gpu_metric_sample_invalid","message":"provider-secret"}', "gpu_metric_sample_invalid"),
+    (503, b'<html>provider-secret</html>', None),
+    (400, b'{"error":"Bearer provider-secret"}', None),
+    (400, b'{"error":{"code":"provider-secret"}}', None),
+    (400, b'["provider-secret"]', None),
+    (400, b'\xff', None),
+    (500, b'{"error":"gpu_metric_invalid","padding":"' + b'x' * 4096 + b'"}', None),
+])
+async def test_service_http_error_retains_only_bounded_public_metadata(status, body, code):
+    runtime = DockerContainerHTTPRuntimeV1(slave_id="slave-test", network="internal",
+        http_transport=httpx.MockTransport(lambda _: httpx.Response(status, content=body)))
+    async def endpoint(*args):
+        return "service", 8080, "/v1/query", "d" * 64, "default"
+    runtime._invocation_endpoint = endpoint
+    with pytest.raises(CapabilityServiceHTTPError) as failure:
+        await runtime.invoke({}, {}, {}, activation={}, attempt_id="error-test")
+    expected = {"http_status": status}
+    if code:
+        expected["service_error_code"] = code
+    assert failure.value.details == expected
+    assert str(failure.value) == "capability_service_http_error"
+
+
+@pytest.mark.asyncio
+async def test_plugin_protocol_preserves_service_http_error_details():
+    from runtime_plugins.container_http_v1.server import PluginServer
+    class Runtime:
+        async def invoke(self, *args, **kwargs):
+            raise CapabilityServiceHTTPError(400, b'{"error":"gpu_metric_not_configured"}')
+    status, body, _ = await PluginServer(Runtime()).dispatch("POST", "/v1/invoke", {
+        "request_id": "error-test", "package": {}, "action_export": {}, "payload": {}, "activation": {},
+    })
+    assert status == 200 and body["ok"] is False
+    assert body["error"]["details"] == {"http_status": 400, "service_error_code": "gpu_metric_not_configured"}
 
 
 @pytest.mark.asyncio

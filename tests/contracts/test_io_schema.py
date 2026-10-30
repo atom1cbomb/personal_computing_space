@@ -23,6 +23,16 @@ def test_valid_value_has_no_errors() -> None:
     assert validate(SCORE_SCHEMA, value) == []
 
 
+def test_description_annotations_are_supported_without_changing_validation():
+    schema = {"type": "object", "description": "Query preconditions", "required": ["name"],
+              "properties": {"name": {"type": "string", "description": "Exact node label value"}}}
+    assert validate(schema, {"name": "node-a"}) == []
+    assert [error.keyword for error in validate(schema, {})] == ["required"]
+    assert [error.keyword for error in validate(schema, {"name": 1})] == ["type"]
+    with pytest.raises(ValueError, match="schema_invalid"):
+        validate({"type": "string", "description": {"invalid": "not a string"}}, "node-a")
+
+
 def test_unicode_string_length_uses_characters_and_reports_bounds():
     schema = {"type": "string", "minLength": 1, "maxLength": 2}
     assert validate(schema, "汉字") == []

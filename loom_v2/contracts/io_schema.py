@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict
 SUPPORTED_KEYWORDS = frozenset(
     {
         "type",
+        "description",
         "required",
         "properties",
         "items",

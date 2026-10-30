@@ -1,10 +1,12 @@
 {
+  "description": "Query GPU utilization using an explicitly supplied gpu_metric or the activation's verified default mapping. hostname alone works only when that default exists. Ready/authenticated does not establish a default GPU mapping. Missing configuration is gpu_metric_not_configured (HTTP 400); no_data means a successful query returned no samples.",
   "type": "object",
   "properties": {
     "hostname": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 253
+      "maxLength": 253,
+      "description": "Exact node-label value from Prometheus samples; not inferred from a VM display name."
     },
     "gpu_index": {
       "type": "integer",
@@ -25,23 +27,28 @@
       "type": "object",
       "properties": {
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "Actual GPU utilization metric name discovered from this Grafana datasource."
         },
         "node_label": {
-          "type": "string"
+          "type": "string",
+          "description": "Exact, case-sensitive node label, for example hostname or Hostname; verify actual samples."
         },
         "index_label": {
-          "type": "string"
+          "type": "string",
+          "description": "Label containing the numeric GPU index, verified from actual samples."
         },
         "uuid_label": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional label containing the GPU UUID, verified from actual samples."
         },
         "unit": {
           "type": "string",
           "enum": [
             "percent",
             "ratio"
-          ]
+          ],
+          "description": "Metric unit: percent is already 0–100; ratio is 0–1 and is multiplied by 100."
         }
       },
       "required": [
@@ -49,7 +56,8 @@
         "node_label",
         "index_label",
         "unit"
-      ]
+      ],
+      "description": "Verified Prometheus metric and case-sensitive label mapping. Overrides the activation default. Required at call time when the activation has no default gpu_metric; omission then fails with gpu_metric_not_configured (HTTP 400). Discover the metric, labels and unit with dashboard_get / gpu_arena_describe and metrics_query before supplying this mapping."
     }
   },
   "required": [

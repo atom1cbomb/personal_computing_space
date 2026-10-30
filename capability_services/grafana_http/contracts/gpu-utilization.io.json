@@ -1,7 +1,7 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-utilization-input/sha256/55d53a361d56367f57216f8b94421d6a579f64b798c471660e20a90ed8dd250e",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-utilization-input/sha256/2b7fb824fc76a94826ad2b57920b878068245ced96fce1fac28713b0ec86437e",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {

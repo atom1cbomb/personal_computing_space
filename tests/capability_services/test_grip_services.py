@@ -20,7 +20,7 @@ import pytest
 from loom_orchestration import GripError, LoomClient, ResourceRef, ServicePackage
 from loom_v2.observer.repository import ObserverRepository
 from loom_v2.settings import Settings
-from loom_v2.slave.runtime_plugins import RuntimePluginDescriptor, RuntimePluginHost
+from loom_v2.slave.runtime_plugins import RuntimePluginDescriptor, RuntimePluginError, RuntimePluginHost
 from loom_v2.testing.observer import create_embedded_app, seed_embedded_slaves
 from runtime_plugins.container_http_v1.runtime import DockerCommandResult, DockerContainerHTTPRuntimeV1, RUNTIME_DESCRIPTOR
 
@@ -104,7 +104,15 @@ class RuntimeAdapter:
         return await self.runtime.provision(package.model_dump(mode="json"), command.model_dump(mode="json"))
 
     async def invoke(self, package, export, payload, **kwargs):
-        return await self.runtime.invoke(package.model_dump(mode="json"), export.model_dump(mode="json"), payload, **kwargs)
+        from runtime_plugins.container_http_v1.server import PluginServer
+        _, reply, _ = await PluginServer(self.runtime).dispatch("POST", "/v1/invoke", {
+            "request_id": kwargs["attempt_id"], "package": package.model_dump(mode="json"),
+            "action_export": export.model_dump(mode="json"), "payload": payload, **kwargs,
+        })
+        if not reply["ok"]:
+            error = reply["error"]
+            raise RuntimePluginError(error["code"], error["safe_message"], details=error["details"])
+        return reply["result"]
 
     async def open_stream(self, package, export, payload, *, activation, request_id, deadline=None):
         from loom_orchestration.streams import connect_stream, STREAM_PROTOCOL
@@ -660,6 +668,18 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                         authorized["allow"] = True
                 session["rotation_required"] = rotate_session
                 action = next(x for x in ready["resource"]["metadata"]["actions"] if x["name"] == "gpu_utilization")
+                assert "gpu_metric_not_configured" in action["description"]
+                schema = await client.read_json(ResourceRef.model_validate(action["arguments_schema"]))
+                assert "activation" in schema["properties"]["gpu_metric"]["description"]
+                missing = await client.invoke(target, action["uri"], {
+                    "arguments": {"hostname": "node-a"}, "expected_revision": activated["revision"],
+                    "idempotency_key": "gpu-missing-mapping"})
+                failed = await wait_result(app, client, missing["run"])
+                assert failed["state"] == "awaiting_decision", failed
+                assert failed["outcome"]["terminal_error"] == {
+                    "code": "gpu_metric_not_configured", "category": "capability_service_http_error", "http_status": 400,
+                }
+                assert "browser-private-cookie" not in json.dumps(failed)
                 submitted = await client.invoke(target, action["uri"], {
                     "arguments": {"hostname": "node-a", "datasource_uid": "prom", "gpu_metric": {
                         "name": "DCGM_FI_DEV_GPU_UTIL", "node_label": "Hostname", "index_label": "gpu", "unit": "percent"}},

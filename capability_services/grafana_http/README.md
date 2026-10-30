@@ -1,6 +1,6 @@
 # Grafana monitoring capability package
 
-`grafana-http/v5` reads Grafana dashboards and queries their Prometheus data
+`grafana-http/v6` reads Grafana dashboards and queries their Prometheus data
 sources. GPU queries identify the node and the host GPU's numeric index, retain
 an available UUID, and report actual sampled utilization. Publish and invoke
 through Observer GRIP using the [shared service workflow](../README.md).
@@ -12,7 +12,7 @@ through Observer GRIP using the [shared service workflow](../README.md).
 | dashboard_get | uid |
 | metrics_query | query; optional datasource_uid, time |
 | metrics_query_range | query, start, end, step; optional datasource_uid |
-| gpu_utilization | hostname; optional gpu_index, time, datasource_uid, gpu_metric |
+| gpu_utilization | hostname; gpu_metric required unless the activation has a verified default; optional gpu_index, time, datasource_uid |
 | gpu_arena_describe | none; returns the live GPU Arena panel IDs, target refs, units, expressions and filters |
 | gpu_arena_query | panel_id, ref_id; optional mode, start, end, step, node, model, gpu_uuid |
 | gpu_arena_gpu_hours | optional start, end, step, node, model, gpu_uuid; returns namespace GPU-hour rankings |
@@ -116,6 +116,21 @@ actual metrics without recreating its activation. Without a configured data sour
 default Prometheus data source, or the sole Prometheus data source. Ambiguity is
 an error.
 
+The public [HOW_TO_USE.md](HOW_TO_USE.md), action description returned by
+DESCRIBE, and input schema describe the same mapping prerequisite. Hostname-only
+calls require a configured default; readiness/authentication does not verify that
+default. Missing mappings fail with `gpu_metric_not_configured` (HTTP 400) before
+querying Prometheus. Only successful empty queries return `no_data`.
+
+v6 requires the Loom IO schema validator to support `description` annotations.
+Upgrade Observer, Driver and the executing Slave before publication. The updated
+container HTTP runtime retains the service HTTP status and a bounded public
+`{"error":"stable_code"}` response code in failed task reports. Codes must match
+`[a-z][a-z0-9_]{0,95}` and must contain no credentials or provider response text.
+Only that code and HTTP status are projected; response bodies over 4096 bytes,
+malformed JSON and invalid codes fall back to `capability_service_http_error`.
+Failure reports bypass successful-output validation so the original cause survives.
+
 ## Authentication
 
 By default, activate without credential_profile. The activation starts in
@@ -170,7 +185,9 @@ Missing or expired login keeps the activation pending_auth. Start a new browser
 login for a browser-managed activation. For a private profile, replace the file
 and let the normal health probe verify it; this mode does not start an
 interactive browser login. The original cookie-file-only v1 package is retained
-as immutable publication history; use v5 for GPU Arena, unified login and automatic rotation.
+as immutable publication history; use v6 for GPU Arena, unified login, automatic rotation,
+and explicit GPU mapping guidance. Publish reviewed diagnostic sources alongside
+the immutable image with `ServicePackage.publish(..., source_files=["server.py", "Dockerfile"])`.
 
 ## Query results
 

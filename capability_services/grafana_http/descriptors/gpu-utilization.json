@@ -2,12 +2,12 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-utilization",
   "name": "gpu_utilization",
-  "description": "Read actual GPU busy utilization by hostname and optional numeric GPU index, using the activation verified metric and labels. Missing samples are no_data, not zero.",
+  "description": "Read actual GPU busy utilization by hostname and optional numeric GPU index. Requires a verified gpu_metric mapping: pass it explicitly, or omit it only when the activation has a configured default. Explicit mapping overrides the default; metric label names are case-sensitive. Ready/authenticated does not verify this action's mapping. Missing mapping fails with gpu_metric_not_configured (HTTP 400). Only a successful query with no samples returns no_data; zero is an observed value. Discover mappings with dashboard_get/gpu_arena_describe and metrics_query; see package how-to-use.",
   "capability_kinds": [
     "compute.grafana.read"
   ],
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/d859994489ad25ca3aafd48442a4b3babf4aed9a745c3b40ab56eb05c3d3e3a9",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/25e8f2bab4f500e6c5107a962a8a36539278c14d3bc89acef002871dad0ad93b",
     "identity_criterion": "content_digest"
   }
 }
