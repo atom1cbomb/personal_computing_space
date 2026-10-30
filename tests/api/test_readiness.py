@@ -1,3 +1,4 @@
+from tests.support.grip_client import submit_plan, submission
 import pytest
 from fastapi.testclient import TestClient
 
@@ -28,9 +29,7 @@ def _add_run_code_hole(client: TestClient, suffix: str = "default"):
             "compute": {"action_ref": "grip://loom.local/workspaces/workspace-default/actions/run_code", "typed_holes": [{"hole_id": "h_run_code"}]},
         },
     }
-    response = client.post(
-        "/api/v1/run-submissions",
-        json={"request_id": f"run-code-{suffix}", "conversation_ref": "task-readiness", "plan": plan},
+    response = submit_plan(client, **{"idempotency_key": f"run-code-{suffix}", "conversation_ref": "task-readiness", "plan": plan},
     )
     return plan, response
 
@@ -38,9 +37,11 @@ def _add_run_code_hole(client: TestClient, suffix: str = "default"):
 def test_unbound_typed_hole_blocks_submission_and_reports_readiness():
     client = TestClient(create_app())
     _, response = _add_run_code_hole(client, "unbound")
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "readiness_blocked"
-    assert response.json()["detail"]["details"]["blockers"] == [{"code": "typed_hole_unbound", "hole_id": "h_run_code"}]
+    assert response["kind"] == "reply"
+    rejected = response["body"]["rejected"]
+    assert rejected["code"] == "readiness_blocked"
+    assert rejected["details"]["blockers"] == [{"code": "typed_hole_unbound", "hole_id": "h_run_code"}]
+    assert client.app.state.repo.execution_requests == {}
 
 
 def test_run_code_binding_requires_package_and_then_allows_submission():
@@ -49,10 +50,12 @@ def test_run_code_binding_requires_package_and_then_allows_submission():
     body = plan["body"]
     body["compute"]["typed_holes"][0].update(status="bound", binding_ref="binding-run_code")
     body["compute_bindings"] = [_binding()]
-    request = {"request_id": "package-required", "plan": plan}
-    blocked = client.post("/api/v1/run-submissions", json=request)
-    assert blocked.status_code == 409
-    assert any(b["code"] == "capability_package_required" for b in blocked.json()["detail"]["details"]["blockers"])
+    request = {"idempotency_key": "package-required", "plan": plan}
+    blocked = submit_plan(client, **request)
+    assert blocked["kind"] == "reply"
+    rejected = blocked["body"]["rejected"]
+    assert rejected["code"] == "readiness_blocked"
+    assert any(b["code"] == "capability_package_required" for b in rejected["details"]["blockers"])
 
     def put(content, media_type):
         response = client.post("/api/v1/content", json={"content": content, "media_type": media_type})
@@ -75,12 +78,11 @@ def test_run_code_binding_requires_package_and_then_allows_submission():
         package_ref={"resource_id": "grip://loom.local/workspaces/workspace-default/packages/readiness-run-code/v1",
                      "version_or_digest": package.json()["package_digest"]},
     )]
-    submitted = client.post("/api/v1/run-submissions", json=request)
-    assert submitted.status_code == 202, submitted.text
-    queried = client.get("/api/v1/run-submissions/package-required")
-    assert queried.status_code == 200
-    assert queried.json()["execution_request_state"] == "queued"
-    assert queried.json()["current_run_state"] == "committed"
+    submitted = submit_plan(client, **request)
+    assert submitted["kind"] == "reply", submitted
+    queried = submission(client, "package-required")
+    assert queried["execution_request_state"] == "queued"
+    assert queried["current_run_state"] == "committed"
 
 
 @pytest.mark.asyncio

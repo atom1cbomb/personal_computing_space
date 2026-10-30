@@ -10,6 +10,8 @@ through the operator-trusted bindings in DESCRIBE; a service, Slave data gateway
 or Observer relay may implement a binding. The external agent owns orchestration;
 Driver executes frozen task submissions. For service calls, streams, activation
 configuration and dependency grants, read [references/service-bindings.md](references/service-bindings.md).
+Complete plans use the discovered `computing/driver` resource's GRIP `submit-plan`
+action. This is one logical Driver whose resource URI survives process restarts.
 
 ## Decide how an action executes
 
@@ -47,6 +49,9 @@ SDK 0.9 includes `inventory`, `action_contract`, `execute_action`, `CallLedger`,
 helpers for resource discovery, ordinary JSON calls, bounded multi-call tasks
 and map/reduce computations; see [references/reliable-workflows.md](references/reliable-workflows.md).
 They preserve exact contracts and evidence while reducing repeated protocol code.
+SDK 0.10 moves `submit`, `submission`, `run`, `cancel`, `resubmit`, `resolve`
+and `close` onto GRIP. Use the matching Observer release; the old task REST routes
+are removed. Run helpers accept a returned Run URI or an opaque Run ID.
 Start discovery with the compact inventory; keep pending/degraded instances in
 the assessment, and inspect action descriptions before declaring a capability absent.
 Every public GRIP directory entry also offers the platform `how-to-use` read action.
@@ -129,19 +134,22 @@ and schemas; project-level examples must not override them.
 
 ## Boundary
 
-- Submit a complete plan with `POST /api/v1/run-submissions` using the
-  `loom-orchestration` package.
-- For a plan submission, provide a stable `request_id`, optional
-  `conversation_ref`, and the complete `plan`. HTTP `202` means queued, not
-  executed. Poll `GET /api/v1/run-submissions/{request_id}` or
-  `GET /api/v1/runs/{run_id}`.
-- Observe work with `/api/v1/run-submissions/*` and `/api/v1/runs/*` reads.
+- Discover `computing/driver` and submit a complete `ClosureContract` with its
+  `submit-plan` action, using `loom-orchestration` or the offered GRIP contract.
+- Supply a stable business `idempotency_key`, optional `conversation_ref`, and
+  complete `plan`. The returned `{run: URI}` confirms durable acceptance, not
+  execution. SDK `submit(request_id=...)` maps that parameter to the business
+  key; the GRIP message `request_id` is independently generated per exchange.
+- Observe work with Driver `get-submission` (`client.submission(key)`) and Run
+  `read` (`client.run(run_uri)`, which includes history). Read the returned Plan
+  URI for its immutable `ClosureContract`, closure version and snapshot digest.
 - Resolve `awaiting_decision` only after presenting the evidence and obtaining
   the user's explicit `accept` or `abandon` decision.
 - Never call Observer `/mcp`, Driver `/driver/v1/*`, Observer `/internal/v1/*`,
   or Slave `/worker/v1/*`. Those are internal control surfaces.
-- Public GRIP service data bindings are distinct from internal Driver/Slave endpoints. Direct plan submission is the
-  supported public planning path; the Observer owns Run mutation and enqueue.
+- Public GRIP service data bindings are distinct from internal Driver/Slave
+  endpoints. Driver `submit-plan` is the public complete-plan entry point;
+  the Observer owns validation, freezing, Run mutation and enqueue.
 - Treat `ResourceRef` and digest fields as server-owned facts. Do not calculate,
   invent, or overwrite content/package/draft digests; obtain immutable refs from
   the Observer data plane or persisted Run outcome.
@@ -196,10 +204,12 @@ action.
 
 ## Workflow
 
-1. For task submission, check `GET /healthz` and `GET /api/v1/runtime`; report
-   `driver_unavailable` if task execution is unavailable. Direct request-reply and
-   byte-stream business interactions use their own availability and contracts;
-   task exports of service packages still require Driver execution.
+1. Discover `computing/driver` and inspect DESCRIBE, `how-to-use`, and the
+   `submit-plan` schemas. Its `accepting_submissions` describes the Observer
+   entry point; `available` describes the Driver lease. Offline execution does
+   not prevent durable submission: report that accepted work is queued pending
+   a Driver. Direct request-reply and byte-stream business interactions use
+   their own availability and contracts; task exports require Driver execution.
 2. Discover compute with `await client.resources(mcue="computing/slave")` and inspect descriptions
    for Slave `run-package` / `check-package` / `activate-package` offers. Select available leases
    using `metadata.available` and inspect executor/runtime descriptors.
@@ -215,21 +225,27 @@ action.
    resources and activations through GRIP. A resource description lists the exact
    ready activation URIs bound to it; choose explicitly if more than one exists.
 4. Build one complete `ClosureContract` with `SubmissionBuilder` and submit it
-   with a stable `request_id`. Do not include secrets in source or closure.
-5. Poll `GET /api/v1/run-submissions/{request_id}` with a bounded interval.
+   through `client.submit(request_id=business_key, plan=plan)`. Save `run`, `plan`,
+   `closure_version`, and the key. Do not include secrets in source or closure.
+5. Poll `client.submission(business_key)` or the Run's `read` action at a bounded
+   interval; request `include_history=true` when evidence is needed.
    On `awaiting_auth`, use the exact package, instance, Slave and revision in
    `waiting` to start authentication once, then poll the same Run. Health updates
    resume it automatically; do not submit another Run or resubmit for login.
 6. On `completed`, verify the requested acceptance criteria from the outcome.
    On `awaiting_decision`, follow the decision rules in the protocol reference.
    On `failed` or `interrupted`, report the structured reason without hiding it.
-7. For `awaiting_decision` with `outcome.decision=repair`, submit a complete
-   replacement with `POST /api/v1/runs/{run_id}/resubmit`, using a new
-   `request_id` and the returned `base_closure_version`. Preserve the accepted
-   success contract and execution policy.
+7. For `awaiting_decision` with `outcome.decision=repair`, invoke Run `resubmit`
+   with a complete replacement plan, a new `idempotency_key` and the current
+   `closure_version` as `base_closure_version`. `client.resubmit` wraps this and
+   returns the new submission view. Preserve the accepted success contract,
+   constraints and execution policy; the Run URI stays fixed and its Plan URI
+   changes. For attestation use `resolve(accept)` after the user's decision;
+   `resolve(abandon)` abandons pending work. Close terminal Runs with `close`.
 
-Retries after an uncertain HTTP result must reuse the same `request_id` and
-canonical plan. Reusing it with different content is an error.
+Retries after an uncertain GRIP result must reuse the same business key, plan
+and conversation reference. Reusing the key with different content is an error.
+The transport message ID may change. `get-submission` recovers a lost reply.
 
 Read [references/observer-workflow.md](references/observer-workflow.md) before
 calling the Observer. It contains request shapes, polling rules, decision

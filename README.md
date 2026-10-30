@@ -2,7 +2,7 @@
 
 **把分散的计算资源和外部服务，组织成 AI 可以发现、调用和协作使用的个人计算工作空间。**
 
-你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，或生成完整执行计划提交给 Loom。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由 Observer 校验、冻结计划并排队，Driver 领取执行，再保存结果和执行证据。
+你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，并将完整执行计划提交给发现的 Driver 资源。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由 Observer 校验、冻结计划并排队，Driver 领取执行，再保存结果和执行证据。
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
@@ -66,7 +66,7 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 **Observer 是公共控制入口和状态权威。** 它保存 Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。服务数据入口可由 operator 单独发布，调用方按 Observer 描述的 binding 和受限凭据访问。
 
-**外部 agent 负责编排，Driver 只负责执行。** Driver 仅领取 Observer 已冻结的执行队列项，并在沙箱中运行普通程序或 `container:python_orchestrator/1`。它不接收 prompt、不维护会话，也不持有模型 secret。
+**外部 agent 负责编排，Driver 负责执行。** GRIP 目录中的 `computing/driver` 是单一逻辑执行资源，URI 不随 Driver 进程重启变化。外部 agent 对它调用 `submit-plan`，Observer 校验完整 `ClosureContract`、冻结版本并排队；Driver 领取队列项，在沙箱中运行普通程序或 `container:python_orchestrator/1`。它不接收 prompt、不维护会话，也不持有模型 secret。`accepting_submissions` 表示入口可接受提交，`available` 表示 Driver 租约在线；离线时仍可持久化排队。
 
 **Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
 
@@ -75,13 +75,13 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 ### 从需求到结果
 
 1. **形成任务闭包。** 外部 agent 明确目标和验收标准，准备输入、程序与契约，选择能力包及计算资源。
-2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 提交完整闭包；Observer 检查引用、能力绑定、契约和资源就绪条件并冻结版本。
+2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 的 GRIP `submit-plan` 提交完整闭包；Observer 检查引用、能力绑定、契约和资源就绪条件并冻结版本，返回 Run URI。
 3. **排队执行。** Driver 领取不可变执行请求，沙箱产生动态节点并交给 Observer 记录和中继执行。
 4. **执行和编排。** 普通任务经 Observer 派发到 Slave；编排沙箱只执行外部 agent 提交的源码，并通过受控原语产生动态节点、资源登记和 activation。
 5. **记录结果并验收。** Slave 返回输出、状态和验证证据，结果写入内容存储。Observer 更新 Run；无法自动确认的成功语义会要求人工验收，失败则保留结构化原因。
 6. **复用或清理。** 用户可显式发布任务产生的能力包。外部资源的回收应纳入任务流程；关闭 Run 不意味着自动销毁云 VM。
 
-编排程序通过受限的 `read_json`、`materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、`emit_node`、`result` 接口读取内容、管理资源并等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 是 Driver 保留的特殊执行类型；普通能力包的业务调用仍在 Slave 一侧完成。
+编排程序通过受限的 `read_json`、`materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、`emit_node`、`result` 接口读取内容、管理资源并等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 通过同一个 Driver 的 `submit-plan` 接受完整闭包；普通能力包的业务调用仍在 Slave 一侧完成。每个已提交版本有不可变的 `execution/plan` 资源，Run 的 `read` 返回当前计划引用、状态和结果，并可用 `include_history=true` 读取执行证据。
 
 ## 统一使用资源：GRIP
 
@@ -104,7 +104,7 @@ SDK 0.8 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_pre
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
 `metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。包制作、完整计划提交和管理界面继续使用各自的管理接口。
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。SDK 0.10 的计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
 
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
 同包不同实例可以使用不同账号或集群。旧部署引入实例凭据时需执行 Alembic 007，见
@@ -240,21 +240,22 @@ metadata 发布校验与发现已支持资源身份、readiness 映射和访问/
 
 ### 常用查询入口
 
-以下路径均位于 Observer。字段和请求格式可在运行实例的 `/docs` 或 `/openapi.json` 查询。
+以下入口均由 Observer 承载。GRIP 动作的输入输出格式通过 DESCRIBE 返回的 Schema 资源读取；REST 管理接口可在运行实例的 `/docs` 或 `/openapi.json` 查询。
 
 | API | 用途 |
 | --- | --- |
-| `POST /api/v1/run-submissions` | 提交外部 coding agent 生成的完整计划并排队执行 |
-| `GET /api/v1/run-submissions/{request_id}` | 查询提交、队列和执行结果 |
-| `POST /api/v1/runs/{run_id}/resubmit` | 根据 repair outcome 提交完整替换计划 |
-| `POST /api/v1/runs/{run_id}/cancel` | 取消已提交执行 |
+| GRIP Driver `submit-plan` / `get-submission` | 提交完整计划，按业务 `idempotency_key` 查询提交、队列和结果 |
+| GRIP Plan `read` | 读取 `plans/{run_id}/{closure_version}` 的不可变闭包 |
+| GRIP Run `read` | 查询状态、结果和当前计划；`include_history=true` 返回执行记录 |
+| GRIP Run `resubmit` / `cancel` / `resolve` / `close` | 修复计划、取消、验收或放弃、关闭终态任务 |
 | `GET /api/v1/runtime` | 查询 Driver 执行运行信息 |
-| `POST /.well-known/grip` | 统一描述与调用 Slave、能力包、激活实例、领域资源和 Run |
+| `POST /.well-known/grip` | 统一描述与调用 Driver、Slave、能力包、激活实例、领域资源、Plan 和 Run |
 | `GET /api/v1/capability-packages` | 包制作与完整编排所需的不可变契约、descriptor 和发布记录 |
-| `GET /api/v1/runs/{run_id}` | 查询任务状态、结果和执行记录 |
 | `GET /api/v1/content/{digest}` | 取回实际内容，核验 `X-Content-Digest` |
 
 Slave 在线只说明租约有效，不保证空闲容量或指定能力可用。包已发布也不保证某个实例已完成认证，任务仍须通过就绪检查。
+
+SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，升级需使用 SDK 0.10 与对应 Observer。
 
 ### 多机部署与安全边界
 

@@ -19,7 +19,6 @@ from .types import (
     CapabilityProvisionCommand,
     ComputeBinding,
     ContractModel,
-    ClosureContract,
     ExecutionContract,
     ResourceRef,
     TaskClosure,
@@ -63,33 +62,6 @@ class CapabilityPackageUploadRequest(PublicRequest):
     package_digest: str | None = None
 
 
-class RunSubmissionRequest(BaseModel):
-    """Complete immutable plan submitted by an external planning agent."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str = Field(min_length=1, max_length=256)
-    conversation_ref: str | None = Field(default=None, min_length=1, max_length=256)
-    plan: ClosureContract
-
-
-class RunResubmitRequest(BaseModel):
-    """Complete replacement plan for a repairable Run outcome."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str = Field(min_length=1, max_length=256)
-    base_closure_version: str = Field(min_length=1, max_length=128)
-    plan: ClosureContract
-
-
-class RunCancelRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str | None = Field(default=None, min_length=1, max_length=256, description="Original submission request ID, if supplied")
-    reason: str | dict[str, Any] = "user_cancel"
-
-
 class PublicMessageRequest(PublicRequest):
     # Preserve the endpoint's domain-specific validation codes for missing,
     # blank, or wrongly typed values instead of replacing them with FastAPI's
@@ -98,10 +70,6 @@ class PublicMessageRequest(PublicRequest):
     request_id: Any = None
     conversation_ref: Any = None
     workspace_id: str | None = None
-
-
-class ResolveRequest(PublicRequest):
-    decision: str | None = None
 
 
 class IdempotencyRequest(PublicRequest):
@@ -189,11 +157,7 @@ __all__ = [
     "ContentPutRequest",
     "DriverMessageRequest",
     "IdempotencyRequest",
-    "RunSubmissionRequest",
-    "RunResubmitRequest",
-    "RunCancelRequest",
     "PublicMessageRequest",
-    "ResolveRequest",
     "SlaveDeprovisionRequest",
     "SlaveAuthStartRequest",
     "SlaveDispatchRequest",

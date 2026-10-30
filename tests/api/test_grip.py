@@ -52,7 +52,7 @@ async def test_describe_run_package_and_read_real_result(setup):
     data = {"package": package_uri, "action": action, "arguments": {"value": 21}, "idempotency_key": "double-1"}
     first = await client.invoke(slave, client.names.action("run-package"), data)
     assert await client.invoke(slave, client.names.action("run-package"), data) == first
-    with pytest.raises(GripError, match="invalid_input"):
+    with pytest.raises(GripError, match="request_id_reused"):
         await client.invoke(slave, client.names.action("run-package"), {**data, "arguments": {"value": 99}})
     result = await wait_result(app, client, first["run"])
     assert result["state"] == "completed", result
@@ -366,3 +366,39 @@ async def test_browser_auth_cannot_follow_a_concurrent_activation_revision(setup
     with pytest.raises(GripError, match="invalid_input"):
         await client.invoke(target, client.names.action("auth-start"), {"expected_revision": 1})
     assert not app.state.browser_auth.sessions
+
+
+async def test_native_complete_plan_executes_real_process_and_retries_return_same_run(setup):
+    from loom_orchestration import ClosureContract
+
+    app, repo, client, package = setup
+    export = package["action_exports"][0]
+    action = export["action_descriptor_ref"]["resource_id"]
+    input_ref = await client.upload_content({"value": 21})
+    plan = ClosureContract.model_validate({
+        "closure_id": "native-double", "goal": "Double the input using the selected Slave",
+        "body": {
+            "closure_id": "native-double",
+            "program": {"action_ref": action, "io_contract_ref": export["io_contract_ref"]},
+            "compute": {"action_ref": action, "typed_holes": [{"hole_id": "executor", "status": "bound", "binding_ref": "selected-slave"}]},
+            "compute_bindings": [{
+                "binding_id": "selected-slave", "hole_id": "executor", "bound_by": "external",
+                "action_descriptor_ref": export["action_descriptor_ref"],
+                "capability_package_ref": {"resource_id": package["resource"], "version_or_digest": package["package_digest"]},
+                "target_resource_ref": {"resource_id": client.names.name("slaves", "slave-a")},
+            }],
+            "node_input_bindings": [{"node_id": action, "input_ref": input_ref.model_dump(mode="json")}],
+        },
+    })
+    receipt = await client.submit(request_id="native-process", plan=plan)
+    assert receipt["execution_request_state"] == "queued"
+    frozen = await client.invoke(receipt["plan"], client.names.action("read"), {})
+    assert frozen["plan"]["body"]["compute_bindings"][0]["target_resource_ref"]["resource_id"] == client.names.name("slaves", "slave-a")
+    result = await wait_result(app, client, receipt["run"])
+    assert result["state"] == "completed", result
+    assert result["outcome"]["value"] == {"value": 42}
+    repeated = await client.submit(request_id="native-process", plan=plan)
+    assert repeated["run"] == receipt["run"]
+    assert repeated["execution_request_state"] == "settled"
+    assert len(repo.execution_requests) == 1
+    assert await client.invoke(receipt["plan"], client.names.action("read"), {}) == frozen

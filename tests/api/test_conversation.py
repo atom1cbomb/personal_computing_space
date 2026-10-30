@@ -1,3 +1,4 @@
+from tests.support.grip_client import submit_plan, submission
 from fastapi.testclient import TestClient
 
 from loom_v2.testing.observer import create_embedded_app
@@ -16,10 +17,8 @@ def test_message_and_conversation_routes_are_removed():
 
 def test_external_submission_is_the_public_task_entrypoint():
     client = TestClient(create_embedded_app())
-    response = client.post(
-        "/api/v1/run-submissions",
-        json={
-            "request_id": "external-entrypoint",
+    response = submit_plan(client, **{
+            "idempotency_key": "external-entrypoint",
             "plan": {
                 "closure_id": "external-entrypoint-closure",
                 "goal": "execute a submitted closure",
@@ -28,5 +27,5 @@ def test_external_submission_is_the_public_task_entrypoint():
         },
     )
 
-    assert response.status_code == 202
-    assert response.json()["execution_request_state"] == "queued"
+    assert response["kind"] == "reply"
+    assert submission(client, "external-entrypoint")["execution_request_state"] == "queued"

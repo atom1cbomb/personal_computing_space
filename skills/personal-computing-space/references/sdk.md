@@ -29,8 +29,8 @@ to this project's release.
 
 Use GRIP for resource access. Configure the Observer URL, GRIP authority and
 workspace token supplied by the operator; credentials belong in request auth.
-`LoomClient.resources()` lists slaves, capability-package definitions,
-activations, registered resources and runs in one directory. `describe(uri)`
+`LoomClient.resources()` lists the logical Driver, Slaves, capability-package
+definitions, activations, registered resources, frozen plans and Runs in one directory. `describe(uri)`
 returns offers with complete action and Schema URIs. `invoke(uri, action, input)`
 discovers a trusted binding and validates the input/output contracts.
 The MCUE contract uses `resources(mcue=...)` and `resource.mcue`;
@@ -49,10 +49,18 @@ methods have been removed. Use resource descriptions and actions instead.
 Select exact returned URIs; do not infer an action from its suffix. Slave
 `run-package` input is `{package, action, arguments, idempotency_key}`. It
 returns `{run: <Run URI>}`. Query Run with the built-in `read` action.
-For REST helpers, `client.run`/`client.cancel` take the opaque final Run ID,
-not the full GRIP URI. A GRIP `idempotency_key` is not a submit `request_id`;
-omit `request_id` when cancelling a GRIP-created Run. See
-[observer-workflow.md](observer-workflow.md) for polling and cancellation.
+SDK 0.10's task helpers use GRIP: `submit` discovers `computing/driver` and invokes
+`submit-plan`, then `get-submission`; `submission` looks up the business key;
+`run`, `cancel`, `resubmit`, `resolve` and `close` invoke Run actions and accept
+the returned Run URI or opaque final ID. `run` requests `include_history=true`.
+The SDK `request_id` parameter maps to business `idempotency_key`; the GRIP
+message ID is independent. `submit` and `resubmit` raise `PlanRejectedError`
+for a readiness rejection, preserving `.code` and `.details["blockers"]`;
+raw `invoke` returns that domain result under `rejected`. Omit `request_id` on `cancel` unless checking a known Driver
+submission belongs to the Run. Action-specific `run-package`/activation keys
+are not Driver submission keys. The matching Observer release removes the old
+task REST routes. See [observer-workflow.md](observer-workflow.md) for polling,
+immutable Plan reads, repair, attestation and cancellation.
 An activated instance's `interaction=task` export instead uses
 `{arguments, expected_revision, idempotency_key}` and returns a Run.
 `request-reply` exports take business input and return business output directly;
@@ -88,8 +96,8 @@ declarations with `available=false`; only currently callable actions appear in
 `offers`. Business terminology is `action_exports`, `action_descriptor_ref`,
 `action_ref` and descriptor `action.v1`. Old business fields are not aliases.
 
-Package authoring and full orchestration submission retain `upload_content`,
-`register_package`, `packages`, `descriptor`, `read_json` and `submit`.
+Package authoring retains `upload_content`, `register_package`, `packages`,
+`descriptor` and `read_json`; full orchestration uses the GRIP-backed `submit`.
 Package publication returns its complete Observer-assigned URI in `resource`;
 use `published["resource"]` and `published["package_digest"]` to form a ResourceRef.
 Package list/detail/read responses carry the same field. `ServicePackage.publish`

@@ -101,10 +101,27 @@ def _upload_package(client, package_id, descriptor, contract, program, *, orches
             "version_or_digest": package["package_digest"]}
 
 
-def _get_run(client: httpx.Client, run_id: str) -> dict:
-    response = client.get(f"/api/v1/runs/{run_id}", timeout=30.0)
+def _invoke(client: httpx.Client, target: str, action: str, data: dict) -> dict:
+    from loom_orchestration.grip import Names
+
+    names = Names(os.environ.get("LOOM_GRIP_AUTHORITY", "loom.local"), os.environ.get("LOOM_WORKSPACE_ID", "workspace-default"))
+    response = client.post("/.well-known/grip", json={
+        "version": "grip.v1", "request_id": uuid4().hex, "method": "INVOKE",
+        "target": target, "action": names.action(action), "input": data,
+        "auth": {"scheme": "bearer", "credential": os.environ["LOOM_GRIP_TOKEN"]},
+        "accepted_protocols": ["https-json.v1" if str(client.base_url).startswith("https:") else "loom-http-json.v1"],
+    }, timeout=30.0)
     response.raise_for_status()
-    return response.json()
+    message = response.json()
+    assert message["kind"] == "reply", message
+    return message["body"]
+
+
+def _get_run(client: httpx.Client, run_id: str) -> dict:
+    from loom_orchestration.grip import Names
+
+    names = Names(os.environ.get("LOOM_GRIP_AUTHORITY", "loom.local"), os.environ.get("LOOM_WORKSPACE_ID", "workspace-default"))
+    return _invoke(client, names.name("runs", run_id), "read", {"include_history": True})
 
 
 @pytest.mark.e2e
@@ -171,11 +188,12 @@ def test_live_distributed_statistics_across_both_slaves():
             "package_ref": orchestration_ref,
         }
         closure["body"]["node_input_bindings"] = [{"node_id": "grip://loom.local/workspaces/workspace-default/actions/orchestrate", "input_ref": input_ref}]
-        submitted = client.post("/api/v1/run-submissions", json={
-            "request_id": conversation_ref, "conversation_ref": conversation_ref, "plan": closure,
+        from loom_orchestration.grip import Names
+        names = Names(os.environ.get("LOOM_GRIP_AUTHORITY", "loom.local"), os.environ.get("LOOM_WORKSPACE_ID", "workspace-default"))
+        submitted = _invoke(client, names.name("drivers", "default"), "submit-plan", {
+            "idempotency_key": conversation_ref, "conversation_ref": conversation_ref, "plan": closure,
         })
-        assert submitted.status_code == 202, submitted.text
-        run_id = submitted.json()["run_id"]
+        run_id = submitted["run"].rsplit("/", 1)[-1]
 
         run = _poll_run(client, run_id, timeout=300.0)
         assert run["state"] == "completed", run.get("outcome")
@@ -210,7 +228,7 @@ def test_live_distributed_statistics_across_both_slaves():
         assert value["stddev"] == pytest.approx(math.sqrt(389 / 12 - (57 / 12) ** 2))
 
         # Cleanup: close the completed Run.
-        client.post(f"/api/v1/runs/{run_id}/close", timeout=30.0)
+        _invoke(client, names.name("runs", run_id), "close", {})
 
 
 def _poll_run(client: httpx.Client, run_id: str, *, timeout: float) -> dict:
