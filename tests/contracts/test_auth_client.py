@@ -189,7 +189,8 @@ async def test_bridge_timeout_is_distinct_and_does_not_echo_request_credentials(
         await Login("resource", lambda: observer)._bridge(observer, observer.auth["client"], "open")
 
 
-async def test_declared_idp_uses_a_persistent_profile_and_reuses_saved_cookie(tmp_path, monkeypatch):
+@pytest.mark.parametrize("profile_available,pending", [(True, False), (True, True), (False, False)])
+async def test_shared_profile_without_idp_reuses_cookie_or_reports_open_failure(tmp_path, monkeypatch, profile_available, pending):
     opened: list[Path] = []
     closed = []
 
@@ -213,8 +214,11 @@ async def test_declared_idp_uses_a_persistent_profile_and_reuses_saved_cookie(tm
         async def new_page(self):
             return Page()
 
-        async def cookies(self, _origin):
-            return [{"name": "sid", "value": "saved-session"}]
+        async def add_cookies(self, cookies):
+            assert cookies == []
+
+        async def cookies(self, _origin=None):
+            return [{"name": "sid", "value": "saved-session", "expires": -1}]
 
         async def close(self):
             closed.append(True)
@@ -222,6 +226,8 @@ async def test_declared_idp_uses_a_persistent_profile_and_reuses_saved_cookie(tm
     class Chromium:
         async def launch_persistent_context(self, path, **_kwargs):
             opened.append(Path(path))
+            if not profile_available:
+                raise RuntimeError("private profile error")
             return Context()
 
         async def launch(self, **_kwargs):
@@ -243,21 +249,28 @@ async def test_declared_idp_uses_a_persistent_profile_and_reuses_saved_cookie(tm
     monkeypatch.setitem(sys.modules, "playwright.async_api", async_api)
 
     login = Login("resource", lambda: None, profile_store=AuthProfileStore(tmp_path / "profiles"))
-    login.idp = "https://idp.example"
     bridges = []
 
     async def bridge(_client, _info, action, **_kwargs):
         bridges.append(action)
+        assert not closed
+        if pending and bridges == ["open", "callback"]:
+            return {"status": "pending"}
         return ({"status": "redirect", "location": "https://service.example/", "browser_binding": "binding"}
                 if action == "open" else {"status": "accepted"})
 
     login._bridge = bridge
-    await login._browser(SimpleNamespace(base_url="https://observer.example"), {
+    auth = {
         "method": "browser-cookie", "cookie_name": "sid", "client": {},
-        "idp": login.idp,
-    }, 1, time.time() + 30)
+    }
+    if not profile_available:
+        with pytest.raises(RuntimeError, match="^browser_profile_unavailable$"):
+            await login._browser(SimpleNamespace(base_url="https://observer.example"), auth, 1, time.time() + 30)
+        assert bridges == ["open"] and not closed
+        return
+    await login._browser(SimpleNamespace(base_url="https://observer.example"), auth, 1, time.time() + 30)
     assert len(opened) == 1 and opened[0].parent == tmp_path / "profiles"
-    assert bridges == ["open", "callback"]
+    assert bridges == ["open", "callback"] + (["callback"] if pending else [])
     assert closed == [True]
 
 
@@ -293,19 +306,64 @@ def test_browser_requires_a_valid_https_destination(location):
         https_origin(location)
 
 
-def test_auth_profile_store_partitions_idps_and_enforces_private_directory(tmp_path):
+def test_auth_profile_store_uses_one_private_browser_and_preserves_session_cookies(tmp_path):
     store = AuthProfileStore(tmp_path / "profiles")
-    first = store.profile_dir("https://idp.example/tenant-a")
-    same = store.profile_dir("https://idp.example/tenant-a")
-    other = store.profile_dir("https://idp.example/tenant-b")
-    assert first == same
-    assert first != other
+    first = store.profile_dir()
+    assert first == AuthProfileStore(tmp_path / "profiles").profile_dir()
     assert first.parent == tmp_path / "profiles"
-    assert first.name != "tenant-a"
     assert oct(first.stat().st_mode & 0o777) == "0o700"
+    session = {"name": "sid", "value": "private", "domain": "idp.example", "path": "/", "expires": -1}
+    store.save_session_cookies([session, {**session, "expires": time.time() + 3600}])
+    assert store.session_cookies() == [session]
+    assert (first / ".loom-session-cookies.json").stat().st_mode & 0o777 == 0o600
+    store.save_session_cookies([])
+    assert store.session_cookies() == []  # Revoked/deleted cookies stay removed.
 
 
-def test_auth_profile_store_does_not_create_state_without_an_idp(tmp_path):
+@pytest.mark.parametrize("contents", ["not JSON", "{}", "null"])
+def test_damaged_session_snapshot_falls_back_to_browser_login(tmp_path, contents):
     store = AuthProfileStore(tmp_path / "profiles")
-    assert store.profile_dir(None) is None
-    assert not (tmp_path / "profiles").exists()
+    (store.profile_dir() / ".loom-session-cookies.json").write_text(contents)
+    assert store.session_cookies() == []
+
+
+@pytest.mark.parametrize("cancel_queued", [False, True])
+async def test_shared_browser_waits_before_describe_and_auth_start(tmp_path, monkeypatch, cancel_queued):
+    store = AuthProfileStore(tmp_path)
+    observers = [Observer(), Observer()]
+    logins = [Login(str(i), lambda i=i: observers[i], profile_store=store) for i in range(2)]
+    first_opened, release = asyncio.Event(), asyncio.Event()
+
+    async def browser(client, *_args):
+        if client is observers[0]:
+            first_opened.set()
+            await release.wait()
+        client.ready = True
+
+    for login in logins:
+        monkeypatch.setattr(login, "_browser", browser)
+    tasks = [asyncio.create_task(logins[0].authenticate())]
+    try:
+        await asyncio.wait_for(first_opened.wait(), 2)
+        tasks.append(asyncio.create_task(logins[1].authenticate()))
+        await asyncio.sleep(.15)
+        assert logins[1].status()["phase"] == "waiting_for_browser"
+        assert observers[1].calls == []
+        observers[1].revision = 2  # Read the latest revision after the queue.
+        if cancel_queued:
+            logins[1].close()
+            with pytest.raises(RuntimeError, match="login_cancelled"):
+                await asyncio.wait_for(tasks[1], 2)
+        release.set()
+        await asyncio.wait_for(tasks[0], 2)
+        if cancel_queued:
+            assert observers[1].calls == []
+        else:
+            await asyncio.wait_for(tasks[1], 2)
+            assert len(observers[1].calls) == 1
+            assert observers[1].calls[0][2] == {"expected_revision": 2}
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

@@ -30,14 +30,21 @@ python -m loom_orchestration.auth \
 也可使用安装后的 `loom-auth` 命令。Observer 使用 HTTP 时显式加 `--allow-http`。
 打开 `http://localhost:3000/`，选择实例，点击登录。可重复 `--activation`，URI
 必须来自 Observer。客户端只处理选定的激活实例，凭据文件仅在本地进程读取。
-默认会在 `~/.loom/auth-profiles` 为能力包声明的每个 IdP 保存一个受权限保护的
-浏览器档案（可用 `--auth-state-dir` 修改，或用 `--no-auth-state` 关闭）。因此同一
-IdP 的后续资源会先用已有 Cookie/本地会话尝试认证；会话无效时仍会在同一个窗口中
-要求人工登录。未声明 `idp` 的包不会与其他资源共享档案。
+默认在 `~/.loom/auth-profiles/browser` 保存当前用户的私有浏览器档案，所有选定
+资源共用它。浏览器跟随实际登录跳转，按 Cookie 域、路径、HTTPS 和同源规则复用
+会话，不依赖能力包声明 IdP；上游更换登录提供方后自动遵循新的流程。
+持久 Cookie 和站点存储由 Chromium 保存，会话型 Cookie 由客户端在关闭前以 0600
+权限原子保存并于下次打开恢复。资源自己的授权确认和服务端验证仍须完成。
+不同账号可使用不同的 `--auth-state-dir`；`--no-auth-state` 使用独立的临时上下文。
+升级前按 IdP 分散保存的旧档案不自动合并，首次登录建立新档案，旧文件保留。
+
+多个登录请求按顺序执行，前一个完成后才为后一个获取最新 revision 并创建挑战，
+排队不会消耗挑战有效期。不能同时用两个助手进程打开同一档案；档案被占用或无法
+保存时界面明确报错，不静默改用空档案。
 
 首次登录、登录链接过期、关闭窗口、实际凭据失效，都在同一页面点击“重新认证”。
 客户端会重新 DESCRIBE 并调用 `auth-start`，无需重启程序或再次激活；启用本地
-档案时，会先尝试复用该 IdP 的浏览器会话，失败后再要求人工登录。界面只在同一
+档案时，会先尝试复用浏览器会话，失败后再要求人工登录。界面只在同一
 revision 的激活达到 ready/authenticated 后显示完成。
 
 SDK 0.9.1 分别显示连接、准备远端认证、建立认证连接、打开浏览器和验证阶段，
@@ -56,7 +63,6 @@ SDK 0.9.1 分别显示连接、准备远端认证、建立认证连接、打开�
   "authentication": {
     "status": "auth_required",
     "method": "browser-cookie",
-    "idp": "https://login.example/tenant",
     "cookie_name": "grafana_session",
     "verification_uri": "http://localhost:3000/",
     "expires_at": 1792583100,
@@ -76,12 +82,12 @@ SDK 0.9.1 分别显示连接、准备远端认证、建立认证连接、打开�
 没有 `client`。五分钟是浏览器挑战期限，不是实际凭据期限。
 
 包声明 `authentication.interaction.mode`：`redirect` 捕获固定本地 OAuth 回调；
-`browser-cookie` 从 IdP 隔离浏览器档案读取指定 cookie，并由服务端验证；`device-code`
+`browser-cookie` 从客户端浏览器档案读取目标站点的指定 cookie，并由服务端验证；`device-code`
 由原凭据插件完成设备授权。`credential-profile` 用于 Outline、算力云 API 和普通
-SSH 的操作员凭据配置，只验证凭据，不发起浏览器授权。需要复用登录会话的包应在
-`authentication.idp` 中声明 HTTPS 的稳定 IdP 标识（历史/兼容包也可放在
-`interaction.idp`）；Grafana 保留原站回调，SSH
-保留 opkssh 登记的回调。
+SSH 的操作员凭据配置，只验证凭据，不发起浏览器授权。登录态复用由客户端管理，
+包无需声明 `idp`；历史包中的该字段不再影响复用。
+Grafana 保留原站回调，SSH 保留 opkssh 登记的回调。
+服务 Cookie 失效只清理目标 Cookie，不清空其他资源或 IdP 的会话。
 
 ## 状态和恢复
 

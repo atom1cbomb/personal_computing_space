@@ -3,6 +3,18 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from loom_v2.observer.browser_auth import BrowserAuth
+from loom_v2.observer.authentication import authentication_view
+
+
+def test_public_authentication_ignores_historical_package_idp():
+    package = SimpleNamespace(body={"authentication": {
+        "idp": "https://old-provider.example",
+        "interaction": {"mode": "browser-cookie", "cookie_name": "sid",
+                        "idp": "https://another-old-provider.example"},
+    }})
+    assert authentication_view(package, {"status": "authenticated", "cookie": "private"}) == {
+        "method": "browser-cookie", "cookie_name": "sid", "status": "authenticated",
+    }
 
 
 def test_observer_bridge_requires_bearer_and_consumes_binding() -> None:

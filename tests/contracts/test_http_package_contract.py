@@ -128,7 +128,7 @@ def test_authentication_interaction_contract(interaction, browser, valid):
             CapabilityPackageVersion.model_validate(payload)
 
 
-def test_authentication_interaction_accepts_an_idp_for_profile_reuse():
+def test_historical_authentication_idp_is_readable_without_rewriting_the_package():
     payload = http_package_payload()
     payload["body"]["authentication"] = {
         "start_path": "/auth/start", "status_path": "/auth/status",

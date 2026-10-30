@@ -30,9 +30,9 @@ registered with the OIDC client. The package does not invent a device-code
 protocol.
 
 Use the [unified SDK login portal](../../docs/authentication.md) with
-`suanli-vm-ssh-http/v5`. The package declares `interaction.mode=redirect` and
-`authentication.idp=https://connect.cs.ac.cn`, so its browser profile can be
-reused by other resources using the same IdP. The client opens a browser,
+`suanli-vm-ssh-http/v5`. The package declares `interaction.mode=redirect`.
+The client manages the shared browser session and follows the actual provider
+redirects without a package-level IdP declaration. The client opens a browser,
 captures the registered localhost callback,
 and forwards it to the Observer's one-time bridge. The worker stays alive after
 login and refreshes one minute before ID-token expiry. It verifies the renewed

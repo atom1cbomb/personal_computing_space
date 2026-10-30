@@ -21,19 +21,24 @@ loom-auth --observer https://observer.example --token-file /private/loom-token \
 Repeat --activation for multiple instances. Add --allow-http only for an HTTP
 Observer. Open http://localhost:3000/. The client obtains the latest revision,
 invokes auth-start, opens a browser using the declared method, and polls that
-activation until ready/authenticated. If the package declares
-`authentication.idp` (or the compatibility location `interaction.idp`), the helper keeps a private local browser
-profile for that IdP and reuses it for later activations. An invalid saved
-session falls back to the normal human login in the same window. Use
-`--no-auth-state` to disable local profile reuse; do not prepare package-specific
+activation until ready/authenticated. The helper uses one private browser profile
+for the selected resources. Chromium follows the actual login redirects and enforces
+cookie and origin boundaries; packages do not need to declare an IdP. Session cookies
+are saved privately across browser restarts. Provider changes follow the new login
+flow automatically. Resource authorization/consent may still require confirmation.
+Use `--auth-state-dir` to separate accounts or `--no-auth-state` for independent,
+temporary contexts. Old per-IdP profiles are retained but not merged; the first login
+after upgrading establishes the new shared profile. Do not prepare package-specific
 Python helpers or session files.
 
 For expiry, closed windows or failed authentication, use the same portal's
 reauthentication button. Do not recreate the activation or resubmit a waiting
 business Run just to log in. A new auth-start invalidates the old browser challenge;
-the five-minute challenge expiry is distinct from credential expiry. The local
-profile is shared only by activations with the same declared IdP; activations
-without an IdP declaration keep independent browser state. Credentials and bridge tokens never
+the five-minute challenge expiry is distinct from credential expiry. Queued logins
+start their challenges only after obtaining the shared browser.
+Use one running helper per profile directory; an unavailable profile is reported
+explicitly. A rejected service cookie does not clear unrelated provider sessions.
+Credentials and bridge tokens never
 belong in descriptions, content uploads, business inputs, logs or chat.
 
 Programmatic auth-start returns resource, revision and authentication. The latter
