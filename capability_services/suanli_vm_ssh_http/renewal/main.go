@@ -68,6 +68,8 @@ type credential struct {
 	FreshIDToken    []byte          `json:"fresh_id_token,omitempty"`
 	RefreshToken    []byte          `json:"refresh_token"`
 	ExpiresAt       int64           `json:"expires_at"`
+	PendingTokens   *opkoidc.Tokens `json:"pending_tokens,omitempty"`
+	RenewalCount    int             `json:"renewal_count,omitempty"`
 }
 
 func atomicWrite(path string, data []byte) error {
@@ -93,8 +95,41 @@ func atomicWrite(path string, data []byte) error {
 }
 
 func setStatus(root, status string) error {
-	raw, _ := json.Marshal(map[string]string{"status": status})
-	return atomicWrite(filepath.Join(root, "renewal-status.json"), raw)
+	return reportStatus(root, status, "state", nil)
+}
+
+func reportStatus(root, status, phase string, err error) error {
+	// Never serialize errors or provider descriptions: they can contain tokens.
+	code := ""
+	if err != nil {
+		code = "verification_or_transport_error"
+		var oauthErr *oidc.Error
+		if errors.As(err, &oauthErr) {
+			switch oauthErr.ErrorType {
+			case "invalid_grant", "invalid_client", "invalid_scope", "temporarily_unavailable", "server_error":
+				code = string(oauthErr.ErrorType)
+			default:
+				code = "oauth_error"
+			}
+		} else if errors.Is(err, oidc.ErrNonceInvalid) {
+			code = "nonce_mismatch"
+		}
+	}
+	raw, _ := json.Marshal(map[string]any{"status": status, "phase": phase, "error_code": code, "updated_at": time.Now().UTC().Format(time.RFC3339)})
+	if err := atomicWrite(filepath.Join(root, "renewal-status.json"), raw); err != nil {
+		return err
+	}
+	// Bounded, private, structured history retains the first failure as well as
+	// later recovery. Neither upstream error text nor credential fields are logged.
+	path := filepath.Join(root, "renewal-events.jsonl")
+	if info, err := os.Stat(path); err == nil && info.Size() >= 1024*1024 {
+		_ = os.Rename(path, path+".1")
+	}
+	if file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600); err == nil {
+		_, _ = file.Write(append(raw, '\n'))
+		_ = file.Close()
+	}
+	return nil
 }
 
 func expiration(token []byte) (int64, error) {
@@ -172,14 +207,18 @@ func login(ctx context.Context, provider *capturingProvider, hash string) (*cred
 func save(root, keyPath string, c *credential) error {
 	// Checkpoint rotated tokens before publishing the new certificate. A restart
 	// can reconstruct keys from the checkpoint without using the old refresh token.
+	if err := checkpoint(root, c); err != nil {
+		return err
+	}
+	return writeKeys(keyPath, c)
+}
+
+func checkpoint(root string, c *credential) error {
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	if err = atomicWrite(filepath.Join(root, "renewal.json"), raw); err != nil {
-		return err
-	}
-	return writeKeys(keyPath, c)
+	return atomicWrite(filepath.Join(root, "renewal.json"), raw)
 }
 
 func writeKeys(keyPath string, c *credential) error {
@@ -234,7 +273,22 @@ func refresh(ctx context.Context, p refresher, c *credential) (*credential, erro
 	if err != nil {
 		return nil, err
 	}
-	if err = p.VerifyRefreshedIDToken(ctx, c.OriginalIDToken, tokens.IDToken); err != nil {
+	return validateRefresh(ctx, p, c, tokens)
+}
+
+func validateRefresh(ctx context.Context, p refresher, c *credential, tokens *opkoidc.Tokens) (*credential, error) {
+	if tokens == nil {
+		return nil, errors.New("missing refresh response")
+	}
+	var err error
+	if verifier, ok := p.(interface {
+		VerifyRefreshedTokens(context.Context, []byte, *opkoidc.Tokens) error
+	}); ok {
+		err = verifier.VerifyRefreshedTokens(ctx, c.OriginalIDToken, tokens)
+	} else {
+		err = p.VerifyRefreshedIDToken(ctx, c.OriginalIDToken, tokens.IDToken)
+	}
+	if err != nil {
 		return nil, err
 	}
 	exp, err := expiration(tokens.IDToken)
@@ -245,6 +299,8 @@ func refresh(ctx context.Context, p refresher, c *credential) (*credential, erro
 		return nil, errors.New("expired refresh result")
 	}
 	updated := *c
+	updated.PendingTokens = nil
+	updated.RenewalCount++
 	updated.FreshIDToken, updated.ExpiresAt = tokens.IDToken, exp
 	if len(tokens.RefreshToken) > 0 {
 		updated.RefreshToken = tokens.RefreshToken
@@ -268,7 +324,7 @@ func wait(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-func run(ctx context.Context, mode, config, root, keyPath string) error {
+func run(ctx context.Context, mode, config, root, keyPath string, maxInterval time.Duration) error {
 	p, hash, err := newProvider(config)
 	if err != nil {
 		return err
@@ -296,10 +352,10 @@ func run(ctx context.Context, mode, config, root, keyPath string) error {
 			return err
 		}
 	}
-	return renew(ctx, p, c, root, keyPath)
+	return renew(ctx, p, c, root, keyPath, maxInterval)
 }
 
-func renew(ctx context.Context, p refresher, c *credential, root, keyPath string) error {
+func renew(ctx context.Context, p refresher, c *credential, root, keyPath string, maxInterval time.Duration) error {
 	status := "authenticated"
 	if c.ExpiresAt <= time.Now().Unix() {
 		status = "auth_failed"
@@ -309,13 +365,32 @@ func renew(ctx context.Context, p refresher, c *credential, root, keyPath string
 	}
 	for {
 		delay := time.Until(time.Unix(c.ExpiresAt, 0)) - time.Minute
+		if maxInterval > 0 {
+			delay = min(delay, maxInterval)
+		}
+		if c.PendingTokens != nil {
+			delay = 0
+		}
 		if !wait(ctx, max(delay, time.Second)) {
 			return nil
 		}
 		backoff := 2 * time.Second
 		for {
 			attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
-			updated, refreshErr := refresh(attempt, p, c)
+			phase := "exchange"
+			var refreshErr error
+			if c.PendingTokens == nil {
+				c.PendingTokens, refreshErr = p.RefreshTokens(attempt, c.RefreshToken)
+			}
+			var updated *credential
+			if refreshErr == nil {
+				phase = "checkpoint"
+				refreshErr = checkpoint(root, c)
+				if refreshErr == nil {
+					phase = "verify"
+					updated, refreshErr = validateRefresh(attempt, p, c, c.PendingTokens)
+				}
+			}
 			cancel()
 			if ctx.Err() != nil {
 				return nil
@@ -331,15 +406,15 @@ func renew(ctx context.Context, p refresher, c *credential, root, keyPath string
 					}
 					backoff = min(backoff*2, time.Minute)
 				}
-				if err := setStatus(root, "authenticated"); err != nil {
+				if err := reportStatus(root, "authenticated", "renewed", nil); err != nil {
 					return err
 				}
 				break
 			}
-			if revoked(refreshErr) {
-				return setStatus(root, "auth_required")
+			if phase == "exchange" && revoked(refreshErr) {
+				return reportStatus(root, "auth_required", phase, refreshErr)
 			}
-			_ = setStatus(root, "auth_failed")
+			_ = reportStatus(root, "auth_failed", phase, refreshErr)
 			if !wait(ctx, backoff) {
 				return nil
 			}
@@ -355,12 +430,16 @@ func main() {
 	config := flags.String("config-path", "", "provider config")
 	root := flags.String("state-dir", "", "private activation state")
 	key := flags.String("private-key-file", "", "SSH private key path")
+	maxInterval := flags.Duration("max-refresh-interval", 0, "optional shorter refresh interval for soak tests")
 	if len(os.Args) < 2 || (os.Args[1] != "login" && os.Args[1] != "resume") || flags.Parse(os.Args[2:]) != nil || *root == "" || *key == "" || *config == "" {
+		os.Exit(2)
+	}
+	if *maxInterval < 0 {
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	if err := run(ctx, os.Args[1], *config, *root, *key); err != nil {
+	if err := run(ctx, os.Args[1], *config, *root, *key, *maxInterval); err != nil {
 		_ = setStatus(*root, "auth_failed")
 		fmt.Fprintln(os.Stderr, "SSH credential renewal failed")
 		os.Exit(1)

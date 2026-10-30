@@ -219,6 +219,7 @@ class VmSshGateway:
                 [self.opkssh, mode,
                  "--config-path", str(Path(__file__).with_name("opkssh.yml")),
                  "--state-dir", str(self.state_root),
+                 "--max-refresh-interval", os.getenv("LOOM_SSH_REFRESH_INTERVAL", "0s"),
                  "--private-key-file", str(self.private_key)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -239,6 +240,9 @@ class VmSshGateway:
             return "auth_failed"
 
     def _resume_renewal(self) -> None:
+        # Reap exited workers even when renewal requires a new login.
+        if self._login_process is not None and self._login_process.poll() is not None:
+            self._login_process = None
         if self._browser_session or not (self.state_root / "renewal.json").is_file():
             return
         if self._renewal_status() == "auth_required":
@@ -344,12 +348,13 @@ class VmSshGateway:
             except GatewayError:
                 return {"status": "auth_failed"}
             status = self._renewal_status()
-            if status in {"auth_required", "auth_failed"}:
-                return {"status": status}
-            if (self.state_root / "renewal.json").exists() and (
-                    self._login_process is None or self._login_process.poll() is not None):
-                return {"status": "auth_failed"}
             verified = self._ssh_probe()
+            # Renewal eligibility and current SSH authorization have different
+            # lifetimes. Always verify access, including after refresh rejection.
+            if verified != "auth_required":
+                return {"status": verified}
+            if status == "auth_required":
+                return {"status": "auth_required"}
             if verified == "auth_required" and (self.state_root / "renewal.json").exists():
                 try:
                     expiry = json.loads((self.state_root / "renewal.json").read_text()).get("expires_at")
@@ -365,7 +370,7 @@ class VmSshGateway:
         timeout = validate_exec(command, timeout_seconds)
         with self._lock:
             self._resume_renewal()
-            if self._renewal_status() == "auth_required":
+            if self._renewal_status() == "auth_required" and self._ssh_probe() == "auth_required":
                 raise GatewayError("ssh_authentication_required", 401)
         return execute_ssh(self._ssh_args(), command, timeout)
 
