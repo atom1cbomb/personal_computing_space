@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "target_resource_ref": {
+      "type": "string",
+      "pattern": "^grip://"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{24}$"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "additionalProperties": false
+}

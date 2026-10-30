@@ -1,0 +1,127 @@
+{
+  "package_type": "service",
+  "package_id": "suanli-overleaf-http",
+  "package_version": "v1",
+  "execution": {
+    "kind": "container:http",
+    "version": "1"
+  },
+  "body": {
+    "image_ref": "registry.example/loom/suanli-overleaf-gateway@sha256:<replace-after-build>",
+    "container_port": 8080,
+    "health_path": "/healthz",
+    "network_profile": "egress",
+    "persistent_state": true,
+    "authentication": {
+      "start_path": "/v1/auth/start",
+      "status_path": "/v1/auth/status",
+      "browser_path": "/v1/auth/browser",
+      "interaction": {
+        "mode": "browser-cookie",
+        "cookie_name": "overleaf.sid"
+      }
+    }
+  },
+  "action_exports": [
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-list",
+        "version_or_digest": "9c14ebfd420a92a62ef8aac6c6b744a34bc21e6389bde1a626b55c41c448dc72",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "suanli_overleaf.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/projects/list",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-list/sha256/c06f96c4d1102b9b0ba69b83c0963ef5fa6d20917ab54a402877268ac6dff8fd",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-download",
+        "version_or_digest": "ebe4f01e87400f2b162ff8cb6553eb44d78650da7df33ecf8e51ceb004215aee",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "suanli_overleaf.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/projects/download",
+        "interaction": "byte-stream"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-download/sha256/e29427bebf2cbd842fa3b43cc4e461ed68f0f01a48253de9e87fcbb28669d1a9",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-status",
+        "version_or_digest": "f0946b93f73c0bf43a396264a1fedfa25dedff6431c5e50a740c8ae932c61409",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "suanli_overleaf.read"
+      ],
+      "replay_safety": "SafeRead",
+      "runtime_binding": {
+        "path": "/v1/projects/status",
+        "interaction": "request-reply"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-status/sha256/3b870c7371e2ce9c42b8ca2631c920956c1dd20b57fd8cb6e94cdfd15bd5647e",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-upload",
+        "version_or_digest": "32cac23d89ff7ee8e6a189544fa2e303debde30dfe2e361911a5a9857cf81d4d",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "suanli_overleaf.write"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/projects/upload",
+        "interaction": "byte-stream"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-upload/sha256/b7314349925a45e36812999e454978cab8b8a1d44988c156a1f66a6bcfac3742",
+        "identity_criterion": "content_digest"
+      }
+    },
+    {
+      "action_descriptor_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanli-overleaf/projects-import",
+        "version_or_digest": "9d510e1beba920982fdeb24819d323913977b867d762745a46f90482d6738f5e",
+        "identity_criterion": "descriptor_digest"
+      },
+      "effect_class": "ExternalService",
+      "permissions": [
+        "suanli_overleaf.write"
+      ],
+      "replay_safety": "NotReplaySafe",
+      "runtime_binding": {
+        "path": "/v1/projects/import",
+        "interaction": "byte-stream"
+      },
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-import/sha256/f1861d9e494128623b0795a81159ed635e456d663e5e86a4a24eed6b515f35b0",
+        "identity_criterion": "content_digest"
+      }
+    }
+  ]
+}

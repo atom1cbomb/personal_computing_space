@@ -59,6 +59,7 @@ mode and remove `browser_path`. Paths must be
 distinct origin-relative paths without query/fragment, and must not overlap the
 health or business paths. Complete the normal image, port, health and business
 export declarations. Use an operator-supported egress network when needed.
+Cookie names may contain dots, for example `overleaf.sid`.
 
 New publication rejects legacy `authentication.client` and package-level
 `body.credential_profile`. Historical read/digest compatibility is not a way
@@ -143,6 +144,16 @@ fit the current 4096-character callback limit. Validate the matching session,
 expiry and one-time `created → bound → consumed` sequence; reject stale/replayed
 messages. Complete the provider exchange/verification, store credentials
 privately and return exactly `{"status": "accepted"}` on success (HTTP 200).
+For `browser-cookie` only, an upstream check that confirms an anonymous or
+unauthenticated cookie may instead return exactly `{"status": "pending"}`
+(HTTP 200). Keep the challenge bound with its original expiry and do not persist
+that cookie as an authenticated credential. The Observer retains the same
+binding; the SDK keeps the browser open and probes the current cookie once per
+second until acceptance, window closure or expiry. Only successful verification
+consumes the challenge. Provider/network failures and malformed responses remain
+terminal errors; do not treat them as pending login. Redirect callbacks remain
+one-shot and cannot return pending. This extension requires matching Observer,
+HTTP runtime and SDK versions; existing gateways must explicitly implement it.
 Readiness still depends on `status_path`; callback acceptance is not proof of
 usable business access. Observer bridge tokens/bindings are managed by the
 system and are not fields the gateway should add to this protocol.

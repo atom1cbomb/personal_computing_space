@@ -4,6 +4,9 @@
 `kubernetes-http/v6`、`grafana-http/v4` 和 `autopaper-http/v2`。AutoPaper 还使用
 SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_services/autopaper_http/README.md)。
 使用匹配的 Observer 和 HTTP runtime。
+`suanli-overleaf-http/v1` 复用同一入口，使用 SDK 0.9.2 及匹配支持点号 Cookie 名和
+`pending` 回调的 Observer 与 HTTP runtime；Git token 由激活的 credential profile 提供，
+见 [Overleaf 接入说明](../capability_services/suanli_overleaf_http/README.md)。
 升级包按新版本发布，保留历史不可变包；重新认证本身不创建新激活。
 
 创建或修改能力包时，参照 skill 中的
@@ -15,7 +18,7 @@ SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_servi
 在用户浏览器所在机器安装 SDK 的 `auth` 可选依赖，再安装 Chromium：
 
 ```sh
-python -m pip install './loom_orchestration-0.9.1-py3-none-any.whl[auth]'
+python -m pip install './loom_orchestration-0.9.3-py3-none-any.whl[auth]'
 python -m playwright install chromium
 python -m loom_orchestration.auth \
   --observer https://observer.example \
@@ -30,7 +33,7 @@ python -m loom_orchestration.auth \
 也可使用安装后的 `loom-auth` 命令。Observer 使用 HTTP 时显式加 `--allow-http`。
 打开 `http://localhost:3000/`，选择实例，点击登录。可重复 `--activation`，URI
 必须来自 Observer。客户端只处理选定的激活实例，凭据文件仅在本地进程读取。
-默认在 `~/.loom/auth-profiles/browser` 保存当前用户的私有浏览器档案，所有选定
+SDK 0.9.3 默认在 `~/.loom/auth-profiles/browser` 保存当前用户的私有浏览器档案，所有选定
 资源共用它。浏览器跟随实际登录跳转，按 Cookie 域、路径、HTTPS 和同源规则复用
 会话，不依赖能力包声明 IdP；上游更换登录提供方后自动遵循新的流程。
 持久 Cookie 和站点存储由 Chromium 保存，会话型 Cookie 由客户端在关闭前以 0600
@@ -80,6 +83,16 @@ SDK 0.9.1 分别显示连接、准备远端认证、建立认证连接、打开�
 自行管理短期会话。浏览器桥 token 仅用于认证 POST，不进入 Run、ContentStore、
 日志或资源描述。DESCRIBE 的 `metadata.authentication` 只返回公开状态和挑战信息，
 没有 `client`。五分钟是浏览器挑战期限，不是实际凭据期限。
+
+Cookie 名支持 `overleaf.sid` 这样的点号名称。Cookie 存在不表示用户已登录：
+`browser-cookie` 网关在真实上游检查确认当前 Cookie 仍为匿名会话时，可返回
+`{"status":"pending"}`（HTTP 200）。运行时和 Observer 保留该挑战的原绑定及
+到期时间，统一客户端保持同一浏览器窗口，每秒重新读取并验证 Cookie。
+验证成功才返回 `{"status":"accepted"}` 并消费挑战；客户端随后仍等待激活
+ready/authenticated。网络故障、权限拒绝或无效响应仍是错误，不能转换成 pending。
+`redirect` 回调不接受 pending，成功后的重放和过期挑战仍会被拒绝。
+使用此行为须同时更新 Observer、HTTP runtime 和 SDK；能力包需要显式实现
+pending 返回值，已有网关不会自动获得该行为。
 
 包声明 `authentication.interaction.mode`：`redirect` 捕获固定本地 OAuth 回调；
 `browser-cookie` 从客户端浏览器档案读取目标站点的指定 cookie，并由服务端验证；`device-code`

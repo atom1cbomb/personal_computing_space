@@ -428,8 +428,11 @@ class DockerContainerHTTPRuntimeV1:
             raise RuntimeError("service_browser_proxy_invalid") from exc
         if not isinstance(value, dict):
             raise RuntimeError("service_browser_proxy_invalid")
-        if payload["action"] == "callback" and value != {"status": "accepted"}:
-            raise RuntimeError("service_browser_proxy_invalid")
+        if payload["action"] == "callback":
+            pending_cookie = ((auth.get("interaction") or {}).get("mode") == "browser-cookie"
+                              and value == {"status": "pending"})
+            if value != {"status": "accepted"} and not pending_cookie:
+                raise RuntimeError("service_browser_proxy_invalid")
         if payload["action"] == "open" and (
             set(value) != {"status", "location"} or value["status"] != "redirect"
             or not isinstance(value["location"], str) or len(value["location"]) > 16384

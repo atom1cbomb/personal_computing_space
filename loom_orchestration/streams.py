@@ -10,6 +10,7 @@ import json
 import time
 from contextlib import suppress
 from typing import Any
+from urllib.parse import urlsplit
 
 from websockets.asyncio.client import connect, unix_connect
 from websockets.exceptions import ConnectionClosed
@@ -150,7 +151,8 @@ async def connect_stream(endpoint: str, request: dict, *, timeout: float = 30,
     options = dict(subprotocols=[STREAM_PROTOCOL], compression=None, max_size=MAX_MESSAGE,
                    max_queue=MAX_QUEUE, write_limit=MAX_MESSAGE, open_timeout=timeout,
                    ping_interval=20, ping_timeout=40, close_timeout=5, proxy=None)
-    if ssl is not None:
+    # One client may use a custom CA for WSS and an explicitly allowed WS relay.
+    if ssl is not None and urlsplit(endpoint).scheme == "wss":
         options["ssl"] = ssl
     connector = unix_connect(unix_path, uri=endpoint, **options) if unix_path else connect(endpoint, **options)
     handshake_end = time.monotonic() + timeout

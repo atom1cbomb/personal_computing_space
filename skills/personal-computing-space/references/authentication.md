@@ -21,7 +21,7 @@ loom-auth --observer https://observer.example --token-file /private/loom-token \
 Repeat --activation for multiple instances. Add --allow-http only for an HTTP
 Observer. Open http://localhost:3000/. The client obtains the latest revision,
 invokes auth-start, opens a browser using the declared method, and polls that
-activation until ready/authenticated. The helper uses one private browser profile
+activation until ready/authenticated. SDK 0.9.3 uses one private browser profile
 for the selected resources. Chromium follows the actual login redirects and enforces
 cookie and origin boundaries; packages do not need to declare an IdP. Session cookies
 are saved privately across browser restarts. Provider changes follow the new login

@@ -238,7 +238,7 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                                  "properties": {"mode": {"const": "browser-cookie"},
                                                 "idp": {"type": "string", "pattern": _IDP_PATTERN, "deprecated": True,
                                                         "description": "Historical metadata only; the login client manages browser sessions."},
-                                                "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+                                                "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"}},
                                  "additionalProperties": False},
                             ]
                         },

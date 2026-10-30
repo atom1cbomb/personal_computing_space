@@ -107,6 +107,7 @@ class BrowserAuth:
         session = dict(package_ref=package.version_ref, package_digest=package.package_digest,
                        target_slave=targets[0], instance_name=instance_name,
                        activation_revision=activation.activation_revision,
+                       method=authentication["interaction"]["mode"],
                        expires_at=time.time() + 300, bound=None, phase="created",
                        bridge_token=secrets.token_urlsafe(32))
         async with self.lock:
@@ -159,7 +160,7 @@ class BrowserAuth:
             session["phase"] = "bound"
             return location, session["bound"]
 
-    async def _callback_session(self, session_id: str, binding: str, query: dict[str, list[str]]) -> None:
+    async def _callback_session(self, session_id: str, binding: str, query: dict[str, list[str]]) -> dict[str, str]:
         try:
             message = BrowserAuthMessage(action="callback", session_id="x" * 32, query=query)
         except ValueError as exc:
@@ -170,14 +171,24 @@ class BrowserAuth:
             if (session is None or not secrets.compare_digest(binding, session.get("bound") or "")
                     or session["phase"] != "bound"):
                 raise HTTPException(400, "browser_session_not_found")
-            session = self.sessions.pop(session_id)
+            session["phase"] = "verifying"
             message.session_id = session_id
             try:
                 result = await self.send(session, "callback", message.model_dump(mode="json"))
+                if session.get("method") == "browser-cookie" and result == {"status": "pending"}:
+                    # Anonymous cookies are candidates, not a completed login.
+                    # Retain the binding and original deadline for the next probe.
+                    session["phase"] = "bound"
+                    return result
                 if result != {"status": "accepted"}:
                     raise RuntimeError("browser_callback_rejected")
-            except (ValueError, RuntimeError, KeyError) as exc:
-                raise HTTPException(409, "browser_callback_failed") from exc
+            except BaseException as exc:
+                self.sessions.pop(session_id, None)
+                if isinstance(exc, (ValueError, RuntimeError, KeyError)):
+                    raise HTTPException(409, "browser_callback_failed") from exc
+                raise
+            self.sessions.pop(session_id, None)
+            return result
 
     async def bridge(self, request: Request) -> JSONResponse:
         """Handle only the fixed open/callback messages from the local helper."""
@@ -208,5 +219,5 @@ class BrowserAuth:
                                  "browser_binding": browser_binding}, headers=self.headers)
         if binding is None:
             raise HTTPException(400, "browser_session_binding_required")
-        await self._callback_session(session_id, binding, query)
-        return JSONResponse({"status": "accepted"}, headers=self.headers)
+        result = await self._callback_session(session_id, binding, query)
+        return JSONResponse(result, headers=self.headers)
