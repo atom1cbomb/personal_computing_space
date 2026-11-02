@@ -16,6 +16,7 @@
 
 | 目录 | 使用说明 | 构建/部署文档 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---|---:|---:|---|
+| ark_http | [HOW_TO_USE](ark_http/HOW_TO_USE.md) | [README](ark_http/README.md) | ark-http/v1 | 11 | 用户 API Key profile；Agent Plan／普通 API 模式，多模态理解、图片生成、视频任务、向量化及 Agent Plan HTTP TTS |
 | suanli_overleaf_http | [HOW_TO_USE](suanli_overleaf_http/HOW_TO_USE.md) | [README](suanli_overleaf_http/README.md) | suanli-overleaf-http/v1 | 5 | 连接 overleaf.cs.ac.cn；Git token profile + 统一网页登录，项目列表、下载、状态、上传和新项目导入 |
 | autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v2 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
 | kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
@@ -39,6 +40,7 @@ docker build -f capability_services/suanli_vm_ssh_http/Dockerfile -t loom/suanli
 docker build -f capability_services/kubernetes_http/Dockerfile -t loom/kubernetes-gateway:v8 .
 docker build -f capability_services/embedding_http/Dockerfile -t loom/embedding-gateway:v1 .
 docker build -f capability_services/suanli_overleaf_http/Dockerfile -t loom/suanli-overleaf-gateway:v1 .
+docker build -f capability_services/ark_http/Dockerfile -t loom/ark-gateway:v1 .
 ```
 
 配置 `LOOM_OBSERVER_URL`、`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID` 和 `LOOM_GRIP_TOKEN`。

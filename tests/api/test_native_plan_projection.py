@@ -64,7 +64,7 @@ async def test_native_projections_filter_workspace_and_target_without_loading_hi
     async def no_load(*args, **kwargs):
         pytest.fail("native projections must not materialize Run or request histories")
 
-    for name in ("_all_records", "_load", "list_execution_requests", "_load_execution_request"):
+    for name in ("_load", "list_execution_requests", "_load_execution_request"):
         monkeypatch.setattr(reader, name, no_load)
     with queries(engine) as sql:
         summaries = await reader.list_plan_summaries("workspace-default")
@@ -111,7 +111,7 @@ async def test_run_result_reads_fresh_execution_identity_and_isolates_workspace(
         pytest.fail("Run reads must not materialize execution history")
 
     monkeypatch.setattr(reader, "_load", no_load)
-    monkeypatch.setattr(reader, "_all_records", no_load)
+    monkeypatch.setattr(reader, "_load_run_capabilities", no_load)
     with queries(engine) as sql:
         result = await reader.read_run_result("workspace-default", item.run_id)
         summary, = await reader.list_run_summaries("workspace-default", run_id=item.run_id)
@@ -184,7 +184,7 @@ async def test_frozen_plans_preserve_committed_body_and_original_idempotency_pay
     async def no_load(*args, **kwargs):
         pytest.fail("frozen plan reads must use the stored execution request body")
 
-    for name in ("_load", "_all_records", "_load_execution_request", "list_execution_requests"):
+    for name in ("_load", "_load_execution_request", "list_execution_requests"):
         monkeypatch.setattr(reader, name, no_load)
     with queries(engine) as sql:
         before = await reader.read_frozen_plan("workspace-default", first.run_id, first.closure_version)

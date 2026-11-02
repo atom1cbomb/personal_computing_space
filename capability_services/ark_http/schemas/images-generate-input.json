@@ -1,0 +1,80 @@
+{
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "maxLength": 256,
+      "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "image": {
+      "type": [
+        "string",
+        "array"
+      ],
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      },
+      "description": "Reference image URL/data URL, or a list of reference images for editing and image-to-image generation."
+    },
+    "size": {
+      "type": "string"
+    },
+    "response_format": {
+      "type": "string",
+      "enum": [
+        "url",
+        "b64_json"
+      ]
+    },
+    "output_format": {
+      "type": "string"
+    },
+    "watermark": {
+      "type": "boolean"
+    },
+    "stream": {
+      "const": false
+    },
+    "sequential_image_generation": {
+      "type": "string"
+    },
+    "sequential_image_generation_options": {
+      "type": "object",
+      "properties": {}
+    },
+    "optimize_prompt_options": {
+      "type": "object",
+      "properties": {}
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "background": {
+      "type": "string"
+    },
+    "layer_decomposition": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "model"
+  ],
+  "additionalProperties": false,
+  "description": "Supply a nonblank prompt for generation/editing, or layer_decomposition=true and image for layer decomposition. stream=true is not supported."
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/responses-delete",
+  "name": "responses_delete",
+  "description": "Delete a stored Ark Response by response_id. This removes provider-side stored response data. No generation is submitted.",
+  "capability_kinds": [
+    "model.ark.responses.delete"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/47e9b1998fe219f5b442088f65f8e9bef6785f27aa0c59b0f129adce63a3f383",
+    "identity_criterion": "content_digest"
+  }
+}

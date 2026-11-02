@@ -99,7 +99,7 @@ async def test_list_query_count_does_not_grow_with_packages(directory, monkeypat
     async def no_full_load(*args, **kwargs):
         pytest.fail("directory reads must not load full histories or reload packages per activation")
 
-    for name in ("_all_records", "_load_workspace_packages", "list_package_activations"):
+    for name in ("_load", "_load_workspace_packages", "list_package_activations"):
         monkeypatch.setattr(repo, name, no_full_load)
     counts = []
     for start, count in ((0, 1), (1, 8)):
@@ -215,7 +215,6 @@ async def test_run_projection_reads_fresh_state_without_loading_history(director
     async def no_load(*args, **kwargs):
         pytest.fail("run reads must not materialize execution history")
 
-    monkeypatch.setattr(repo, "_all_records", no_load)
     monkeypatch.setattr(repo, "_load", no_load)
     with queries(engine) as sql:
         result = await client.invoke(uri, client.names.action("read"), {})

@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "properties": {
+    "user": {
+      "type": "object",
+      "properties": {}
+    },
+    "req_params": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "speaker": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "audio_params": {
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "sample_rate": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "format"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "speaker",
+        "audio_params"
+      ]
+    }
+  },
+  "required": [
+    "req_params"
+  ],
+  "additionalProperties": false
+}

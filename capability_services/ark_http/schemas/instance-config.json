@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "api_mode": {
+      "type": "string",
+      "enum": ["agent-plan", "standard"],
+      "description": "Defaults to agent-plan (/api/plan/v3). standard uses /api/v3 and a standard Ark API key. No automatic fallback between modes."
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Provider read timeout; defaults to 120 seconds. Authentication probes use at most 10 seconds."
+    }
+  },
+  "additionalProperties": false
+}

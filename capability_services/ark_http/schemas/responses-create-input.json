@@ -1,0 +1,113 @@
+{
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "maxLength": 256,
+      "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."
+    },
+    "stream": {
+      "const": false
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "top_p": {
+      "type": "number"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "tool_choice": {
+      "type": [
+        "string",
+        "object"
+      ]
+    },
+    "thinking": {
+      "type": "object",
+      "properties": {}
+    },
+    "parallel_tool_calls": {
+      "type": "boolean"
+    },
+    "service_tier": {
+      "type": "string"
+    },
+    "input": {
+      "type": [
+        "string",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {}
+      },
+      "description": "Native Responses input. Content supports input_text, input_image, input_video, input_file and input_audio, according to the selected model."
+    },
+    "instructions": {
+      "type": "string"
+    },
+    "previous_response_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "reasoning": {
+      "type": "object",
+      "properties": {}
+    },
+    "text": {
+      "type": "object",
+      "properties": {}
+    },
+    "store": {
+      "type": "boolean"
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "max_output_tokens": {
+      "type": "integer"
+    },
+    "max_tool_calls": {
+      "type": "integer"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {}
+    },
+    "caching": {
+      "type": "object",
+      "properties": {}
+    },
+    "context_management": {
+      "type": "object",
+      "properties": {}
+    },
+    "expire_at": {
+      "type": "integer"
+    },
+    "truncation": {
+      "type": "string"
+    },
+    "prompt_cache_key": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "model",
+    "input"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/videos-list",
+  "name": "videos_list",
+  "description": "List provider video generation tasks with pagination and optional status/model/task_ids/service_tier filters. Returns items and provider pagination fields; does not collect subsequent pages. No generation is submitted.",
+  "capability_kinds": [
+    "model.ark.videos.read"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/47e9b1998fe219f5b442088f65f8e9bef6785f27aa0c59b0f129adce63a3f383",
+    "identity_criterion": "content_digest"
+  }
+}

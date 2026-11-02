@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "embeddings_multimodal"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "properties": {}
+        },
+        "model": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "data"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/videos-delete",
+  "name": "videos_delete",
+  "description": "Cancel a queued provider video task or delete its task record using task_id. Running tasks cannot be assumed cancelled; follow provider status and rules. Requires the same account and API mode as creation.",
+  "capability_kinds": [
+    "model.ark.videos.delete"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/47e9b1998fe219f5b442088f65f8e9bef6785f27aa0c59b0f129adce63a3f383",
+    "identity_criterion": "content_digest"
+  }
+}

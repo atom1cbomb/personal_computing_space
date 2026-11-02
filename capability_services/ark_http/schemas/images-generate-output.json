@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "images_generate"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "b64_json": {
+                "type": "string"
+              },
+              "error": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "created": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "data"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "maxLength": 256,
+      "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."
+    },
+    "content": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      },
+      "minItems": 1,
+      "description": "Native Seedance text/image_url/video_url/audio_url parts, including reference roles and draft_task when supported."
+    },
+    "resolution": {
+      "type": "string"
+    },
+    "ratio": {
+      "type": "string"
+    },
+    "duration": {
+      "type": "integer"
+    },
+    "frames": {
+      "type": "integer"
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "camera_fixed": {
+      "type": "boolean"
+    },
+    "watermark": {
+      "type": "boolean"
+    },
+    "generate_audio": {
+      "type": "boolean"
+    },
+    "return_last_frame": {
+      "type": "boolean"
+    },
+    "draft": {
+      "type": "boolean"
+    },
+    "callback_url": {
+      "type": "string"
+    },
+    "service_tier": {
+      "type": "string"
+    },
+    "execution_expires_after": {
+      "type": "integer"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  "required": [
+    "model",
+    "content"
+  ],
+  "additionalProperties": false
+}

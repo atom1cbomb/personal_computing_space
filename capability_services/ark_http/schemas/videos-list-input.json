@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "properties": {
+    "page_num": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "filter": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "cancelled",
+            "succeeded",
+            "failed",
+            "expired"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "maxLength": 256,
+          "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."
+        },
+        "task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+          }
+        },
+        "service_tier": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

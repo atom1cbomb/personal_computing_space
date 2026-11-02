@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/audio-speech",
+  "name": "audio_speech",
+  "description": "Agent Plan only: synthesize speech through the OpenSpeech HTTP TTS endpoint using the same Agent Plan API key and resource seed-tts-2.0. Supply native req_params with text, speaker and explicit audio_params.format. Collects the provider JSON audio chunks, requires the success terminator and returns combined audio_base64, audio_format and usage. Consumes quota. Standard Ark mode is not supported for this action.",
+  "capability_kinds": [
+    "model.ark.audio.speech"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/47e9b1998fe219f5b442088f65f8e9bef6785f27aa0c59b0f129adce63a3f383",
+    "identity_criterion": "content_digest"
+  }
+}

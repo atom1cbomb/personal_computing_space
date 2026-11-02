@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "maxLength": 256,
+      "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."
+    },
+    "input": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      },
+      "minItems": 1,
+      "description": "Native text, image_url and video_url parts. Parts form one multimodal embedding input, not a text batch."
+    },
+    "dimensions": {
+      "type": "integer"
+    },
+    "encoding_format": {
+      "type": "string"
+    },
+    "instructions": {
+      "type": "string"
+    },
+    "multi_embedding": {
+      "type": "object",
+      "properties": {}
+    },
+    "sparse_embedding": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "model",
+    "input"
+  ],
+  "additionalProperties": false
+}

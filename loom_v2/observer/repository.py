@@ -21,8 +21,9 @@ from typing import Any
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, or_, func
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.orm import load_only
 
 from loom_v2.contracts.constraints import Constraint
 from loom_v2.contracts.refinement import is_monotonic_tightening
@@ -56,6 +57,7 @@ from loom_v2.db.models import (
     RunRow,
     RuntimeAgentRow,
     WorkspaceCapabilityPackageRow,
+    CapabilityAuditEventRow,
     WorkspaceResourceRow,
     McueDefinitionRow,
 )
@@ -148,6 +150,14 @@ class RunSummary:
     snapshot_digest: str | None = None
     execution_id: str | None = None
     execution_epoch: int | None = None
+
+
+@dataclass
+class RunCapabilities:
+    run_id: str
+    workspace_id: str | None
+    capability_packages: list[CapabilityPackageVersion]
+    capability_activations: list[CapabilityPackageActivation]
 
 
 @dataclass
@@ -314,6 +324,7 @@ class ObserverRepository:
         self.workspace_packages: dict[tuple[str, str], CapabilityPackageVersion] = {}
         self.workspace_package_activations: dict[tuple[str, str], list[CapabilityPackageActivation]] = {}
         self.workspace_package_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._run_capabilities: dict[str, RunCapabilities] = {}
         self.workspace_resources: dict[tuple[str, str], ManagedResource] = {}
         self.mcue_definitions: dict[tuple[str, str], dict[str, Any]] = {}
         self._mcue_content: dict[str, dict[str, Any]] = {}
@@ -371,6 +382,7 @@ class ObserverRepository:
             # Snapshot the index, then copy/refresh records on first access.
             # Reloading all historical Runs on every queue poll/health update
             # blocks the event loop and can expire otherwise healthy leases.
+            before_capabilities = self._run_capabilities.copy()
             before_runs = deepcopy(self.runs) if self.sessions is None else self.runs.copy()
             before_requests = deepcopy(self.execution_requests) if self.sessions is None else self.execution_requests.copy()
             token = self._execution_in_transaction.set(True)
@@ -390,7 +402,14 @@ class ObserverRepository:
                             yield
                         finally:
                             self._execution_session.reset(session_token)
+                for key in self._execution_loaded_runs.get() or set():
+                    record = self.runs.get(key)
+                    if record is not None:
+                        self._run_capabilities[key] = RunCapabilities(key,
+                            record.closure_contract.workspace_id if record.closure_contract else None,
+                            record.capability_packages, record.capability_activations)
             except BaseException:
+                self._run_capabilities = before_capabilities
                 self.runs = before_runs
                 self.execution_requests = before_requests
                 raise
@@ -1106,7 +1125,7 @@ class ObserverRepository:
             ]
             recovery_runs = [
                 run_record_payload(item)
-                for item in await self._all_records()
+                for item in await self._records_with_states({"thinking", "running"})
                 if item.closure_contract is not None
                 and item.closure_contract.workspace_id == workspace_id
                 and item.state in {"thinking", "running"}
@@ -1296,7 +1315,7 @@ class ObserverRepository:
                 capabilities.get("base_actions", capabilities.get("actions", []))
             )
             projected = set(base_actions)
-            for record in self.runs.values():
+            for record in self._package_records():
                 for activation in record.capability_activations:
                     if (
                         activation.target_slave != target
@@ -1345,7 +1364,8 @@ class ObserverRepository:
 
     async def refresh_slaves(self, workspace_id: str | None = None) -> list[dict[str, Any]]:
         agents = await self.list_agents(workspace_id or "workspace-default", role="slave")
-        await self._all_records()
+        await self._load_run_capabilities()
+        await self._load_workspace_packages()
         self._store_slave_snapshot(agents)
         self._project_ready_capabilities()
         return agents
@@ -1592,7 +1612,7 @@ class ObserverRepository:
             result = {
                 "runs": [
                     run_record_payload(item)
-                    for item in await self._all_records()
+                    for item in await self._records_with_states({"thinking", "running"})
                     if item.state in {"thinking", "running"}
                     and (item.closure_contract is None or item.closure_contract.workspace_id == workspace_id)
                 ]
@@ -1806,7 +1826,7 @@ class ObserverRepository:
     async def recover_persisted_activation_waits(self) -> list[str]:
         await self._load_workspace_packages()
         awakened: list[str] = []
-        for record in await self._all_records():
+        for record in await self._records_with_states({"awaiting_auth"}):
             if record.state != "awaiting_auth":
                 continue
             waiting = next(
@@ -1874,7 +1894,7 @@ class ObserverRepository:
 
         owners = active_run_ids or set()
         recovered: list[str] = []
-        for record in await self._all_records():
+        for record in await self._records_with_states({"thinking", "running"}):
             if record.run_id in owners or record.state not in {"thinking", "running"}:
                 continue
             if record.state == "running" and record.execution_id is not None:
@@ -1995,11 +2015,47 @@ class ObserverRepository:
             raise ValueError("workspace_package_workspace_required")
         return package.workspace_id, package.version_ref
 
+    def _package_records(self) -> list[RunCapabilities]:
+        records = dict(self._run_capabilities)
+        touched = self._execution_loaded_runs.get() or set()
+        for key, record in self.runs.items():
+            if self.sessions is None or key not in records or key in touched:
+                records[key] = RunCapabilities(key,
+                    record.closure_contract.workspace_id if record.closure_contract else None,
+                    record.capability_packages, record.capability_activations)
+        return list(records.values())
+
+    async def _load_run_capabilities(self) -> None:
+        """Refresh catalog projections without reading execution bodies or history."""
+        if self.sessions is None:
+            return
+        async with self._execution_write_session() as session:
+            rows = (await session.execute(select(
+                RunRow.run_id, RunRow.closure_contract["workspace_id"].as_string(),
+                RunRow.capability_packages, RunRow.capability_activations,
+            ))).all()
+        self._run_capabilities = {key: RunCapabilities(key, workspace,
+            [CapabilityPackageVersion.model_validate(p) for p in packages or []],
+            [CapabilityPackageActivation.model_validate(a) for a in activations or []])
+            for key, workspace, packages, activations in rows}
+
+    def _run_workspace(self, run_id: str) -> str | None:
+        record = self.runs.get(run_id)
+        if record is not None:
+            return record.closure_contract.workspace_id if record.closure_contract else None
+        projection = self._run_capabilities.get(run_id)
+        return projection.workspace_id if projection else None
+
     async def _load_workspace_packages(self) -> None:
         if self.sessions is None:
             return
-        async with self.sessions() as session:
-            rows = (await session.scalars(select(WorkspaceCapabilityPackageRow))).all()
+        async with self._execution_write_session() as session:
+            rows = (await session.execute(select(
+                WorkspaceCapabilityPackageRow.workspace_id,
+                WorkspaceCapabilityPackageRow.package_ref,
+                WorkspaceCapabilityPackageRow.package,
+                WorkspaceCapabilityPackageRow.capability_activations,
+            ))).all()
         for row in rows:
             package = CapabilityPackageVersion.model_validate(row.package)
             key = (row.workspace_id, row.package_ref)
@@ -2008,7 +2064,31 @@ class ObserverRepository:
                 CapabilityPackageActivation.model_validate(item)
                 for item in (row.capability_activations or [])
             ]
-            self.workspace_package_events[key] = list(row.events or [])
+
+    async def read_package_events(self, package: CapabilityPackageVersion, *, after: int = 0,
+                                  limit: int = 100) -> list[dict[str, Any]]:
+        """Explicit audit read, bounded by an ordered cursor; runtime writes never call it."""
+        if not 1 <= limit <= 1000 or after < 0:
+            raise ValueError("audit_page_invalid")
+        key = self._workspace_package_key(package)
+        if self.sessions is None:
+            return deepcopy(self.workspace_package_events.get(key, [])[after:after + limit])
+        async with self.sessions() as session:
+            return list((await session.scalars(select(CapabilityAuditEventRow.event).where(
+                CapabilityAuditEventRow.workspace_id == key[0], CapabilityAuditEventRow.package_ref == key[1],
+                CapabilityAuditEventRow.sequence > after,
+            ).order_by(CapabilityAuditEventRow.sequence).limit(limit))).all())
+
+    async def _health_report_event(self, package: CapabilityPackageVersion, report_id: str) -> dict | None:
+        key = self._workspace_package_key(package)
+        if self.sessions is None:
+            return next((e for e in self.workspace_package_events.get(key, [])
+                         if e.get("phase") == "capability_health_report" and e.get("report_id") == report_id), None)
+        async with self._execution_write_session() as session:
+            return await session.scalar(select(CapabilityAuditEventRow.event).where(
+                CapabilityAuditEventRow.workspace_id == key[0], CapabilityAuditEventRow.package_ref == key[1],
+                CapabilityAuditEventRow.report_id == report_id,
+            ))
 
     @asynccontextmanager
     async def _resource_transaction(self, workspace_id: str, key: str):
@@ -2216,8 +2296,9 @@ class ObserverRepository:
             package_id = normalized.resource_id
             package_digest = normalized.digest
         result: list[CapabilityPackageActivation] = []
-        for record in await self._all_records():
-            contract_workspace = record.closure_contract.workspace_id if record.closure_contract else workspace_id
+        await self._load_run_capabilities()
+        for record in self._package_records():
+            contract_workspace = record.workspace_id or workspace_id
             if contract_workspace != workspace_id:
                 continue
             result.extend(record.capability_activations)
@@ -2262,31 +2343,33 @@ class ObserverRepository:
         activations: list[CapabilityPackageActivation] | None = None,
         events: list[dict[str, Any]] | None = None,
     ) -> None:
+        """Commit a current-state projection and newly appended audit events atomically."""
         key = self._workspace_package_key(package)
         activation_snapshot = deepcopy(activations if activations is not None else self.workspace_package_activations.get(key, []))
-        event_snapshot = deepcopy(events if events is not None else self.workspace_package_events.get(key, []))
-        values = {
-            "workspace_id": key[0],
-            "package_ref": key[1],
-            "package": package.model_dump(mode="json"),
-            "capability_activations": [item.model_dump(mode="json") for item in activation_snapshot],
-            "events": event_snapshot,
-        }
+        appended = deepcopy(events or [])
+        values = {"workspace_id": key[0], "package_ref": key[1],
+                  "package": package.model_dump(mode="json"),
+                  "capability_activations": [item.model_dump(mode="json") for item in activation_snapshot]}
+        if self.sessions is not None:
+            async with self._execution_write_session() as session:
+                row = await session.get(WorkspaceCapabilityPackageRow, key, options=[load_only(
+                    WorkspaceCapabilityPackageRow.workspace_id, WorkspaceCapabilityPackageRow.package_ref)])
+                if row is None:
+                    session.add(WorkspaceCapabilityPackageRow(**values, events=[]))
+                else:
+                    for field_name, value in values.items():
+                        setattr(row, field_name, value)
+                if appended:
+                    sequence = await session.scalar(select(func.max(CapabilityAuditEventRow.sequence)).where(
+                        CapabilityAuditEventRow.workspace_id == key[0], CapabilityAuditEventRow.package_ref == key[1])) or 0
+                    for offset, event in enumerate(appended, 1):
+                        session.add(CapabilityAuditEventRow(workspace_id=key[0], package_ref=key[1],
+                            sequence=sequence + offset, event=event,
+                            report_id=event.get("report_id") if event.get("phase") == "capability_health_report" else None))
+        else:
+            self.workspace_package_events.setdefault(key, []).extend(appended)
         self.workspace_packages[key] = package
-        if self.sessions is None:
-            self.workspace_package_activations[key] = activation_snapshot
-            self.workspace_package_events[key] = event_snapshot
-            return
-        async with self.sessions() as session:
-            row = await session.get(WorkspaceCapabilityPackageRow, key)
-            if row is None:
-                session.add(WorkspaceCapabilityPackageRow(**values))
-            else:
-                for field_name, value in values.items():
-                    setattr(row, field_name, value)
-            await session.commit()
         self.workspace_package_activations[key] = activation_snapshot
-        self.workspace_package_events[key] = event_snapshot
 
     async def register_workspace_package(
         self, workspace_id: str, manifest: dict[str, Any]
@@ -2394,6 +2477,9 @@ class ObserverRepository:
         return normalized
 
     async def _persist(self, record: RunRecord) -> None:
+        self._run_capabilities[record.run_id] = RunCapabilities(record.run_id,
+            record.closure_contract.workspace_id if record.closure_contract else None,
+            record.capability_packages, record.capability_activations)
         loaded = self._execution_loaded_runs.get()
         if loaded is not None:
             loaded.add(record.run_id)
@@ -2412,6 +2498,7 @@ class ObserverRepository:
                 "execution_id": record.execution_id,
                 "execution_epoch": record.execution_epoch,
                 "state": record.state,
+                "latest_event_at": self._record_order_key(record),
                 "outcome": record.outcome,
                 "attempts": record.attempts,
                 "events": record.events,
@@ -2448,22 +2535,18 @@ class ObserverRepository:
             self.runs[run_id] = record
             return record
 
-    async def _all_records(self) -> list[RunRecord]:
+    async def _records_with_states(self, states: set[str]) -> list[RunRecord]:
+        """Select current work before loading any execution history."""
         if self.sessions is None:
-            return list(self.runs.values())
-        async with self.sessions() as session:
-            rows = (await session.scalars(select(RunRow).order_by(RunRow.run_id))).all()
-        records: list[RunRecord] = []
-        for row in rows:
-            if self._execution_in_transaction.get():
-                records.append(await self._load(row.run_id))
-                continue
-            record = self.runs.get(row.run_id)
-            if record is None:
-                record = self._record_from_row(row)
-                self.runs[row.run_id] = record
-            records.append(record)
-        return records
+            return [record for record in self.runs.values() if record.state in states]
+        query = select(RunRow.run_id).where(RunRow.state.in_(states)).order_by(RunRow.run_id)
+        session = self._execution_session.get()
+        if session is not None:
+            run_ids = (await session.scalars(query)).all()
+        else:
+            async with self.sessions() as session:
+                run_ids = (await session.scalars(query)).all()
+        return [await self._load(run_id) for run_id in run_ids]
 
     async def list_run_summaries(self, workspace_id: str, *, run_id: str | None = None) -> list[RunSummary]:
         """Read directory state without loading closure bodies, events or outcomes."""
@@ -2661,11 +2744,16 @@ class ObserverRepository:
                 for key, value in values.items():
                     setattr(row, key, value)
 
-    async def list_execution_requests(self, workspace_id: str, *, states: set[str] | None = None) -> list[ExecutionRequest]:
+    async def list_execution_requests(self, workspace_id: str, *, states: set[str] | None = None, run_id: str | None = None, conversation_ref: str | None = None, run_ids: set[str] | None = None) -> list[ExecutionRequest]:
         if self.sessions is not None:
             statement = select(RunExecutionRequestRow).where(RunExecutionRequestRow.workspace_id == workspace_id).order_by(RunExecutionRequestRow.created_at)
-            if states:
+            if states is not None:
                 statement = statement.where(RunExecutionRequestRow.state.in_(states))
+            if run_id is not None:
+                statement = statement.where(RunExecutionRequestRow.run_id == run_id)
+            if conversation_ref is not None:
+                statement = statement.where(or_(RunExecutionRequestRow.conversation_ref == conversation_ref,
+                                                RunExecutionRequestRow.run_id.in_(run_ids or set())))
             session = self._execution_session.get()
             if session is not None:
                 rows = (await session.scalars(statement.with_for_update())).all()
@@ -2677,8 +2765,12 @@ class ObserverRepository:
                 self.execution_requests[(item.workspace_id, item.request_id)] = item
             return items
         items = [item for item in self.execution_requests.values() if item.workspace_id == workspace_id]
-        if states:
+        if states is not None:
             items = [item for item in items if item.state in states]
+        if run_id is not None:
+            items = [item for item in items if item.run_id == run_id]
+        if conversation_ref is not None:
+            items = [item for item in items if item.conversation_ref == conversation_ref or item.run_id in (run_ids or set())]
         if self._execution_in_transaction.get():
             items = [await self._load_execution_request(item.workspace_id, item.request_id) for item in items]
         return sorted(items, key=lambda item: item.created_at)
@@ -2932,7 +3024,7 @@ class ObserverRepository:
             record.outcome = None
             await self._persist(record)
             workspace = record.closure_contract.workspace_id if record.closure_contract else self.settings.workspace_id
-            for item in await self.list_execution_requests(workspace):
+            for item in await self.list_execution_requests(workspace, run_id=run_id):
                 if item.run_id != run_id or item.state == "settled":
                     continue
                 item.state = "awaiting_auth"
@@ -2952,7 +3044,7 @@ class ObserverRepository:
             return []
         awakened: list[str] = []
         async with self._execution_transaction():
-            for record in await self._all_records():
+            for record in await self._records_with_states({"awaiting_auth"}):
                 if record.state != "awaiting_auth":
                     continue
                 event = next((item for item in reversed(record.events) if item.get("phase") == "activation_wait"), {})
@@ -2970,7 +3062,7 @@ class ObserverRepository:
                 record.events.append({"phase": "activation_wait_recovered", "activation_revision": activation.activation_revision, "created_at": datetime.now(timezone.utc).isoformat()})
                 await self._persist(record)
                 workspace = record.closure_contract.workspace_id if record.closure_contract else self.settings.workspace_id
-                for item in await self.list_execution_requests(workspace):
+                for item in await self.list_execution_requests(workspace, run_id=record.run_id, states={"awaiting_auth"}):
                     if item.run_id == record.run_id and item.state == "awaiting_auth":
                         item.state = "recovering"
                         await self._persist_execution_request(item)
@@ -2988,7 +3080,7 @@ class ObserverRepository:
         except KeyError:
             return
         workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else self.settings.workspace_id
-        items = await self.list_execution_requests(workspace_id)
+        items = await self.list_execution_requests(workspace_id, run_id=run_id)
         from .cleanup import registrations, continuation
 
         finished = any(event.get("phase") == "cleanup_finished" and event.get("execution_id") == record.execution_id for event in record.events)
@@ -3075,7 +3167,7 @@ class ObserverRepository:
             # different command id.  Reuse the active item instead of creating
             # a second schedulable request.
             active = [
-                item for item in await self.list_execution_requests(workspace_id, states={"queued", "claimed", "recovering"})
+                item for item in await self.list_execution_requests(workspace_id, states={"queued", "claimed", "recovering"}, run_id=run_id)
                 if item.run_id == run_id
             ]
             if active:
@@ -3120,7 +3212,7 @@ class ObserverRepository:
                 raise ValueError("resubmit_not_repairable")
             if record.committed is None or record.committed.version_id != base_closure_version:
                 raise ValueError("version_conflict")
-            previous_requests = [item for item in await self.list_execution_requests(workspace_id) if item.run_id == run_id]
+            previous_requests = [item for item in await self.list_execution_requests(workspace_id, run_id=run_id) if item.run_id == run_id]
             if not previous_requests or previous_requests[0].source != "external":
                 raise ValueError("planning_source_mismatch")
             if record.closure_contract is None or plan.goal != record.goal:
@@ -3289,32 +3381,23 @@ class ObserverRepository:
     def _package_visible_to_run(self, package: CapabilityPackageVersion, run_id: str | None) -> bool:
         if run_id is None:
             return package.scope == "run_bound" or (
-                package.scope == "workspace_reusable" and package.publication_state == "published"
-            )
-        run = self.runs.get(run_id)
-        if run is None:
+                package.scope == "workspace_reusable" and package.publication_state == "published")
+        workspace = self._run_workspace(run_id)
+        if run_id not in self.runs and run_id not in self._run_capabilities:
             return False
         if package.scope == "run_bound":
             return package.source_run_ref == run_id
         if package.scope != "workspace_reusable" or package.publication_state != "published":
             return False
-        if package.workspace_id is not None:
-            return (
-                run.closure_contract is not None
-                and package.workspace_id == run.closure_contract.workspace_id
-            )
-        if package.source_run_ref is None:
-            return False
-        source = self.runs.get(package.source_run_ref)
-        if source is None or source.closure_contract is None or run.closure_contract is None:
-            return False
-        return source.closure_contract.workspace_id == run.closure_contract.workspace_id
+        source_workspace = package.workspace_id or (
+            self._run_workspace(package.source_run_ref) if package.source_run_ref else None)
+        return workspace is not None and source_workspace == workspace
 
     def _find_package(self, package_ref: str | ResourceRef, *, run_id: str | None = None) -> CapabilityPackageVersion | None:
         resource_id = package_ref.resource_id if isinstance(package_ref, ResourceRef) else package_ref
         digest = package_ref.digest if isinstance(package_ref, ResourceRef) and package_ref.digest else None
         candidates: list[CapabilityPackageVersion] = []
-        for record in self.runs.values():
+        for record in self._package_records():
             for package in record.capability_packages:
                 if not self._package_visible_to_run(package, run_id):
                     continue
@@ -3347,13 +3430,16 @@ class ObserverRepository:
 
     async def list_capability_packages(self, *, run_id: str | None = None, include_abandoned: bool = False, workspace_id: str | None = None) -> list[CapabilityPackageVersion]:
         await self._load_workspace_packages()
-        records = [await self._load(run_id)] if run_id else await self._all_records()
+        await self._load_run_capabilities()
+        records = [r for r in self._package_records() if run_id is None or r.run_id == run_id]
+        if run_id is not None and not records:
+            raise KeyError(run_id)
         packages = [package for record in records for package in record.capability_packages]
         if run_id is not None:
             run = records[0]
             resolved_workspace = (
-                run.closure_contract.workspace_id
-                if run.closure_contract is not None
+                run.workspace_id
+                if run.workspace_id is not None
                 else workspace_id
             )
             packages.extend(
@@ -3415,9 +3501,16 @@ class ObserverRepository:
         return [(package, activations.get(package.version_ref, [])) for package in packages]
 
     async def get_capability_package(self, package_ref: str | ResourceRef, *, run_id: str | None = None) -> CapabilityPackageVersion:
-        if self.sessions is not None:
-            await self._all_records()
         await self._load_workspace_packages()
+        if run_id is not None:
+            await self._load_run_capabilities()
+            if run_id not in self._run_capabilities and run_id not in self.runs:
+                raise KeyError(run_id)
+        package = self._find_package(package_ref, run_id=run_id)
+        if package is not None and package.workspace_id is not None:
+            return package
+        if self.sessions is not None:
+            await self._load_run_capabilities()
         package = self._find_package(package_ref, run_id=run_id)
         if package is None:
             raise KeyError(package_ref)
@@ -3425,7 +3518,8 @@ class ObserverRepository:
 
     async def get_capability_package_aggregate(self, package_ref: str) -> CapabilityPackage:
         version = await self.get_capability_package(package_ref)
-        records = await self._all_records()
+        await self._load_run_capabilities()
+        records = self._package_records()
         key = (version.workspace_id, version.version_ref) if version.workspace_id else None
         activations = [activation for record in records for activation in record.capability_activations if activation.package_version_ref == version.version_ref]
         if key is not None:
@@ -3439,9 +3533,11 @@ class ObserverRepository:
         return CapabilityPackage(package_id=version.package_id, versions=versions, activations=activations)
 
     async def list_package_activations(
-        self, package: CapabilityPackageVersion
+        self, package: CapabilityPackageVersion, *, refresh: bool = True
     ) -> list[CapabilityPackageActivation]:
-        await self._load_workspace_packages()
+        if refresh:
+            await self._load_workspace_packages()
+            await self._load_run_capabilities()
         if package.workspace_id is not None:
             return list(
                 self.workspace_package_activations.get(
@@ -3450,19 +3546,20 @@ class ObserverRepository:
             )
         return [
             activation
-            for record in await self._all_records()
+            for record in self._package_records()
             for activation in record.capability_activations
             if activation.package_version_ref == package.version_ref
         ]
 
+    @execution_transaction
     async def abandon_capability_package(self, package_ref: str, *, idempotency_key: str | None = None) -> CapabilityPackageVersion:
         package = await self.get_capability_package(package_ref)
         if package.publication_state == "abandoned":
             return package
         package.publication_state = "abandoned"
         if package.workspace_id is not None:
-            key = self._workspace_package_key(package)
-            self.workspace_package_events.setdefault(key, []).append(
+            events = []
+            events.append(
                 {
                     "phase": "capability_package_abandoned",
                     "package_ref": self._package_ref(package),
@@ -3470,10 +3567,12 @@ class ObserverRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist_workspace_package(package)
+            await self._persist_workspace_package(package, events=events)
             return package
-        for record in self.runs.values():
-            if any(item.package_id == package.package_id and item.package_version == package.package_version for item in record.capability_packages):
+        for projection in self._package_records():
+            if any(item.package_id == package.package_id and item.package_version == package.package_version for item in projection.capability_packages):
+                record = await self._load(projection.run_id)
+                next(p for p in record.capability_packages if p.version_ref == package.version_ref).publication_state = "abandoned"
                 record.events.append({"phase": "capability_package_abandoned", "package_ref": self._package_ref(package), "idempotency_key": idempotency_key, "created_at": datetime.now(timezone.utc).isoformat()})
                 await self._persist(record)
                 break
@@ -3492,7 +3591,7 @@ class ObserverRepository:
 
             candidate_ref = self._package_ref(candidate)
             reusable_version = f"{candidate.package_version}-reusable"
-            for record in await self._all_records():
+            for record in self._package_records():
                 reusable = next(
                     (
                         item
@@ -3525,7 +3624,7 @@ class ObserverRepository:
             source_record = next(
                 (
                     record
-                    for record in self.runs.values()
+                    for record in self._package_records()
                     if any(
                         item.package_id == candidate.package_id
                         and item.package_version == candidate.package_version
@@ -3537,12 +3636,13 @@ class ObserverRepository:
             )
             if source_record is None:
                 raise KeyError(package_ref)
+            source_record = await self._load(source_record.run_id)
             if source_record.state not in {"completed", "closed", "failed", "cancelled"}:
                 raise ValueError("run_not_terminal")
             reusable_payload = candidate.model_dump(mode="json")
             reusable_payload.update({"package_version": reusable_version, "scope": "workspace_reusable", "publication_state": "published", "provenance": [*candidate.provenance, {"derived_from": candidate_ref, "derived_from_digest": candidate.package_digest, "idempotency_key": idempotency_key}], "package_digest": ""})
             reusable = CapabilityPackageVersion.model_validate(reusable_payload)
-            for record in await self._all_records():
+            for record in self._package_records():
                 conflicting = next(
                     (
                         item
@@ -3564,7 +3664,8 @@ class ObserverRepository:
     async def _activation_record(
         self, package: CapabilityPackageVersion
     ) -> RunRecord:
-        records = await self._all_records()
+        await self._load_run_capabilities()
+        records = self._package_records()
         record = next(
             (
                 item
@@ -3579,7 +3680,7 @@ class ObserverRepository:
         )
         if record is None:
             raise KeyError(package.version_ref)
-        return record
+        return await self._load(record.run_id)
 
     @execution_transaction
     async def set_capability_desired(
@@ -3625,7 +3726,7 @@ class ObserverRepository:
         if package.workspace_id is not None:
             package_key = self._workspace_package_key(package)
             activation_list = self.workspace_package_activations.setdefault(package_key, [])
-            event_list = self.workspace_package_events.setdefault(package_key, [])
+            event_list = []
             record_workspace = package.workspace_id
         else:
             record = await self._activation_record(package)
@@ -3650,7 +3751,7 @@ class ObserverRepository:
             if record is None:
                 await self._load_workspace_packages()
                 activation_list = self.workspace_package_activations.setdefault(package_key, [])
-                event_list = self.workspace_package_events.setdefault(package_key, [])
+                event_list = []
             else:
                 record = await self._activation_record(package)
                 activation_list = record.capability_activations
@@ -3813,26 +3914,23 @@ class ObserverRepository:
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             return await self._record_capability_health_locked(
-                report, run_id=run_id, authentication_restart=authentication_restart)
+                report, package=package, authentication_restart=authentication_restart)
 
     async def _record_capability_health_locked(
-        self, report: CapabilityHealthReport, *, run_id: str | None = None,
+        self, report: CapabilityHealthReport, *, package: CapabilityPackageVersion,
         authentication_restart: bool = False,
     ) -> CapabilityPackageActivation:
         """Accept an actual-state report only for the current desired revision."""
-        if not isinstance(report, CapabilityHealthReport):
-            report = CapabilityHealthReport.model_validate(report)
-        package = await self.get_capability_package(
-            report.package_version_ref, run_id=run_id
-        )
         if package.package_digest != report.package_digest:
             raise ValueError("capability_package_digest_mismatch")
         record: RunRecord | None = None
         if package.workspace_id is not None:
             package_key = self._workspace_package_key(package)
+            # Refresh the current revision after acquiring the activation lock.
+            # Package lookup may have raced a desired-state update.
             await self._load_workspace_packages()
             activation_list = self.workspace_package_activations.setdefault(package_key, [])
-            event_list = self.workspace_package_events.setdefault(package_key, [])
+            event_list = []
         else:
             record = await self._activation_record(package)
             activation_list = record.capability_activations
@@ -3854,15 +3952,10 @@ class ObserverRepository:
         if report.activation_revision > current.activation_revision:
             raise ValueError("future_activation_revision")
 
-        previous_report = next(
-            (
-                event
-                for event in event_list
-                if event.get("phase") == "capability_health_report"
-                and event.get("report_id") == report.report_id
-            ),
-            None,
-        )
+        previous_report = (await self._health_report_event(package, report.report_id)
+                           if package.workspace_id is not None else next(
+                               (event for event in event_list if event.get("phase") == "capability_health_report"
+                                and event.get("report_id") == report.report_id), None))
         if previous_report is not None:
             if (
                 previous_report.get("package_digest") == report.package_digest
@@ -4493,10 +4586,29 @@ class ObserverRepository:
         await self._persist(record)
         return event
 
+    async def _conversation_records(self, workspace_id: str, conversation_ref: str | None = None,
+                                    *, summaries: bool = False) -> list:
+        if self.sessions is None:
+            return [r for r in self.runs.values() if (r.closure_contract is None or r.closure_contract.workspace_id == workspace_id)
+                    and (conversation_ref is None or r.task_ref == conversation_ref)]
+        predicates = [or_(RunRow.closure_contract["workspace_id"].as_string() == workspace_id,
+                          RunRow.closure_contract["workspace_id"].as_string().is_(None))]
+        if conversation_ref is not None:
+            predicates.append(RunRow.task_ref == conversation_ref)
+        async with self.sessions() as session:
+            if summaries:
+                from types import SimpleNamespace
+                rows = (await session.execute(select(RunRow.run_id, RunRow.task_ref, RunRow.goal,
+                                                     RunRow.state, RunRow.latest_event_at).where(*predicates))).all()
+                return [SimpleNamespace(run_id=r.run_id, task_ref=r.task_ref, goal=r.goal, state=r.state,
+                                        events=[{"created_at": r.latest_event_at}]) for r in rows]
+            ids = (await session.scalars(select(RunRow.run_id).where(*predicates).order_by(RunRow.run_id))).all()
+        return [await self._load(run_id) for run_id in ids]
+
     async def list_conversations(self, workspace_id: str = "workspace-default") -> list[dict[str, Any]]:
         groups: dict[str, list[RunRecord]] = {}
-        for record in await self._all_records():
-            if record.task_ref and (record.closure_contract is None or record.closure_contract.workspace_id == workspace_id):
+        for record in await self._conversation_records(workspace_id, summaries=True):
+            if record.task_ref:
                 groups.setdefault(record.task_ref, []).append(record)
         receipts = await self.list_message_receipts(workspace_id)
         receipt_groups: dict[str, list[MessageReceipt]] = {}
@@ -4529,11 +4641,7 @@ class ObserverRepository:
         return [summary for _, summary in sorted(summaries, key=lambda item: item[0])]
 
     async def get_conversation(self, conversation_ref: str, workspace_id: str = "workspace-default") -> dict[str, Any]:
-        records = [
-            record for record in await self._all_records()
-            if record.task_ref == conversation_ref
-            and (record.closure_contract is None or record.closure_contract.workspace_id == workspace_id)
-        ]
+        records = await self._conversation_records(workspace_id, conversation_ref)
         receipts = await self.list_message_receipts(workspace_id, conversation_ref)
         if not records and not receipts:
             raise KeyError(conversation_ref)
@@ -4541,7 +4649,7 @@ class ObserverRepository:
         messages: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
         run_summaries: list[dict[str, Any]] = []
-        execution_items = await self.list_execution_requests(workspace_id)
+        execution_items = await self.list_execution_requests(workspace_id, conversation_ref=conversation_ref, run_ids={r.run_id for r in records})
         execution_by_run: dict[str, ExecutionRequest] = {}
         for item in execution_items:
             if item.conversation_ref == conversation_ref or item.run_id in {record.run_id for record in records}:

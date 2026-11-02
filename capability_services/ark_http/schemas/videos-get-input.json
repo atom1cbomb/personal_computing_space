@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    }
+  },
+  "required": [
+    "task_id"
+  ],
+  "additionalProperties": false
+}

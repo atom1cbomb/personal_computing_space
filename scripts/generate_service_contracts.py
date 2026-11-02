@@ -442,7 +442,115 @@ def overleaf_definitions():
     return definitions
 
 
+def ark_definitions() -> dict[str, dict[str, Any]]:
+    """Ark JSON actions; nested provider content keeps its native multimodal shape."""
+    text = {"type": "string", "minLength": 1, "pattern": "\\S"}
+    model = {**text, "maxLength": 256,
+             "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."}
+    identity = {"type": "string", "minLength": 1, "maxLength": 256,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"}
+    boolean = {"type": "boolean"}
+    integer = {"type": "integer"}
+    number = {"type": "number"}
+    strings = array(string())
+    objects = {"type": "array", "items": obj(), "minItems": 1}
+    status = string(enum=["queued", "running", "cancelled", "succeeded", "failed", "expired"])
+
+    def strict(required=None, **properties):
+        return {**obj(required, **properties), "additionalProperties": False}
+
+    common = dict(model=model, stream={"const": False}, temperature=number, top_p=number,
+                  tools=array(obj()), tool_choice={"type": ["string", "object"]},
+                  thinking=obj(), parallel_tool_calls=boolean, service_tier=string())
+    inputs = {
+        "chat-completions": strict(
+            ["model", "messages"], **common,
+            messages={**objects, "description": "Native Chat messages; content may contain text, image_url, video_url, input_audio and tool calls, as supported by the model."},
+            max_tokens=integer, max_completion_tokens=integer, reasoning_effort=string(),
+            response_format=obj(), stop={"type": ["string", "array", "null"], "items": string()},
+            seed=integer, frequency_penalty=number, presence_penalty=number,
+            logprobs=boolean, top_logprobs=integer, logit_bias=obj(), user=string(),
+            modalities=strings, audio=obj(), prompt_cache_key=string(),
+        ),
+        "responses-create": strict(
+            ["model", "input"], **common,
+            input={"type": ["string", "array"], "items": obj(),
+                   "description": "Native Responses input. Content supports input_text, input_image, input_video, input_file and input_audio, according to the selected model."},
+            instructions=string(), previous_response_id=identity, reasoning=obj(), text=obj(),
+            store=boolean, include=strings, max_output_tokens=integer, max_tool_calls=integer,
+            metadata=obj(), caching=obj(), context_management=obj(), expire_at=integer,
+            truncation=string(), prompt_cache_key=string(),
+        ),
+        "responses-get": strict(["response_id"], response_id=identity, include=strings),
+        "responses-delete": strict(["response_id"], response_id=identity),
+        "images-generate": strict(
+            ["model"], model=model, prompt=text,
+            image={"type": ["string", "array"], "items": text,
+                   "description": "Reference image URL/data URL, or a list of reference images for editing and image-to-image generation."},
+            size=string(), response_format=string(enum=["url", "b64_json"]),
+            output_format=string(), watermark=boolean, stream={"const": False},
+            sequential_image_generation=string(), sequential_image_generation_options=obj(),
+            optimize_prompt_options=obj(), tools=array(obj()), seed=integer,
+            background=string(), layer_decomposition=boolean,
+        ),
+        "embeddings-multimodal": strict(
+            ["model", "input"], model=model,
+            input={**objects, "description": "Native text, image_url and video_url parts. Parts form one multimodal embedding input, not a text batch."},
+            dimensions=integer, encoding_format=string(), instructions=string(),
+            multi_embedding=obj(), sparse_embedding=obj(),
+        ),
+        "videos-create": strict(
+            ["model", "content"], model=model,
+            content={**objects, "description": "Native Seedance text/image_url/video_url/audio_url parts, including reference roles and draft_task when supported."},
+            resolution=string(), ratio=string(), duration=integer, frames=integer,
+            seed=integer, camera_fixed=boolean, watermark=boolean, generate_audio=boolean,
+            return_last_frame=boolean, draft=boolean, callback_url=string(),
+            service_tier=string(), execution_expires_after=integer, tools=array(obj()),
+        ),
+        "videos-get": strict(["task_id"], task_id=identity),
+        "videos-delete": strict(["task_id"], task_id=identity),
+        "videos-list": strict(
+            page_num={"type": "integer", "minimum": 1, "maximum": 500},
+            page_size={"type": "integer", "minimum": 1, "maximum": 500},
+            filter=strict(status=status, model=model, task_ids=array(identity), service_tier=string()),
+        ),
+        "audio-speech": strict(
+            ["req_params"], user=obj(),
+            req_params=obj(["text", "speaker", "audio_params"], text=text, speaker=text,
+                           audio_params=obj(["format"], format=text, sample_rate=integer)),
+        ),
+    }
+    inputs["images-generate"]["description"] = (
+        "Supply a nonblank prompt for generation/editing, or layer_decomposition=true and image for layer decomposition. stream=true is not supported."
+    )
+    outputs = {
+        "chat-completions": obj(["choices"], id=string(), choices=array(obj()), usage=obj()),
+        "responses-create": obj(["id", "output"], id=string(), output=array(obj()), status=string(), usage=obj()),
+        "responses-get": obj(["id", "output"], id=string(), output=array(obj()), status=string(), usage=obj()),
+        "responses-delete": obj(),
+        "images-generate": obj(["data"], data={"type": "array", "minItems": 1,
+                                              "items": obj(url=string(), b64_json=string(), error=obj())},
+                               created=integer, model=string(), usage=obj()),
+        "embeddings-multimodal": obj(["data"], data=obj(), model=string(), usage=obj()),
+        "videos-create": obj(["id"], id=text),
+        "videos-get": obj(["id", "status"], id=text, status=status,
+                          content=obj(video_url=string(), last_frame_url=string()),
+                          error={"type": ["object", "null"]}),
+        "videos-list": obj(["items"], items=array(obj(["id", "status"], id=text, status=status)), total=integer),
+        "videos-delete": obj(),
+        "audio-speech": obj(["audio_base64", "audio_format", "usage"],
+                            audio_base64=text, audio_format=text, usage=obj()),
+    }
+    return {
+        action: {"input": schema,
+                 "output": obj(["action", "result"], action=string(const=action.replace("-", "_")),
+                               result=outputs[action])}
+        for action, schema in inputs.items()
+    }
+
+
 DEFINITIONS = {
+    "ark_http": ark_definitions,
     "suanli_overleaf_http": overleaf_definitions,
     "autopaper_http": autopaper_definitions,
     "embedding_http": embedding_definitions,

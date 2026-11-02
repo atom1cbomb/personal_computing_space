@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "response_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    }
+  },
+  "required": [
+    "response_id"
+  ],
+  "additionalProperties": false
+}

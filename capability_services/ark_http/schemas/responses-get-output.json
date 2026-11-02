@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "responses_get"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "output": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "id",
+        "output"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

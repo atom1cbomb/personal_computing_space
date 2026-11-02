@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "audio_speech"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "audio_base64": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "audio_format": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "audio_base64",
+        "audio_format",
+        "usage"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

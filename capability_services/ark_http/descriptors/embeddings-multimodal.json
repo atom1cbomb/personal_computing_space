@@ -1,0 +1,13 @@
+{
+  "schema_version": "action.v1",
+  "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/embeddings-multimodal",
+  "name": "embeddings_multimodal",
+  "description": "Embed native text, image_url or video_url parts with a caller-selected multimodal embedding model. Parts form one combined input, not a text batch. Preserves dense/multi/sparse embeddings and usage. Consumes quota. Agent Plan embeddings are for AI tools and agents.",
+  "capability_kinds": [
+    "model.ark.embeddings.create"
+  ],
+  "instance_config_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/47e9b1998fe219f5b442088f65f8e9bef6785f27aa0c59b0f129adce63a3f383",
+    "identity_criterion": "content_digest"
+  }
+}

@@ -443,7 +443,7 @@ def create_app(
         result = []
         for package in packages:
             item = await app.state.repo.public_package_payload(package)
-            item["activations"] = [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]
+            item["activations"] = [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package, refresh=False)]
             result.append(item)
         return result
 
@@ -468,7 +468,7 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
         record = await app.state.repo.get_run(run_id)
-        return [{**(await app.state.repo.public_package_payload(package)), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package)]} for package in packages]
+        return [{**(await app.state.repo.public_package_payload(package)), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package, refresh=False)]} for package in packages]
 
     @app.get("/api/v1/capability-packages/{package_ref:path}")
     async def capability_package(package_ref: str) -> dict[str, Any]:

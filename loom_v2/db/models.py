@@ -6,6 +6,7 @@ from .base import Base, SlaveBase
 
 class RunRow(Base):
     __tablename__ = "runs"
+    __table_args__ = (Index("idx_runs_state", "state"),)
 
     run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     task_ref: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -17,6 +18,7 @@ class RunRow(Base):
     execution_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     execution_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     state: Mapped[str] = mapped_column(String(64), nullable=False)
+    latest_event_at: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     outcome: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     attempts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -74,6 +76,17 @@ class WorkspaceCapabilityPackageRow(Base):
     package: Mapped[dict] = mapped_column(JSON, nullable=False)
     capability_activations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+
+class CapabilityAuditEventRow(Base):
+    """Append-only audit, with indexed health-report idempotency and pagination."""
+    __tablename__ = "capability_audit_events"
+    __table_args__ = (UniqueConstraint("workspace_id", "package_ref", "report_id", name="uq_capability_audit_report"),)
+    workspace_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    package_ref: Mapped[str] = mapped_column(String(512), primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    report_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    event: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 class WorkspaceResourceRow(Base):

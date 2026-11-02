@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 from alembic import command, op
-from sqlalchemy import text
+from sqlalchemy import text, Table, MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from loom_v2.db.migrations import _config, apply_migrations
@@ -152,7 +152,7 @@ async def test_failed_migration_rolls_back_schema_and_version(database, monkeypa
         assert (await connection.execute(text(f"SELECT to_regclass('{other_table}')"))).scalar() is None
         assert (await connection.execute(text(
             f"SELECT version_num FROM loom_{role}_alembic_version"
-            ))).scalar_one() == "008_resource_access_bindings"
+            ))).scalar_one() == "009_history_isolation"
 
 
 @pytest.mark.parametrize("role", ["observer", "slave"])
@@ -198,7 +198,7 @@ asyncio.run(main())
         async with engine.connect() as connection:
             assert (await connection.execute(text(
                 f"SELECT version_num FROM loom_{role}_alembic_version"
-                ))).scalars().all() == ["008_resource_access_bindings"]
+                ))).scalars().all() == ["009_history_isolation"]
     finally:
         for process in processes:
             if process.returncode is None:
@@ -227,10 +227,12 @@ async def test_activation_credential_migration_preserves_packages_and_existing_s
     async with engine.begin() as connection:
         await connection.run_sync(lambda sync: command.upgrade(_config(role, sync), '006_mcue_attributes'))
         if role == 'observer':
+            legacy_runs = await connection.run_sync(lambda c: Table('runs', MetaData(), autoload_with=c))
+        if role == 'observer':
             await connection.execute(WorkspaceCapabilityPackageRow.__table__.insert().values(
                 workspace_id='workspace-default', package_ref=ref, package=package,
                 capability_activations=activations, events=[]))
-            await connection.execute(RunRow.__table__.insert().values(run_id='historic', task_ref='task',
+            await connection.execute(legacy_runs.insert().values(run_id='historic', task_ref='task',
                 goal='existing', draft={}, state='completed', outcome={'value': 'unchanged'},
                 capability_packages=[package], capability_activations=activations))
         else:
@@ -243,7 +245,7 @@ async def test_activation_credential_migration_preserves_packages_and_existing_s
             row = (await connection.execute(WorkspaceCapabilityPackageRow.__table__.select())).mappings().one()
             assert row['package'] == original
             updated = row['capability_activations']
-            run = (await connection.execute(RunRow.__table__.select())).mappings().one()
+            run = (await connection.execute(legacy_runs.select())).mappings().one()
             assert run['outcome'] == {'value': 'unchanged'} and run['capability_packages'] == [original]
             assert run['capability_activations'] == updated
         else:
@@ -293,18 +295,19 @@ async def test_resource_package_migration_archives_exact_rows_and_preserves_exec
     ).model_dump(mode="json")
     async with engine.begin() as connection:
         await connection.run_sync(lambda sync: command.upgrade(_config("observer", sync), "007_activation_credentials"))
+        legacy_runs = await connection.run_sync(lambda c: Table("runs", MetaData(), autoload_with=c))
         await connection.execute(WorkspaceResourceRow.__table__.insert(), rows)
         await connection.execute(WorkspaceCapabilityPackageRow.__table__.insert().values(
             workspace_id=scope, package_ref=package_uri, package=package,
             capability_activations=[activation], events=[{"phase": "unchanged"}]))
-        await connection.execute(RunRow.__table__.insert().values(
+        await connection.execute(legacy_runs.insert().values(
             run_id="historic", task_ref="task", goal="existing", draft={}, state="completed",
             committed={"snapshot": {"program_systems": {"package_ref": original["package_ref"]}}},
             capability_packages=[package], capability_activations=[activation],
             events=[{"phase": "program_resource_registered", "arguments": original}],
             outcome={"value": "unchanged"}))
         package_before = (await connection.execute(WorkspaceCapabilityPackageRow.__table__.select())).mappings().one()
-        run_before = (await connection.execute(RunRow.__table__.select())).mappings().one()
+        run_before = (await connection.execute(legacy_runs.select())).mappings().one()
 
     if fail_after_archive:
         execute = op.execute
@@ -342,7 +345,7 @@ async def test_resource_package_migration_archives_exact_rows_and_preserves_exec
             assert row["resource"] == {key: value for key, value in old["resource"].items() if key != "package_ref"}
             assert row["attributes_revision"] == old["attributes_revision"]
         assert (await connection.execute(WorkspaceCapabilityPackageRow.__table__.select())).mappings().one() == package_before
-        assert (await connection.execute(RunRow.__table__.select())).mappings().one() == run_before
+        assert (await connection.execute(legacy_runs.select())).mappings().one() == run_before
 
     restored = await ObserverRepository(engine).get_resource(scope, target)
     assert restored.resource_ref.resource_id == target

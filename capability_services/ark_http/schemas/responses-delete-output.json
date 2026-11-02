@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "responses_delete"
+    },
+    "result": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

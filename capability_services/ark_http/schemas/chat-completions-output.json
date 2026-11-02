@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "chat_completions"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "usage": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "choices"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

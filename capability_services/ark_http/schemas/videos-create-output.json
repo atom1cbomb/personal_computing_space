@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "videos_create"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}

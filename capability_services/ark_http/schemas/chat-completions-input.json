@@ -1,0 +1,116 @@
+{
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "maxLength": 256,
+      "description": "Caller-selected Model ID, Endpoint ID, or Agent Plan model name. No automatic model substitution."
+    },
+    "stream": {
+      "const": false
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "top_p": {
+      "type": "number"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    "tool_choice": {
+      "type": [
+        "string",
+        "object"
+      ]
+    },
+    "thinking": {
+      "type": "object",
+      "properties": {}
+    },
+    "parallel_tool_calls": {
+      "type": "boolean"
+    },
+    "service_tier": {
+      "type": "string"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {}
+      },
+      "minItems": 1,
+      "description": "Native Chat messages; content may contain text, image_url, video_url, input_audio and tool calls, as supported by the model."
+    },
+    "max_tokens": {
+      "type": "integer"
+    },
+    "max_completion_tokens": {
+      "type": "integer"
+    },
+    "reasoning_effort": {
+      "type": "string"
+    },
+    "response_format": {
+      "type": "object",
+      "properties": {}
+    },
+    "stop": {
+      "type": [
+        "string",
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "frequency_penalty": {
+      "type": "number"
+    },
+    "presence_penalty": {
+      "type": "number"
+    },
+    "logprobs": {
+      "type": "boolean"
+    },
+    "top_logprobs": {
+      "type": "integer"
+    },
+    "logit_bias": {
+      "type": "object",
+      "properties": {}
+    },
+    "user": {
+      "type": "string"
+    },
+    "modalities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audio": {
+      "type": "object",
+      "properties": {}
+    },
+    "prompt_cache_key": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "model",
+    "messages"
+  ],
+  "additionalProperties": false
+}

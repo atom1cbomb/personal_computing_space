@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "videos_list"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "cancelled",
+                  "succeeded",
+                  "failed",
+                  "expired"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status"
+            ]
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ]
+}
