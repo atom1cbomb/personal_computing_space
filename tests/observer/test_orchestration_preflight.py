@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from loom_v2.observer import orchestration_preflight
+from loom_v2.pool import orchestration_preflight
 
 
 VALID = (

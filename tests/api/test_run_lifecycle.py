@@ -4,7 +4,7 @@ import pytest
 
 from loom_v2.content_store import canonical_json_bytes
 from loom_v2.contracts.errors import DomainError
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 def _digest(value: object) -> str:

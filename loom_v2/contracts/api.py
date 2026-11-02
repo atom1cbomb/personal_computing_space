@@ -104,6 +104,7 @@ class WorkspaceRequest(ContractModel):
 
 
 class SlaveDispatchRequest(ContractModel):
+    execution_owner: dict[str, str] | None = None
     attempt_id: str = Field(min_length=1)
     execution_id: str = Field(min_length=1)
     execution_epoch: int = 1

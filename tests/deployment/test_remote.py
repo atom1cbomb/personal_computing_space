@@ -148,3 +148,17 @@ def test_http_healthcheck_requires_json_ok_when_present(monkeypatch: pytest.Monk
 def test_http_healthcheck_accepts_status_only_payloads(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(remote_module, "urlopen", lambda *_args, **_kwargs: _HealthResponse(b"ok"))
     assert remote_module._http_healthcheck("http://minio:9000/minio/health/live") is True
+
+
+def test_observer_project_requires_pool_health(tmp_path):
+    config = make_config(tmp_path)
+    checked = []
+    def health(url):
+        checked.append(url)
+        return url != config.urls.pool + "/healthz"
+    deployer = RemoteDeployer(config, source_root=tmp_path, runner=RecordingRunner(),
+                              healthcheck=health, health_timeout=0)
+    with pytest.raises(DeploymentFailure) as failure:
+        deployer._wait_for_health(config.machine("observer"))
+    assert config.urls.pool + "/healthz" in checked
+    assert config.urls.pool in failure.value.command

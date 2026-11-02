@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
 from loom_v2.contracts.types import CapabilityHealthReport
 from loom_v2.db.models import WorkspaceCapabilityPackageRow
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from tests.support.package_fixture import action_export, register_test_descriptor
 from tests.db.test_postgres_migrations import postgres_container  # Shared disposable Docker fixture.
 
@@ -72,7 +72,7 @@ def report(package, report_id="healthy"):
 
 async def test_health_history_cannot_expire_an_unrelated_driver_lease(history, monkeypatch):
     """A slow historical decode used to run in a health request and lose the lease."""
-    import loom_v2.observer.repository as repository_module
+    import loom_v2.observer.resources as repository_module
 
     original, package, _ = history
     repo = cold_repository(original)
@@ -93,7 +93,7 @@ async def test_health_history_cannot_expire_an_unrelated_driver_lease(history, m
         if decoding_history and row.state in {"closed", "completed"}:
             decoded.append(row.run_id)
             Clock.current += timedelta(seconds=20)  # Deliberately exceeds the 15s lease.
-        return decode(row)
+        return decode(row, events)
 
     monkeypatch.setattr(repo, "_record_from_row", slow_history)
     lease = await repo.register_agent(AgentRegistration(role="driver", agent_id="driver-default",
@@ -122,9 +122,9 @@ async def test_health_reads_only_waiting_runs_and_preserves_audit_and_idempotenc
     decoded = []
     decode = repo._record_from_row
 
-    def observe(row):
+    def observe(row, events):
         decoded.append(row.run_id)
-        return decode(row)
+        return decode(row, events)
 
     monkeypatch.setattr(repo, "_record_from_row", observe)
     statements = []
@@ -165,15 +165,15 @@ async def test_driver_registration_and_recovery_skip_terminal_run_payloads(histo
     decoded = []
     decode = repo._record_from_row
 
-    def observe(row):
+    def observe(row, events):
         decoded.append(row.run_id)
-        return decode(row)
+        return decode(row, events)
 
     monkeypatch.setattr(repo, "_record_from_row", observe)
     lease = await repo.register_agent(AgentRegistration(role="driver", agent_id="driver-default",
         instance_id="new-driver", workspace_id="workspace-default", endpoint_url="http://driver:8090",
         protocol_version="loom.v1"))
-    assert [r["run_id"] for r in lease.recovery_runs] == [live.run_id]
+    assert lease.recovery_runs == []  # Registration does not claim or decode another Driver's Runs.
     recovered = await repo.execute_driver_command(DriverCommand(request_id="recovery-list",
         driver_id=lease.agent_id, instance_id=lease.instance_id, lease_id=lease.lease_id,
         driver_epoch=lease.epoch, command="run.recovery.list", arguments={"workspace_id": "workspace-default"}))
@@ -220,7 +220,7 @@ async def test_catalog_and_startup_never_read_run_execution_history(history):
 
 
 async def test_settlement_ignores_other_runs_request_bodies(history, monkeypatch):
-    from loom_v2.observer.repository import ExecutionRequest
+    from loom_v2.repository_state import ExecutionRequest
     original, _, _ = history
     target = await original.open_run('settlement-target', 'target', 'settle just this run')
     target.state = 'completed'

@@ -3,7 +3,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
 
 
@@ -26,7 +26,7 @@ def registration(instance_id: str, role: str = "driver") -> dict:
 
 
 def test_registering_new_driver_increments_epoch_and_fences_old_client():
-    with TestClient(create_app()) as client:
+    with TestClient(create_app(ObserverRepository())) as client:
         first = client.post("/internal/v1/agents/register", json=registration("instance-1")).json()
         second = client.post("/internal/v1/agents/register", json=registration("instance-2")).json()
         assert second["epoch"] == first["epoch"] + 1

@@ -8,7 +8,7 @@ import pytest
 
 from capability_services.autopaper_http.server import AutoPaperGateway, Handler
 from loom_orchestration import GripError, LoomClient, ServicePackage
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.runtime_plugins import RuntimePluginHost
 from loom_v2.testing.observer import create_embedded_app, seed_embedded_slaves

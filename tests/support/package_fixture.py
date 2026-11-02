@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from loom_v2.contracts.types import ResourceRef
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 def register_test_descriptor(repo: ObserverRepository, resource_id: str) -> ResourceRef:

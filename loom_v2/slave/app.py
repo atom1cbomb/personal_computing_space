@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 
 from loom_v2.db.session import make_engine
 from loom_v2.settings import Settings
@@ -228,6 +228,17 @@ def create_app(
     async def dispatch(payload: SlaveDispatchRequest) -> dict[str, object]:
         service: SlaveService = app.state.service
         try:
+            if settings.internal_api_secret:
+                if payload.execution_owner is None:
+                    raise ValueError("execution_owner_required")
+                authorization = payload.model_dump(mode="json")
+                authorization["target_slave"] = service.slave_id
+                app.state.observer_http.transport = observer_transport
+                response = await app.state.observer_http.request("POST",
+                    settings.pool_url.rstrip("/") + "/internal/v1/attempts/authorize",
+                    json=authorization, headers=observer_headers())
+                if response.status_code != 200 or response.json().get("authorized") is not True:
+                    raise ValueError("stale_execution_owner")
             record_driver_epoch(payload.driver_id, payload.driver_epoch)
             attempt_id = payload.attempt_id
             execution_id = payload.execution_id
@@ -281,6 +292,39 @@ def create_app(
                 },
             },
         }
+
+    @app.post("/.well-known/grip", dependencies=[Depends(require_internal)])
+    async def execute_grip(http: Request):
+        from loom_orchestration.grip import Request as GripRequest
+        from loom_v2.execution_binding import execution_offer
+        from loom_v2.digest import digest_json
+        import hmac
+        from pydantic import ValidationError
+        request_id = None
+        try:
+            message = GripRequest.model_validate(await http.json())
+            request_id = message.request_id
+            if not hmac.compare_digest(message.auth.credential, settings.internal_api_secret):
+                raise HTTPException(403, "forbidden")
+            names = app.state.service.names
+            if message.target != names.name("slaves", slave_id):
+                raise HTTPException(404, "not_found")
+            endpoint = settings.slave_endpoint_url or str(http.base_url).rstrip("/")
+            offer = execution_offer(names, endpoint)
+            if offer["bindings"][0]["protocol"] not in message.accepted_protocols:
+                raise HTTPException(400, "unsupported_binding")
+            if message.method == "DESCRIBE":
+                body = {"resource": {"uri": message.target, "mcue": "computing/slave", "metadata": {}}, "offers": [offer]}
+                body["revision"] = digest_json(body, domain="loom/grip-description/v1")
+            elif message.action == names.action("execute-attempt"):
+                body = await dispatch(SlaveDispatchRequest.model_validate(message.input))
+            else:
+                raise HTTPException(400, "unsupported_action")
+            return {"version": "grip.v1", "request_id": request_id, "kind": "reply", "body": body}
+        except HTTPException as exc:
+            return {"version": "grip.v1", "request_id": request_id, "kind": "error", "error_code": str(exc.detail)}
+        except (ValidationError, ValueError):
+            return {"version": "grip.v1", "request_id": request_id, "kind": "error", "error_code": "invalid_input"}
 
     @app.post("/worker/v1/provision", dependencies=[Depends(require_internal)])
     async def provision(payload: SlaveProvisionRequest) -> dict[str, object]:

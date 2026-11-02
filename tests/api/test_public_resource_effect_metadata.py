@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from loom_v2.contracts.types import IoContract, ResourceRef
 from loom_v2.digest import digest_json
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.testing.observer import create_embedded_app
 
 

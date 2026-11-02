@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from loom_v2.observer.orchestration_preflight import check_program, validate_entry_signature
+from loom_v2.pool.orchestration_preflight import check_program, validate_entry_signature
 
 
 async def test_existing_activation_skill_program_satisfies_runtime_type_contract():

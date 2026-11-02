@@ -110,7 +110,9 @@ returns `{run: <Run URI>}`. Query Run with the built-in `read` action.
 SDK 0.10's task helpers use GRIP: `submit` discovers `computing/driver` and invokes
 `submit-plan`, then `get-submission`; `submission` looks up the business key;
 `run`, `cancel`, `resubmit`, `resolve` and `close` invoke Run actions and accept
-the returned Run URI or opaque final ID. `run` requests `include_history=true`.
+the returned Run URI or opaque final ID. Since SDK 0.13, `run` defaults to
+state only. Request history with `include_history=True, history_after=0,
+history_limit=100`; use the returned `history_cursor` for the next page.
 The SDK `request_id` parameter maps to business `idempotency_key`; the GRIP
 message ID is independent. `submit` and `resubmit` raise `PlanRejectedError`
 for a readiness rejection, preserving `.code` and `.details["blockers"]`;
@@ -305,3 +307,25 @@ permissions, authentication and uncertain-upload handling. Existing packages
 without these declarations require a matching package upgrade; SDK installation
 alone does not add file actions. File bytes do not go into Run inputs or content
 uploads.
+
+## Driver Pool binding
+
+Driver, Run and Plan offers point to the independent Pool. Get its endpoint
+from the operator and explicitly add it to `trusted_bindings`; discovering an
+endpoint alone does not authorize sending credentials to it. For HTTPS:
+
+```python
+from loom_orchestration.grip import Names
+
+names = Names(grip_authority, workspace_id)
+async with LoomClient(observer_url, token=grip_token,
+        grip_authority=grip_authority, workspace_id=workspace_id,
+        trusted_bindings=[{"protocol": "https-json.v1", "audience": names.root,
+                           "endpoint": pool_url.rstrip("/") + "/.well-known/grip"}]) as client:
+    state = await client.run(run_uri)
+    page = await client.run(run_uri, include_history=True, history_limit=100)
+```
+
+Local HTTP deployments require `allow_insecure_grip=True` and protocol
+`loom-http-json.v1`. Public clients still submit complete plans; internal
+`execute-attempt` offers are used by leased Drivers.

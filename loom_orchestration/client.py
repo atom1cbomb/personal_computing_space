@@ -129,10 +129,11 @@ class LoomClient:
         return await self.invoke(await self._driver(), self.names.action("get-submission"),
                                  {"idempotency_key": request_id})
 
-    async def run(self, run_id: str) -> dict[str, Any]:
-        """Read a Run, including evidence/history, by its URI or opaque ID."""
+    async def run(self, run_id: str, *, include_history: bool = False,
+                  history_after: int = 0, history_limit: int = 100) -> dict[str, Any]:
+        """Read current state, optionally including one bounded page of history."""
         return await self.invoke(self._run_uri(run_id), self.names.action("read"),
-                                 {"include_history": True})
+            {"include_history": include_history, "history_after": history_after, "history_limit": history_limit})
 
     async def _driver(self) -> str:
         if self._driver_uri is None:

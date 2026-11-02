@@ -152,7 +152,8 @@ and schemas; project-level examples must not override them.
   execution. SDK `submit(request_id=...)` maps that parameter to the business
   key; the GRIP message `request_id` is independently generated per exchange.
 - Observe work with Driver `get-submission` (`client.submission(key)`) and Run
-  `read` (`client.run(run_uri)`, which includes history). Read the returned Plan
+  `read` (`client.run(run_uri)` for state; use `include_history=True` and
+  `history_after`/`history_limit` for paged history). Read the returned Plan
   URI for its immutable `ClosureContract`, closure version and snapshot digest.
 - Resolve `awaiting_decision` only after presenting the evidence and obtaining
   the user's explicit `accept` or `abandon` decision.
@@ -160,7 +161,9 @@ and schemas; project-level examples must not override them.
   or Slave `/worker/v1/*`. Those are internal control surfaces.
 - Public GRIP service data bindings are distinct from internal Driver/Slave
   endpoints. Driver `submit-plan` is the public complete-plan entry point;
-  the Observer owns validation, freezing, Run mutation and enqueue.
+  the Driver Pool owns validation, freezing, Run mutation, history and enqueue.
+  Trust its operator-provided binding explicitly; Driver processes execute
+  through internal Slave bindings without an Observer execution relay.
 - Treat `ResourceRef` and digest fields as server-owned facts. Do not calculate,
   invent, or overwrite content/package/draft digests; obtain immutable refs from
   the Observer data plane or persisted Run outcome.

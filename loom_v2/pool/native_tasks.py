@@ -8,7 +8,7 @@ from pydantic import ConfigDict, Field, RootModel
 from loom_orchestration.grip import Model, URI
 from loom_v2.contracts.types import ClosureContract
 from loom_v2.contracts.errors import DomainError, DomainErrorEnvelope
-from .repository import run_record_payload
+from loom_v2.repository_state import run_record_payload
 
 
 class SubmitPlanInput(Model):
@@ -42,6 +42,8 @@ class CloseRunInput(Model):
 
 class RunReadInput(Model):
     include_history: bool = False
+    history_after: int = Field(default=0, ge=0)
+    history_limit: int = Field(default=100, ge=1, le=1000)
 
 
 class TaskOutput(Model):
@@ -120,10 +122,10 @@ USAGE = {
         "Submit a complete ClosureContract with submit-plan, plan and a business idempotency_key. "
         "Read the input schema for the supported task format. The key is independent of the GRIP message request_id. "
         "Reuse the same key and input to find the same Run; changed input is rejected with request_id_reused. "
-        "get-submission looks up that key after a lost reply. Observer validates, freezes and queues the plan; "
+        "get-submission looks up that key after a lost reply. Driver Pool validates, freezes and queues the plan; "
         "the returned Run URI confirms durable acceptance, not execution. "
         "A readiness rejection returns rejected with its public code and structured details.blockers; no Run is queued. "
-        "accepting_submissions describes the Observer entry point; available describes the Driver lease. Offline Drivers do not prevent queueing. "
+        "accepting_submissions describes the Pool; available means at least one Driver lease is active. Offline Drivers do not prevent queueing. "
         "The single logical Driver executes ordinary plans and container:python_orchestrator/1 orchestration "
         "and keeps this URI across process restarts. Read the Run for results and its plan URI for the frozen definition."
     ),
@@ -134,7 +136,7 @@ USAGE = {
     ),
     "execution/run": (
         "read returns current state, outcome, execution identity and the frozen plan URI. "
-        "Use include_history=true to inspect attempts, events, dynamic nodes and evidence. "
+        "Use include_history=true to inspect attempts, dynamic nodes, evidence and a bounded event page. Use history_after and history_limit for pagination; history_cursor is the next offset. "
         "cancel requests cancellation; cleanup may continue before the Run settles. "
         "resubmit requires awaiting_decision with decision=repair, the current base_closure_version, "
         "a replacement plan and a new idempotency_key. It preserves the Run URI and existing success and policy constraints. "
@@ -174,10 +176,20 @@ class NativeTasks:
         }
 
     async def driver_metadata(self) -> dict[str, Any]:
+        accepting = True
+        if "tasks" in vars(self.repo):
+            import asyncio
+            import httpx
+            try:
+                async with asyncio.timeout(2):
+                    return await self.repo.tasks.native_driver_metadata()
+            except (httpx.HTTPError, TimeoutError):
+                accepting = False
         agents = await self.repo.list_agents(self.workspace, role="driver")
         active = next((a for a in agents if a["lease_state"] == "active"), None)
         return {
-            "accepting_submissions": True, "available": active is not None,
+            "accepting_submissions": accepting, "available": active is not None,
+            "active_drivers": sum(a["lease_state"] == "active" for a in agents),
             "lease_state": "active" if active else "offline",
             "agent_id": active["agent_id"] if active else None,
             "instance_id": active["instance_id"] if active else None,
@@ -188,23 +200,28 @@ class NativeTasks:
             "execution_kinds": ["ordinary-plan", "container:python_orchestrator/1"],
         }
 
-    async def read_run(self, run_id: str, *, include_history=False) -> dict[str, Any]:
+    async def read_run(self, run_id: str, *, include_history=False, history_after=0, history_limit=100) -> dict[str, Any]:
+        if "tasks" in vars(self.repo):
+            return await self.repo.tasks.native_read_run(run_id, include_history=include_history,
+                history_after=history_after, history_limit=history_limit)
         if include_history:
-            async with self.repo._execution_transaction():
-                record = await self.repo._assert_run_workspace(run_id, self.workspace)
-                value = run_record_payload(record, include_snapshots=False)
-                value.update(closure_version=record.committed.version_id if record.committed else None,
-                             snapshot_digest=record.committed.snapshot_digest if record.committed else None)
+            value = await self.repo.read_run_view(self.workspace, run_id)
         else:
             value = await self.repo.read_run_result(self.workspace, run_id)
+        if include_history:
+            page = await self.repo.read_run_history(self.workspace, run_id, after=history_after, limit=history_limit)
+            value["events"] = page["events"]
+            value["history_cursor"] = page["next_cursor"]
         plans = (await self.repo.list_plan_summaries(self.workspace, run_id=run_id, closure_version=value["closure_version"])
                  if value["closure_version"] else [])
         return {**value, "run": self.names.name("runs", run_id), "driver": self.driver_uri,
                 "plan": self.plan_uri(run_id, value["closure_version"]) if plans else None}
 
     async def submission(self, key: str) -> dict[str, Any]:
+        if "tasks" in vars(self.repo):
+            return await self.repo.tasks.native_submission(key)
         # Refresh both records in one snapshot; the ordinary getters may cache
-        # rows while another Observer process records progress.
+        # rows while another Pool process records progress.
         async with self.repo._execution_transaction():
             item = await self.repo.get_execution_request(self.workspace, key)
             run = await self.repo._assert_run_workspace(item.run_id, self.workspace)
@@ -226,6 +243,8 @@ class NativeTasks:
         return payload
 
     async def invoke(self, action: str, data: dict, *, run_id: str | None = None) -> dict:
+        if "tasks" in vars(self.repo):
+            return await self.repo.tasks.native_invoke(action, data, run_id=run_id)
         try:
             return await self._invoke(action, data, run_id=run_id)
         except DomainError as exc:

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from loom_orchestration import GripError, LoomClient, Names
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.testing.observer import create_embedded_app
 from tests.support.package_fixture import process_package_value

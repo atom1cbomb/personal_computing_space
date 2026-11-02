@@ -15,7 +15,7 @@ from loom_v2.coding_agents.base import CodingAgentError, CodingAgentProvider
 from loom_v2.contracts.types import CapabilityProvisionCommand, ComputeBinding, ResourceRef, TaskClosure
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
 from loom_v2.contracts.refs import input_binding_for, action_name
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository
 from loom_v2.driver.worker import WorkerSession
 from loom_v2.slave.service import SlaveService
 from loom_v2.slave.executor import ExecutionResult
@@ -26,7 +26,7 @@ from loom_v2.contracts.errors import DomainError, DomainErrorEnvelope
 
 from .orchestrator import DockerOrchestrationExecutor, docker_runtime_available
 from .orchestration_runtime import DynamicOrchestrationRuntime
-from .remote_repository import RemoteObserverRepository
+from .remote_repository import RemotePoolRepository
 
 from .tools import DriverTools
 from .mcp import DriverMCP, ObserverStatus
@@ -60,7 +60,7 @@ async def _wait_for_execution_or_cancel(
 class DriverService:
     def __init__(
         self,
-        repository: ObserverRepository,
+        repository: PoolRepository,
         provider: CodingAgentProvider | None,
         executor=None,
         slaves: dict[str, SlaveService] | None = None,
@@ -78,7 +78,7 @@ class DriverService:
             or getattr(repository, "content_store", None)
             or getattr(getattr(repository, "repository", None), "content_store", None)
         )
-        self.remote_repository = RemoteObserverRepository(repository, content_store=self.content_store) if self.control_client is not None else None
+        self.remote_repository = RemotePoolRepository(repository, content_store=self.content_store) if self.control_client is not None else None
         self.provider = provider
         self.tools = DriverTools(repository) if provider is not None else None
         self.executor = executor
@@ -923,6 +923,7 @@ class DriverService:
                 {"run_id": run_id, "report": report.model_dump(mode="json")},
                 request_id=f"health:{execution_id}:{target}:{package.package_digest}",
             )
+            binding = binding.model_copy(update={"expected_activation_revision": desired.activation_revision})
         result = await worker.dispatch(attempt_id=str(attempt["attempt_id"]), execution_id=str(execution_id), execution_epoch=execution_epoch, workspace_id=getattr(control, "workspace_id", "workspace-default"), action=action, payload=payload, closure=snapshot, binding=binding, driver_id=getattr(control, "driver_id", None), driver_epoch=getattr(control, "driver_epoch", None))
         if expected_epoch is not None:
             self._assert_turn_epoch(None, control, expected_epoch=expected_epoch)
@@ -936,14 +937,21 @@ class DriverService:
             if agent.get("lease_state") != "active":
                 continue
             slave_id = str(agent["agent_id"])
-            if slave_id in self.workers:
-                continue
+            endpoint = str(agent["endpoint_url"]).rstrip("/")
+            binding = agent["execution_offer"]["bindings"][0]
+            existing = self.workers.get(slave_id)
+            if existing is not None:
+                if existing.base_url == endpoint and existing.execution_binding == binding:
+                    continue
+                await existing.close()
             self.workers[slave_id] = WorkerSession(
                 slave_id,
                 action_timeout=self.settings.worker_action_timeout_seconds,
                 internal_api_secret=getattr(self.control_client, "internal_api_secret", None),
                 settings=self.settings,
-                observer_url=self.settings.observer_url,
+                base_url=endpoint,
+                control=self.control_client,
+                execution_binding=binding,
             )
 
     async def _attach_open_run(

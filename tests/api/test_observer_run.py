@@ -8,7 +8,7 @@ import pytest
 from loom_v2.contracts.types import ClosureContract, TaskClosure
 from loom_v2.content_store import canonical_json_bytes
 from loom_v2.testing.observer import create_embedded_app as create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 def test_complete_submission_is_queued_and_queryable():
@@ -227,4 +227,4 @@ async def test_observer_reexecutes_validator_instead_of_trusting_slave_evidence(
 
     assert updated.state == "awaiting_decision"
     assert updated.outcome["terminal_error"]["code"] == "success_validation_failed"
-    assert any(item.get("issuer") == "observer" and item.get("result") == "fail" for item in updated.outcome["validation_evidence"])
+    assert any(item.get("issuer") == "pool" and item.get("result") == "fail" for item in updated.outcome["validation_evidence"])

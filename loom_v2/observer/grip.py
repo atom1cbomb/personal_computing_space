@@ -31,13 +31,13 @@ from loom_v2.observer.resource_metadata import activation_config_schema, validat
 from loom_orchestration.naming import content_digest, resource_label
 from loom_v2.contracts.errors import DomainError
 from loom_v2.contracts.types import CapabilityPackageVersion, ClosureContract, ResourceRef, TaskClosure
-from loom_v2.observer.repository import RunSummary
+from loom_v2.repository_state import RunSummary
 from loom_v2.observer.activation import execute_activation_targets, execute_auth_targets
 from loom_v2.observer.authentication import authentication_view
 from loom_v2.digest import digest_json
 from loom_v2.service_access import interaction
-from . import native_tasks
-from .native_tasks import NativeTasks, PlanReadOutput, RunReadInput, RunReadOutput
+from loom_v2.pool import native_tasks
+from loom_v2.pool.native_tasks import NativeTasks, PlanReadOutput, RunReadInput, RunReadOutput
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +186,9 @@ INPUTS = {"read": Empty, "cancel": Empty, "how-to-use": Empty, "list-resources":
           "register-resource": RegisterInput, "run-package": RunInput, "check-package": CheckPackageInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
 OUTPUTS = {"how-to-use": HowToUseOutput, "check-package": CheckPackageOutput, "configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
            "update-attributes": AttributesOutput}
+from loom_v2.contracts.api import SlaveDispatchRequest
+from loom_v2.execution_binding import execution_offer
+INPUTS["execute-attempt"] = SlaveDispatchRequest
 INPUTS.update(native_tasks.INPUTS)
 OUTPUTS.update(native_tasks.OUTPUTS)
 OBJECT = {"type": "object"}
@@ -262,6 +265,10 @@ class GripService:
         return self._immutable_metadata[key]
 
     def _entry(self, target, mcue, metadata, offers, value=None):
+        if mcue in {"computing/driver", "execution/run", "execution/plan"} and self.settings.pool_public_base_url:
+            endpoint = self.settings.pool_public_base_url.rstrip("/") + "/.well-known/grip"
+            protocol = "https-json.v1" if endpoint.startswith("https:") else "loom-http-json.v1"
+            offers = [{**offer, "bindings": [{"protocol": protocol, "audience": self.names.root, "endpoint": endpoint}]} for offer in offers]
         metadata = {"mcue_ref": self.names.mcue(mcue), "attributes": {}, "dependencies": None, **metadata}
         if all(offer["action"]["uri"] != self.names.action("how-to-use") for offer in offers):
             offers = [*offers, self._builtin["how-to-use"]]
@@ -396,7 +403,7 @@ class GripService:
                     "executor_descriptors": caps.get("executor_descriptors", []),
                     "runtime_plugin_descriptors": caps.get("runtime_plugin_descriptors", []),
                     "service_interactions": self.repo.service_routes.node_metadata(slave),
-                }, [builtin["run-package"], builtin["check-package"], builtin["activate-package"]], slave)
+                }, [builtin["run-package"], builtin["check-package"], builtin["activate-package"], execution_offer(n, agent["endpoint_url"])], slave)
 
         states = []
         if resources or any(source(t) for t in ("capability/package", "capability/activation", "grip/action", "grip/schema")):
@@ -694,6 +701,9 @@ class GripService:
         raise GripError("unsupported_action")
 
     async def _submit(self, *, target, slave, package, export, arguments, key, activation=None):
+        if "tasks" in vars(self.repo):
+            return await self.repo.tasks.submit_action(target=target, slave=slave, package=package,
+                export=export, arguments=arguments, key=key, activation=activation)
         if interaction(export) == "byte-stream":
             raise GripError("unsupported_action")
         # submit_run_plan resolves idempotency before performing current
@@ -751,7 +761,7 @@ class GripService:
         if isinstance(entry.value, RunSummary):
             if request.action == n.action("read"):
                 payload = RunReadInput.model_validate(data)
-                return await self.native.read_run(entry.value.run_id, include_history=payload.include_history)
+                return await self.native.read_run(entry.value.run_id, include_history=payload.include_history, history_after=payload.history_after, history_limit=payload.history_limit)
             for action in ("cancel", "resubmit", "resolve", "close"):
                 if request.action == n.action(action):
                     return await self.native.invoke(action, data, run_id=entry.value.run_id)

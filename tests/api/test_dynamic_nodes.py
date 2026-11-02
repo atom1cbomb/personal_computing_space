@@ -9,7 +9,7 @@ from loom_v2.contracts.types import ClosureContract, ComputeRequirement, NodeInt
 from loom_v2.contracts.agents import AgentRegistration
 from loom_v2.contracts.errors import DomainError
 from loom_v2.content_store import canonical_json_bytes
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.testing.observer import seed_embedded_slaves
 from tests.support.package_fixture import orchestration_package_value, process_package_value
 
@@ -219,7 +219,7 @@ async def test_orchestration_readiness_returns_precise_pyright_blocker_without_s
 async def test_parent_readiness_reports_missing_docker_runtime():
     repo = ObserverRepository()
     run, patched = await _dynamic_run(repo)
-    with patch("loom_v2.observer.repository.shutil.which", return_value=None):
+    with patch("loom_v2.pool.tasks.shutil.which", return_value=None):
         readiness = await repo.inspect_readiness(run.run_id, patched.draft_version)
     assert readiness["ready"] is False
     assert any(item["code"] == "orchestrator_runtime_unavailable" for item in readiness["blockers"])

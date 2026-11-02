@@ -9,7 +9,7 @@ from capability_services.suanli_overleaf_http.client import OverleafClient
 from capability_services.suanli_overleaf_http.server import create_app
 from loom_orchestration import LoomClient, ServicePackage
 from loom_v2.observer.grip import GripService
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.runtime_plugins import RuntimePluginHost
 from loom_v2.testing.observer import create_embedded_app, seed_embedded_slaves

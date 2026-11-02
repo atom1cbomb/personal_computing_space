@@ -83,7 +83,7 @@ class ValidationEvidence(ContractModel):
     output_digest: str | None = None
     result: Literal["pass", "fail"]
     errors: list[dict[str, Any]] = Field(default_factory=list)
-    issuer: Literal["slave", "observer"]
+    issuer: Literal["slave", "observer", "pool"]
     created_at: str
 
 

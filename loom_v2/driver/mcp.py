@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from loom_v2.contracts.types import ClosureContract, TaskClosure
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository
 from loom_v2.content_store import ContentStore, put_typed_content
 
 from .tools import DriverTools
@@ -22,7 +22,7 @@ class DriverMCP:
 
     def __init__(
         self,
-        repository: ObserverRepository,
+        repository: PoolRepository,
         conversation_ref: str,
         *,
         user_id: str = "user-default",

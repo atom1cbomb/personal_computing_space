@@ -72,6 +72,9 @@ def render_project(config: DeploymentConfig, machine_name: str) -> RenderedProje
                 "LOOM_GRIP_DATA_BINDINGS": json.dumps(access.data_bindings),
                 "LOOM_GRIP_UPSTREAM_BINDINGS": json.dumps(access.upstream_bindings),
             })
+            pool = document["services"]["pool"]
+            pool["environment"].update({k: v for k, v in app["environment"].items() if k.startswith("LOOM_GRIP_")})
+            pool["secrets"] = list(app["secrets"])
         else:
             if machine.grip_data_port:
                 app["environment"].update({"LOOM_GRIP_DATA_LISTEN_HOST": "0.0.0.0", "LOOM_GRIP_DATA_LISTEN_PORT": "8091"})
@@ -144,6 +147,8 @@ def _render_observer(config: DeploymentConfig, machine: MachineConfig) -> tuple[
                 "LOOM_GRIP_AUTHORITY": config.grip_authority,
                 "LOOM_GRIP_TOKEN": "${LOOM_GRIP_TOKEN:-}",
                 "LOOM_PUBLIC_BASE_URL": config.public_base_url,
+                "LOOM_POOL_URL": "http://pool:8091",
+                "LOOM_POOL_PUBLIC_BASE_URL": config.urls.pool,
             },
             "ports": [f"{machine.service_port}:8080"],
             "secrets": ["internal_api_secret"],
@@ -163,6 +168,13 @@ def _render_observer(config: DeploymentConfig, machine: MachineConfig) -> tuple[
         app["environment"].pop("LOOM_GRIP_TOKEN")
         app["secrets"].append("grip_token")
         document["secrets"]["grip_token"] = {"file": "./secrets/grip_token"}
+    from copy import deepcopy
+    pool = deepcopy(app)
+    pool["command"][2] = pool["command"][2].replace("loom_v2.observer.app:app", "loom_v2.pool.app:app").replace("--port 8080", "--port 8091")
+    pool["environment"].update(LOOM_SERVICE_NAME="pool", LOOM_OBSERVER_URL="http://observer:8080",
+        LOOM_POOL_PUBLIC_BASE_URL=config.urls.pool)
+    pool["ports"] = [f"{machine.pool_port}:8091"]
+    document["services"]["pool"] = pool
     env = _common_env(config, database_url=config.database_url(machine))
     return document, env
 
@@ -181,6 +193,7 @@ def _render_slave(config: DeploymentConfig, machine: MachineConfig) -> tuple[dic
             "environment": {
                 **_role_environment(config, machine, config.database_url(machine)),
                 "LOOM_OBSERVER_URL": config.urls.observer,
+                "LOOM_POOL_URL": config.urls.pool,
                 "LOOM_SLAVE_ENDPOINT_URL": machine.endpoint_url,
                 "LOOM_RUNTIME_PLUGIN_DIR": "/opt/loom/runtime-plugins",
                 "LOOM_RUNTIME_PLUGIN_SOCKET_DIR": "/run/loom/runtime-plugins",
@@ -231,9 +244,10 @@ def _render_slave(config: DeploymentConfig, machine: MachineConfig) -> tuple[dic
 def _render_driver(config: DeploymentConfig, machine: MachineConfig) -> tuple[dict[str, Any], dict[str, str]]:
     app = _base_service(config, machine, dockerfile="Dockerfile.driver")
     environment = {
-        "LOOM_AGENT_ID": "driver-default",
+        "LOOM_AGENT_ID": "driver-" + machine.name,
         "LOOM_DRIVER_URL": machine.endpoint_url,
         "LOOM_OBSERVER_URL": config.urls.observer,
+                "LOOM_POOL_URL": config.urls.pool,
         "LOOM_PACKAGE_CONTRACT_DIR": "/opt/loom/package-contracts",
         "LOOM_S3_ACCESS_KEY": "${MINIO_ACCESS_KEY}",
         "LOOM_S3_BUCKET": "${LOOM_S3_BUCKET}",

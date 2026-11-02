@@ -13,6 +13,7 @@ import asyncio
 import json
 import math
 import os
+from loom_orchestration.grip import Names
 import random
 import subprocess
 import time
@@ -354,8 +355,13 @@ async def run(args):
     controller = SlaveFailureController(docker_bin=args.docker_bin, compose_file=args.compose_file) if args.inject_failure else None
     corpus = make_corpus(args.seed, args.files)
     request_id = "bandgap-" + uuid4().hex[:12]
+    trusted = []
+    if getattr(args, "pool", None):
+        trusted.append({"protocol": "https-json.v1" if args.pool.startswith("https://") else "loom-http-json.v1",
+                        "audience": Names(args.authority, args.workspace).root,
+                        "endpoint": args.pool.rstrip("/") + "/.well-known/grip"})
     async with LoomClient(args.observer, token=os.environ["LOOM_GRIP_TOKEN"], grip_authority=args.authority,
-                          workspace_id=args.workspace, allow_insecure_grip=args.allow_http) as client:
+                          workspace_id=args.workspace, allow_insecure_grip=args.allow_http, trusted_bindings=trusted) as client:
         slaves = await client.resources(mcue="computing/slave")
         if len([r for r in slaves if r["metadata"]["available"]]) < 2:
             raise RuntimeError("two available Slaves required")
@@ -367,7 +373,7 @@ async def run(args):
             while time.monotonic() < deadline:
                 result = await client.invoke(action, client.names.action("read"), {})
                 if controller is not None:
-                    controller.observe(await client.run(queued["run_id"]))
+                    controller.observe(await client.run(queued["run_id"], include_history=True, history_limit=1000))
                 if result["state"] in {"completed", "failed", "cancelled", "awaiting_decision"}:
                     break
                 await asyncio.sleep(.5)
@@ -377,7 +383,7 @@ async def run(args):
                 raise RuntimeError(f"execution did not complete: {result}")
             passed = ["GRIP discovery and complete-plan execution"]
             _check_report(result["outcome"].get("value"), ground_truth(corpus), passed)
-            run_record = await client.run(queued["run_id"])
+            run_record = await client.run(queued["run_id"], include_history=True, history_limit=1000)
             _check_provenance(run_record, passed)
             if controller is not None:
                 _check_failure_reassignment(run_record, controller, passed)
@@ -390,6 +396,7 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--observer", default=os.getenv("LOOM_OBSERVER_URL", "http://localhost:18080"))
+    parser.add_argument("--pool", default=os.getenv("LOOM_POOL_PUBLIC_BASE_URL"), help="operator-trusted Pool base URL")
     parser.add_argument("--authority", default=os.getenv("LOOM_GRIP_AUTHORITY", "loom.local"))
     parser.add_argument("--workspace", default=os.getenv("LOOM_WORKSPACE_ID", "workspace-default"))
     parser.add_argument("--allow-http", action="store_true")

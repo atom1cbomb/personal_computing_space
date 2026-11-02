@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     workspace_id: str = "workspace-default"
     workspace_root: str = "/workspace"
     internal_api_secret: str = ""
+    pool_url: str = "http://pool:8091"
+    pool_public_base_url: str = ""
     observer_url: str = "http://observer:8080"
     public_base_url: str = ""
     # Defaults to client artifacts packaged with this Observer build.

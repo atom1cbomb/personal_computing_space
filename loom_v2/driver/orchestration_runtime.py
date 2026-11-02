@@ -17,7 +17,7 @@ from loom_v2.contracts.types import (
 )
 from loom_v2.contracts.refs import input_binding_for, action_name, package_body_ref, single_export
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository
 from loom_v2.driver.worker import WorkerSession, WorkerUnavailableError
 from loom_v2.slave.executor import ExecutionResult
 from loom_v2.slave.service import SlaveService
@@ -37,7 +37,7 @@ class DynamicOrchestrationRuntime:
     def __init__(
         self,
         *,
-        repository: ObserverRepository,
+        repository: PoolRepository,
         executor: DockerOrchestrationExecutor,
         slaves: dict[str, SlaveService] | None = None,
         workers: dict[str, WorkerSession] | None = None,
@@ -388,7 +388,7 @@ class DynamicOrchestrationRuntime:
         return completed, execution_result
 
     async def run_cleanup(self, run_id: str) -> Any:
-        from loom_v2.observer.cleanup import continuation, registrations
+        from loom_v2.pool.cleanup import continuation, registrations
 
         record = await self.repository.get_run(run_id)
         started = continuation(record)
@@ -630,6 +630,7 @@ class DynamicOrchestrationRuntime:
             instance_name=node.instance_name,
             target_resource_ref=node.target_resource_ref,
         )
+        binding = binding.model_copy(update={"expected_activation_revision": desired.activation_revision})
         command = CapabilityProvisionCommand(
             command_id=f"provision-{node.node_id}",
             package_version_ref=package.version_ref,
@@ -647,45 +648,6 @@ class DynamicOrchestrationRuntime:
             dependencies=desired.dependencies,
         )
         action = action_name(action_ref)
-
-        # In production the immutable Worker envelopes are submitted to
-        # Observer.  Observer creates the Attempt, forwards both envelopes
-        # through the active Slave lease, and records the terminal result.
-        # Embedded repositories intentionally keep the local test adapter.
-        execute_dynamic_node = getattr(self.repository, "execute_dynamic_node", None)
-        if execute_dynamic_node is not None:
-            provision_payload: dict[str, Any] = {
-                "command": command.model_dump(mode="json"),
-                "package": package.model_dump(mode="json"),
-            }
-            dispatch_payload: dict[str, Any] = {
-                "action": action,
-                "payload": {},
-                "closure": closure.model_dump(mode="json"),
-                "binding": binding.model_dump(mode="json"),
-                "instance_name": node.instance_name,
-            }
-            if self.driver_id is not None:
-                provision_payload["driver_id"] = self.driver_id
-                dispatch_payload["driver_id"] = self.driver_id
-            if self.driver_epoch is not None:
-                provision_payload["driver_epoch"] = self.driver_epoch
-                dispatch_payload["driver_epoch"] = self.driver_epoch
-            envelope = await execute_dynamic_node(
-                run_id,
-                node.node_id,
-                target=target,
-                provision_payload=provision_payload,
-                dispatch_payload=dispatch_payload,
-            )
-            terminal = envelope.get("terminal_report") or {}
-            if str(terminal.get("state") or "") != "completed":
-                raise RuntimeError(str(terminal.get("error") or "dynamic_node_failed"))
-            stored_attempt = envelope.get("attempt") or {}
-            result_ref = stored_attempt.get("result_ref")
-            if not isinstance(result_ref, dict):
-                raise RuntimeError("dynamic_node_result_missing")
-            return ResourceRef.model_validate(result_ref)
 
         worker = self.workers.get(target)
         if worker is not None:

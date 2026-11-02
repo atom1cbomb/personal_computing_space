@@ -7,7 +7,7 @@ from loom_v2.content_store import canonical_json_bytes
 from loom_v2.contracts.types import ResourceRef, TaskClosure
 from loom_v2.driver.mcp import DriverMCP
 from loom_v2.driver.service import DriverService
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.coding_agents.fake import FakeCodingAgentProvider
 from loom_v2.slave.executor import ExecutionResult
 from loom_v2.testing.observer import seed_embedded_slaves

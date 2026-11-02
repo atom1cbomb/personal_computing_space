@@ -8,7 +8,7 @@ import pytest
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.types import CapabilityPackageVersion, CapabilityProvisionCommand, ComputeBinding, ResourceRef
 from loom_v2.slave.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.driver.worker import WorkerSession
 from tests.support.package_fixture import process_package_value
 from loom_v2.testing.observer import seed_embedded_slaves

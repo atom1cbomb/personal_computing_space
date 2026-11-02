@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from loom_v2.db.session import make_engine
@@ -25,11 +25,13 @@ from loom_v2.contracts.types import ResourceRef
 from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.gateway import ObserverDriverGateway
 from loom_v2.observer.browser_auth import BrowserAuth
-from loom_v2.observer.slave_gateway import ObserverSlaveGateway, SlaveForwardError
+from loom_v2.observer.slave_gateway import ObserverSlaveGateway
 from loom_v2.auth import InternalAuth
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
 
 from .repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository
+from loom_v2.pool.client import invoke, TASK_METHODS, RESOURCE_METHODS
 from .downloads import client_downloads
 
 
@@ -47,6 +49,8 @@ def create_app(
             yield
         finally:
             await app.state.service_access.http.aclose()
+            if not isinstance(app.state.repo, PoolRepository):
+                await app.state.repo.tasks.close()
             await app.state.gateway.close()
             for worker in app.state.workers.values():
                 with suppress(Exception):
@@ -101,7 +105,7 @@ def create_app(
 
     @app.get("/healthz")
     async def health() -> dict[str, object]:
-        return {"ok": True, "service": "observer"}
+        return {"ok": True, "service": "pool" if isinstance(app.state.repo, PoolRepository) else "observer"}
 
     require_internal = InternalAuth(settings.internal_api_secret)
     internal_router = APIRouter(dependencies=[Depends(require_internal)])
@@ -168,12 +172,11 @@ def create_app(
             capabilities = dict(agent.get("capabilities") or {})
             capabilities["actions"] = sorted(projected.get("actions", set()))
             agent["capabilities"] = capabilities
-        # Driver only needs logical identities and capability snapshots.  The
-        # Observer-owned relay keeps endpoint URLs out of the Driver plane.
-        return [
-            {key: value for key, value in agent.items() if key != "endpoint_url"}
-            for agent in agents
-        ]
+        # Endpoints are supplied by authenticated Slave registration.
+        from loom_v2.execution_binding import execution_offer
+        for agent in agents:
+            agent["execution_offer"] = execution_offer(app.state.repo.names, agent["endpoint_url"])
+        return agents
 
     @internal_router.post("/internal/v1/capability-health")
     async def capability_health(payload: CapabilityHealthRequest) -> dict[str, Any]:
@@ -215,141 +218,8 @@ def create_app(
 
     @internal_router.post("/internal/v1/driver/commands")
     async def driver_command(payload: DriverCommand) -> dict[str, Any]:
-        async def execute_node_via_observer(
-            *,
-            workspace_id: str,
-            run_id: str,
-            node_id: str,
-            target: str,
-            provision_payload: dict[str, Any],
-            dispatch_payload: dict[str, Any],
-        ) -> dict[str, Any]:
-            """Fence one Attempt and keep the Worker data path Observer-owned."""
-            existing_run = await app.state.repo.get_run(run_id)
-            existing_node = next(
-                (item for item in existing_run.dynamic_nodes if item.node_id == node_id),
-                None,
-            )
-            if existing_node is not None and existing_node.state == "completed":
-                existing_attempt = next(
-                    (
-                        item for item in reversed(existing_run.attempts)
-                        if item.get("node_id") == node_id and item.get("state") == "completed"
-                    ),
-                    None,
-                )
-                if existing_attempt is None:
-                    raise RuntimeError("dynamic_node_result_missing")
-                if str(existing_attempt.get("target") or "") != target:
-                    raise RuntimeError("node_target_mismatch")
-                return {
-                    "node": existing_node.model_dump(mode="json"),
-                    "attempt": existing_attempt,
-                    "terminal_report": {
-                        "state": "completed",
-                        "attempt_id": existing_attempt.get("attempt_id"),
-                        "execution_id": existing_run.execution_id,
-                        "execution_epoch": existing_run.execution_epoch,
-                        "result": {
-                            "resource_ref": existing_attempt.get("result_ref"),
-                            "value": existing_attempt.get("value"),
-                        },
-                    },
-                }
-            # The Driver's orchestration runtime records the Attempt before
-            # asking Observer to execute the immutable Worker envelope.  Do
-            # not dispatch that same node a second time: a retry/re-entry may
-            # already have moved it to ``dispatched``.  Reuse the active
-            # fenced Attempt and keep the relay idempotent.
-            current = await app.state.repo.get_run(run_id)
-            current_node = next(
-                (item for item in current.dynamic_nodes if item.node_id == node_id),
-                None,
-            )
-            if current_node is None:
-                raise RuntimeError("dynamic_node_not_found")
-            if current_node.state == "accepted":
-                attempt = await app.state.repo.dispatch_dynamic_node(
-                    run_id, node_id, target=target
-                )
-            elif current_node.state == "dispatched":
-                active = next(
-                    (
-                        item for item in reversed(current.attempts)
-                        if item.get("node_id") == node_id
-                        and item.get("state") in {"created", "running"}
-                    ),
-                    None,
-                )
-                if active is None or str(active.get("target") or "") != target:
-                    raise RuntimeError("dynamic_node_attempt_missing")
-                attempt = active
-            else:
-                raise RuntimeError("dynamic_node_not_dispatchable")
-            try:
-                provision = await app.state.slave_gateway.forward(
-                    target, "/worker/v1/provision", provision_payload
-                )
-                raw_report = provision.get("health_report") or provision
-                report = CapabilityHealthReport.model_validate(raw_report)
-                await app.state.repo.record_capability_health(report, run_id=run_id)
-
-                run = await app.state.repo.get_run(run_id)
-                request = dict(dispatch_payload)
-                request.update(
-                    {
-                        "attempt_id": attempt["attempt_id"],
-                        "execution_id": run.execution_id,
-                        "execution_epoch": run.execution_epoch,
-                        "workspace_id": workspace_id,
-                    }
-                )
-                envelope = await app.state.slave_gateway.forward(
-                    target, "/worker/v1/dispatch", request
-                )
-                terminal = envelope.get("terminal_report")
-                if not isinstance(terminal, dict):
-                    raise RuntimeError("worker_dispatch_invalid_response")
-                result = terminal.get("result")
-                if not isinstance(result, dict) or "value" not in result:
-                    raise RuntimeError("worker_dispatch_result_missing")
-                completed = await app.state.repo.record_dynamic_node_result(
-                    run_id,
-                    node_id,
-                    {
-                        "attempt_id": attempt["attempt_id"],
-                        "execution_id": run.execution_id,
-                        "execution_epoch": run.execution_epoch,
-                        "value": result["value"],
-                        "terminal_state": terminal.get("state", "completed"),
-                        "terminal_error": terminal.get("error"),
-                        "validation_evidence": terminal.get("validation_evidence") or [],
-                    },
-                )
-                updated = await app.state.repo.get_run(run_id)
-                stored_attempt = next(
-                    item for item in updated.attempts
-                    if item.get("attempt_id") == attempt["attempt_id"]
-                )
-                return {
-                    "node": completed.model_dump(mode="json"),
-                    "attempt": stored_attempt,
-                    "terminal_report": terminal,
-                }
-            except Exception as exc:
-                with suppress(Exception):
-                    await app.state.repo.fail_dynamic_node(
-                        run_id, node_id,
-                        attempt_id=attempt.get("attempt_id"),
-                        error={"code": str(exc) or "node_execution_failed"},
-                    )
-                raise
-
         try:
-            result = await app.state.repo.execute_driver_command(
-                payload,
-                node_executor=execute_node_via_observer,
-            )
+            result = await app.state.repo.execute_driver_command(payload)
         except DomainError as exc:
             envelope = exc.envelope.model_dump(mode="json")
             raise HTTPException(status_code=409, detail=envelope) from exc
@@ -363,32 +233,29 @@ def create_app(
             raise HTTPException(status_code=400, detail=f"missing_field:{exc.args[0]}") from exc
         return result
 
-    @internal_router.post("/internal/v1/slaves/{slave_id}/forward")
-    async def forward_slave(slave_id: str, payload: dict[str, Any]) -> Response:
-        """Relay a fixed Worker action through Observer's active lease."""
-        path = payload.get("path")
-        request_payload = payload.get("payload")
-        allowed = {
-            "/worker/v1/provision", "/worker/v1/dispatch",
-            "/worker/v1/deprovision", "/worker/v1/capability/auth/start",
-            "/worker/v1/capability/auth/browser", "/worker/v1/inspect",
-            "/worker/v1/reconcile",
-        }
-        if path not in allowed or not isinstance(request_payload, dict):
-            raise HTTPException(status_code=400, detail="slave_forward_request_invalid")
-        try:
-            body = await app.state.slave_gateway.forward(slave_id, path, request_payload)
-        except SlaveForwardError as exc:
-            return JSONResponse(status_code=exc.status_code, content=exc.body)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return JSONResponse(content=body)
 
     @internal_router.post("/driver-gateway/v1/registration-check")
     async def registration_check() -> dict[str, Any]:
         driver = await app.state.gateway.active_driver()
         return {"registered": driver is not None, "driver": driver}
 
+    is_pool = isinstance(app.state.repo, PoolRepository)
+
+    @internal_router.post("/internal/v1/tasks" if is_pool else "/internal/v1/resources/commands")
+    async def repository_command(body: dict):
+        return await invoke(app.state.repo, body, TASK_METHODS if is_pool else RESOURCE_METHODS, native=app.state.grip.native)
+
+    if is_pool:
+        @internal_router.post("/internal/v1/attempts/authorize")
+        async def authorize_attempt(body: dict):
+            try:
+                return await app.state.repo.authorize_attempt(body)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+
+    if not is_pool:
+        internal_router.routes = [route for route in internal_router.routes
+            if route.path != "/internal/v1/driver/commands"]
     app.include_router(internal_router)
 
     @app.get("/api/v1/runtime", response_model=dict[str, Any])
@@ -467,7 +334,6 @@ def create_app(
             packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=True)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
-        record = await app.state.repo.get_run(run_id)
         return [{**(await app.state.repo.public_package_payload(package)), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package, refresh=False)]} for package in packages]
 
     @app.get("/api/v1/capability-packages/{package_ref:path}")
@@ -507,7 +373,9 @@ def create_app(
         return {**package.model_dump(mode="json"), "resource": package.version_ref}
 
     @app.get("/")
-    async def home() -> FileResponse:
+    async def home() -> Response:
+        if not is_pool and settings.pool_public_base_url:
+            return RedirectResponse(settings.pool_public_base_url.rstrip("/") + "/")
         return FileResponse(static_dir / "index.html")
 
     return app

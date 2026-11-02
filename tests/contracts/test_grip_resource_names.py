@@ -12,7 +12,7 @@ from loom_orchestration.naming import content_uri
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from tests.support.package_fixture import process_package_value
 

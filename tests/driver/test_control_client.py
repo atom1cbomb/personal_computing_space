@@ -2,7 +2,7 @@ import json
 import httpx
 import pytest
 
-from loom_v2.driver.control_client import ObserverControlClient
+from loom_v2.driver.control_client import PoolControlClient
 from loom_v2.contracts.errors import DomainError
 
 
@@ -17,7 +17,7 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", sorted(ObserverControlClient.READ_ONLY_COMMANDS))
+@pytest.mark.parametrize("command", sorted(PoolControlClient.READ_ONLY_COMMANDS))
 async def test_control_client_retries_read_only_transport_failure(command, caplog):
     requests = []
 
@@ -27,7 +27,7 @@ async def test_control_client_retries_read_only_transport_failure(command, caplo
             raise httpx.RemoteProtocolError("sensitive transport details")
         return httpx.Response(200, json={"ok": True})
 
-    client = ObserverControlClient("http://observer", driver_id="driver", instance_id="instance",
+    client = PoolControlClient("http://observer", driver_id="driver", instance_id="instance",
         lease_id="lease-secret", driver_epoch=1, internal_api_secret="api-secret", transport=httpx.MockTransport(respond))
     try:
         assert await client.command(command, {"run_id": "run-1"}) == {"ok": True}
@@ -40,7 +40,7 @@ async def test_control_client_retries_read_only_transport_failure(command, caplo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command, expected_attempts", [("run.get", 3), ("node.execute", 1), ("activation.ensure_program", 1)])
+@pytest.mark.parametrize("command, expected_attempts", [("run.get", 3), ("node.dispatch", 1), ("activation.ensure_program", 1)])
 async def test_control_client_transport_retry_is_bounded_and_never_replays_mutations(command, expected_attempts):
     requests = []
 
@@ -48,10 +48,10 @@ async def test_control_client_transport_retry_is_bounded_and_never_replays_mutat
         requests.append(request)
         raise httpx.ReadTimeout("timed out")
 
-    client = ObserverControlClient("http://observer", driver_id="driver", instance_id="instance",
+    client = PoolControlClient("http://observer", driver_id="driver", instance_id="instance",
         lease_id="lease", driver_epoch=1, transport=httpx.MockTransport(respond))
     try:
-        with pytest.raises(RuntimeError, match="observer_unavailable") as error:
+        with pytest.raises(RuntimeError, match="pool_unavailable") as error:
             await client.command(command)
     finally:
         await client.close()
@@ -62,7 +62,7 @@ async def test_control_client_transport_retry_is_bounded_and_never_replays_mutat
 @pytest.mark.asyncio
 async def test_control_client_sends_lease_fenced_command():
     transport = RecordingTransport(httpx.Response(200, json={"run_id": "run-1"}))
-    client = ObserverControlClient(
+    client = PoolControlClient(
         "http://observer:8080",
         driver_id="driver-default",
         instance_id="instance-1",
@@ -80,14 +80,14 @@ async def test_control_client_sends_lease_fenced_command():
 @pytest.mark.asyncio
 async def test_control_client_surfaces_stale_epoch():
     transport = RecordingTransport(httpx.Response(409, json={"detail": "stale_driver_epoch"}))
-    client = ObserverControlClient("http://observer:8080", driver_id="driver-default", instance_id="one", lease_id="lease", driver_epoch=1, transport=transport)
+    client = PoolControlClient("http://observer:8080", driver_id="driver-default", instance_id="one", lease_id="lease", driver_epoch=1, transport=transport)
     with pytest.raises(RuntimeError, match="stale_driver_epoch"):
         await client.command("run.get", {"run_id": "run-1"})
 
 
 @pytest.mark.asyncio
 async def test_control_client_rejects_removed_planner_commands():
-    client = ObserverControlClient("http://observer:8080", driver_id="driver-default", instance_id="one", lease_id="lease", driver_epoch=1)
+    client = PoolControlClient("http://observer:8080", driver_id="driver-default", instance_id="one", lease_id="lease", driver_epoch=1)
     with pytest.raises(ValueError, match="driver_command_not_allowed"):
         await client.command("run.commit", {"run_id": "run-1"})
 
@@ -113,7 +113,7 @@ async def test_control_client_lists_capability_packages():
         "body": {"program_content_ref": {"resource_id": "grip://loom.local/workspaces/workspace-default/content/document/sha256/" + "c" * 64, "identity_criterion": "content_digest"}},
     }
     transport = RecordingTransport(httpx.Response(200, json={"packages": [package]}))
-    client = ObserverControlClient(
+    client = PoolControlClient(
         "http://observer:8080",
         driver_id="driver-default",
         instance_id="instance-1",

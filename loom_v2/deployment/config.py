@@ -35,6 +35,7 @@ class MachineConfig(ConfigModel):
     ssh_user: NonEmptyString
     role: Literal["minio", "observer", "driver", "slave"]
     service_port: Port
+    pool_port: Port = 8091
     console_port: Port | None = None
     service_id: Annotated[str, StringConstraints(pattern=r"^slave-[a-z0-9][a-z0-9-]{0,55}$")] | None = None
     grip_data_port: Port | None = None
@@ -239,6 +240,7 @@ class DeploymentInput(ConfigModel):
 
 @dataclass(frozen=True)
 class EndpointMap:
+    pool: str
     observer: str
     driver: str
     minio: str
@@ -376,6 +378,7 @@ class DeploymentConfig:
         driver = self.machine("driver")
         minio = self.machine("minio")
         return EndpointMap(
+            pool=f"http://{_url_host(observer.advertised_host)}:{observer.pool_port}",
             observer=observer.endpoint_url,
             driver=driver.endpoint_url,
             minio=minio.endpoint_url,
@@ -448,6 +451,8 @@ def _validate_topology(machines: tuple[MachineConfig, ...]) -> None:
     occupied: dict[tuple[str, int], str] = {}
     for machine in machines:
         ports = [machine.service_port]
+        if machine.role == "observer":
+            ports.append(machine.pool_port)
         ports.extend(item["host_port"] for item in machine.consumer_ports.values())
         if machine.grip_data_port is not None:
             ports.append(machine.grip_data_port)

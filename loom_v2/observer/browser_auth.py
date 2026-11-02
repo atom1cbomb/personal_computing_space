@@ -57,10 +57,6 @@ class BrowserAuth:
                 await self.app.state.repo.record_capability_health(result, authentication_restart=True)
                 return {"health_reports": [result.model_dump(mode="json")]}
             return result
-        drivers = await self.app.state.repo.list_agents(self.settings.workspace_id, role="driver")
-        driver = next((item for item in drivers if item.get("lease_state") == "active"), None)
-        if driver is None:
-            raise RuntimeError("driver_unavailable")
         if action == "start":
             value = await self.app.state.slave_gateway.forward(
                 session["target_slave"], "/worker/v1/capability/auth/start", {
@@ -70,8 +66,8 @@ class BrowserAuth:
                     "instance_name": session["instance_name"],
                     "activation_revision": session["activation_revision"],
                     "browser_auth": payload,
-                    "driver_id": str(driver["agent_id"]),
-                    "driver_epoch": int(driver["epoch"]),
+                    "driver_id": "observer-resource-controller",
+                    "driver_epoch": 0,
                 })
             report = value.get("health_report")
             if not isinstance(report, dict):
@@ -87,8 +83,8 @@ class BrowserAuth:
                 "instance_name": session["instance_name"],
                 "activation_revision": session["activation_revision"],
                 "payload": payload,
-                "driver_id": str(driver["agent_id"]),
-                "driver_epoch": int(driver["epoch"]),
+                "driver_id": "observer-resource-controller",
+                "driver_epoch": 0,
             })
 
     async def start(self, request, package, targets, instance_name, *, expected_revision):

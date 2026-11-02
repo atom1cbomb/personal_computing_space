@@ -2,7 +2,7 @@ import pytest
 
 from loom_orchestration import ResourceEffect, resource_attributes
 from loom_v2.contracts.types import IoContract
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from tests.support.package_fixture import action_export
 
 

@@ -22,8 +22,10 @@ def test_observer_project_contains_private_postgres_and_public_port(tmp_path: Pa
     project = render_project(make_config(tmp_path), "observer")
     document = json.loads(project.compose_text)
 
-    assert set(document["services"]) == {"observer", "postgres"}
+    assert set(document["services"]) == {"observer", "pool", "postgres"}
     assert document["services"]["observer"]["ports"] == ["8080:8080"]
+    assert document["services"]["pool"]["ports"] == ["8091:8091"]
+    assert "loom_v2.pool.app:app" in document["services"]["pool"]["command"][2]
     assert document["services"]["observer"]["environment"]["LOOM_DATABASE_URL"].startswith(
         "postgresql+asyncpg://loom:"
     )
@@ -175,6 +177,11 @@ def test_service_binding_keys_only_sign_on_observer_and_loopback_ports(tmp_path)
     observer=render_project(config,'observer');slave=render_project(config,worker.name)
     assert 'grip-signing' in observer.secret_files and 'grip-signing' not in slave.secret_files
     assert 'PRIVATE-TEST-KEY' not in observer.redacted_preview+slave.redacted_preview
+    observer_services=json.loads(observer.compose_text)['services']
+    pool=observer_services['pool']
+    assert pool['environment']['LOOM_GRIP_AUTHORITY'] == config.grip_authority
+    assert pool['environment']['LOOM_GRIP_VERIFICATION_KEYS'] == observer_services['observer']['environment']['LOOM_GRIP_VERIFICATION_KEYS']
+    assert pool['secrets'] == observer_services['observer']['secrets']
     app=json.loads(slave.compose_text)['services']['slave']
     assert '127.0.0.1:8091:8091' in app['ports']
     assert '8001:8081' not in app['ports']  # only the capability runtime gets this approval

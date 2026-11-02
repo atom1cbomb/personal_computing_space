@@ -8,12 +8,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from loom_orchestration import LoomClient, OrchestratorPackage, SubmissionBuilder, ResourceRef as PublicResourceRef
 from loom_v2.contracts.types import CapabilityHealthReport, NodeIntent, ResourceRef
 from loom_v2.driver.orchestration_runtime import DynamicOrchestrationRuntime
-from loom_v2.driver.remote_repository import RemoteObserverRepository
+from loom_v2.driver.remote_repository import RemotePoolRepository
 from loom_v2.driver.orchestrator import OrchestrationActivationWait
 from loom_v2.driver.worker import WorkerSession
 from loom_v2.observer.app import create_app
-from loom_v2.observer.cleanup import continuation, registrations
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.cleanup import continuation, registrations
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.app import create_app as create_slave_app
 from loom_v2.testing.observer import seed_embedded_slaves
@@ -280,7 +280,11 @@ async def test_remote_host_commands_and_cleanup_owner_fencing():
     record, package, resource = await lifecycle_run(repo)
     control = RepositoryControl(repo)
     await control.register()
-    remote = RemoteObserverRepository(control, content_store=repo.content_store)
+    await repo.recover_execution_requests_for_driver(control.workspace_id, driver_id=control.driver_id,
+        driver_instance_id=control.instance_id, driver_epoch=control.driver_epoch)
+    await repo.claim_next_execution(workspace_id=control.workspace_id, driver_id=control.driver_id,
+        driver_instance_id=control.instance_id, driver_epoch=control.driver_epoch)
+    remote = RemotePoolRepository(control, content_store=repo.content_store)
     ref = await remote.materialize_program_json(record.run_id, execution_id=record.execution_id, step_id="remote-input", value={"id": "vm-test"})
     assert await repo._load_json_content(ref) == {"id": "vm-test"}
     activation = await remote.ensure_program_activation(record.run_id, execution_id=record.execution_id, step_id="remote-access", package_ref=package,

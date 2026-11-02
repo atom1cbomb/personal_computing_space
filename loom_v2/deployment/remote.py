@@ -242,10 +242,13 @@ class RemoteDeployer:
     def _wait_for_health(self, machine: MachineConfig) -> None:
         path = "/minio/health/live" if machine.role == "minio" else "/healthz"
         url = f"{machine.endpoint_url}{path}"
+        urls = [url]
+        if machine.role == "observer":
+            urls.append(self.config.urls.pool.rstrip("/") + "/healthz")
         deadline = time.monotonic() + self.health_timeout
         while True:
             try:
-                if self.healthcheck(url):
+                if all(self.healthcheck(target) for target in urls):
                     return
             except Exception:
                 pass
@@ -254,7 +257,7 @@ class RemoteDeployer:
                     machine=machine.name,
                     role=machine.role,
                     phase="health",
-                    command=f"GET {url}",
+                    command="; ".join(f"GET {target}" for target in urls),
                     stderr="health check timed out",
                 )
             time.sleep(self.health_interval)

@@ -68,6 +68,7 @@ class SlaveService:
     activations: dict[str, CapabilityPackageActivation] = field(default_factory=dict)
     resource_events: list[ResourceEventFrame] = field(default_factory=list)
     runtime_plugin_host: RuntimePluginHost | None = None
+    _attempt_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     _activation_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     _pending_health_reports: dict[str, CapabilityHealthReport] = field(default_factory=dict, init=False, repr=False)
     _last_reported_health: dict[str, tuple[int, str]] = field(default_factory=dict, init=False, repr=False)
@@ -1326,7 +1327,12 @@ class SlaveService:
             )
         return replace(result, validation_evidence=evidence)
 
-    async def run(
+    async def run(self, attempt_id, action, payload, *, closure=None, binding=None, execution_epoch=1, instance_name="default"):
+        async with self._attempt_locks.setdefault(attempt_id, asyncio.Lock()):
+            return await self._run_owned(attempt_id, action, payload, closure=closure, binding=binding,
+                execution_epoch=execution_epoch, instance_name=instance_name)
+
+    async def _run_owned(
         self, attempt_id: str, action: str, payload: dict[str, Any], *,
         closure: TaskClosure | None = None, binding: ComputeBinding | None = None,
         execution_epoch: int = 1, instance_name: str = "default",
@@ -1409,6 +1415,8 @@ class SlaveService:
         if self.sessions is not None:
             async with self.sessions() as session:
                 row = await session.get(SlaveAttemptRow, attempt_id)
+                if row is not None and row.result is None:
+                    raise RuntimeError("attempt_outcome_unknown")
                 if row is not None and row.result is not None:
                     result_payload = row.result
                     result = ExecutionResult(
@@ -1425,6 +1433,10 @@ class SlaveService:
         payload = await self._admission_payload(payload, action=action, closure=closure, action_export=action_export)
         if action_export is not None:
             await self._validate_input_payload(action_export, payload)
+        if self.sessions is not None:
+            async with self.sessions() as session, session.begin():
+                session.add(SlaveAttemptRow(attempt_id=attempt_id, slave_id=self.slave_id,
+                    workspace_id=self.workspace_id, action=action, payload=payload, state="running", result=None))
         if package is not None and self._uses_runtime_plugin(package):
             activation_key = self._activation_key(package.version_ref, instance_name)
             activation = self.activations.get(activation_key)
@@ -1526,10 +1538,9 @@ class SlaveService:
             media_type="application/json",
         )
         result = replace(result, resource_ref=result_ref)
-        self.attempts[attempt_id] = result
         if self.sessions is not None:
             async with self.sessions() as session:
-                session.add(SlaveAttemptRow(
+                await session.merge(SlaveAttemptRow(
                     attempt_id=attempt_id,
                     slave_id=self.slave_id,
                     workspace_id=self.workspace_id,
@@ -1547,4 +1558,5 @@ class SlaveService:
                     },
                 ))
                 await session.commit()
+        self.attempts[attempt_id] = result
         return result

@@ -5,7 +5,7 @@ import pytest
 
 from loom_orchestration import GripError, LoomClient
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.digest import digest_json

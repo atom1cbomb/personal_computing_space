@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine
 from copy import deepcopy
 
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.contracts.agents import AgentRegistration
 from loom_v2.contracts.types import ClosureContract, TaskClosure
 from loom_v2.db.models import RunRow
@@ -18,9 +18,9 @@ async def test_execution_transaction_reads_only_touched_runs_and_rolls_back_cach
     decoded = []
     original = repo._record_from_row
 
-    def observe(row):
+    def observe(row, events):
         decoded.append(row.run_id)
-        return original(row)
+        return original(row, events)
 
     monkeypatch.setattr(repo, "_record_from_row", observe)
     with pytest.raises(RuntimeError, match="rollback_test"):

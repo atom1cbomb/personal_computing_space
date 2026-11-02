@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from .mcp import DriverMCP
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.errors import DomainError
 
@@ -19,7 +19,7 @@ class DriverMCPServer:
 
     def __init__(
         self,
-        repository: ObserverRepository,
+        repository: PoolRepository,
         content_store: ContentStore | None = None,
     ) -> None:
         self.repository = repository

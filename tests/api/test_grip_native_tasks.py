@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from loom_v2.contracts.agents import AgentRegistration
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from tests.support.grip_client import exchange, invoke, resources
 

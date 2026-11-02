@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from loom_v2.testing.observer import create_embedded_app as create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 def test_observer_does_not_expose_public_mcp_transport():

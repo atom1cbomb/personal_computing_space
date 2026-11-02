@@ -19,7 +19,7 @@ NATIVE_SPEC.loader.exec_module(NATIVE_MODULE)
 async def test_bandgap_harness_prepares_and_submits_current_public_contract():
     from loom_orchestration import LoomClient
     from loom_v2.observer.app import create_app
-    from loom_v2.observer.repository import ObserverRepository
+    from loom_v2.pool.repository import PoolRepository as ObserverRepository
     from loom_v2.settings import Settings
     from loom_v2.testing.observer import seed_embedded_slaves
     settings = Settings(grip_token="bandgap-test", public_base_url="http://observer", coding_agent_backend="none")
@@ -38,7 +38,7 @@ async def test_bandgap_harness_prepares_and_submits_current_public_contract():
 async def test_native_task_example_publishes_and_queues_through_discovered_driver(monkeypatch):
     from loom_orchestration import LoomClient
     from loom_v2.observer.app import create_app
-    from loom_v2.observer.repository import ObserverRepository
+    from loom_v2.pool.repository import PoolRepository as ObserverRepository
     from loom_v2.settings import Settings
     from loom_v2.testing.observer import seed_embedded_slaves
 

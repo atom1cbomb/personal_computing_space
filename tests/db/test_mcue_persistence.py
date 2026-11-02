@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from loom_v2.db.models import WorkspaceResourceRow
 from loom_v2.observer.mcue_migration import backfill_resource_mcue
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 async def test_slave_resource_metadata_survives_observer_restart(tmp_path):

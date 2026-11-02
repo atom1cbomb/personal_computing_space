@@ -117,8 +117,8 @@ SDK 0.10 与对应 Observer 将完整任务提交纳入 GRIP。用
 这个 URI 跨进程重启保持稳定。`metadata.task_format.schema` 指向完整 `ClosureContract`
 Schema，`execution_kinds` 包括普通计划和 `container:python_orchestrator/1`。
 
-`metadata.accepting_submissions` 表示 Observer 可接受提交，`metadata.available`
-表示 Driver 当前租约在线。Driver 离线时仍可校验、冻结并持久化排队，恢复后再领取。
+`metadata.accepting_submissions` 表示 Driver Pool 可接受提交，`metadata.available`
+表示至少一个 Driver 当前租约在线，`active_drivers` 给出在线数量。Driver 离线时仍可校验、冻结并持久化排队，恢复后再领取。
 包、内容和执行资源仍须满足提交的就绪检查。返回 Run URI 证明已接收，不证明执行完成。
 
 以下片段假设 `plan` 已用 `SubmissionBuilder` 构造，引用的程序、包和契约均已发布：
@@ -334,3 +334,5 @@ REST 的内容上传、包制作与管理 UI 仍承担制作和管理职责。�
 及 [action 与实例描述 spec](superpowers/specs/2026-10-20-grip-actions-and-activation-description-design.md)。
 
 统一登录和过期后的重新认证使用 SDK 0.7 的 `loom-auth`，参见 [认证说明](authentication.md)。
+
+Driver/Run/Plan 的动作绑定独立 Pool 地址；SDK 必须显式信任运营者提供的 Pool binding。SDK 0.13 的 `client.run(uri)` 默认只取状态；历史用 `include_history=True`、`history_after`、`history_limit` 分页，返回 `history_cursor` 用于下一页。配置与示例见 [Driver Pool](driver-pool.md)。

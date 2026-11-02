@@ -14,7 +14,7 @@ from loom_v2.contracts.agents import AgentRegistration
 from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.app import create_app
 from loom_v2.observer.grip import GripService
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.app import create_app as create_slave_app
 from loom_v2.slave.grip_data import create_data_app

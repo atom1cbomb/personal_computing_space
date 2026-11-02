@@ -11,7 +11,7 @@ from loom_v2.contracts.types import CapabilityPackageActivation, CapabilityPacka
 from loom_v2.db.models import RunRow, WorkspaceCapabilityPackageRow
 from loom_v2.digest import digest_json
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from tests.support.package_fixture import action_export, register_test_descriptor
 

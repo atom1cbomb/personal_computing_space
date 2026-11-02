@@ -9,7 +9,8 @@ skill or SDK alone does not add server support. For user login commands, see
 
 | Component | Provides |
 |---|---|
-| Observer | Built-in activation `auth-start`, revision checks, short-lived browser sessions and bridge, public authentication projection, activation state and waiting Run updates |
+| Observer | Built-in activation `auth-start`, revision checks, short-lived browser sessions and bridge, public authentication projection, activation state |
+| Driver Pool | Durable Run waiting state, activation recovery and execution queue |
 | Slave HTTP runtime | Isolated activation container, selected credential mount, optional state volume, private authentication requests and health reports |
 | SDK `loom-auth` | One portal for selected activation URIs, client-managed shared browser profile, callback/cookie forwarding, polling and explicit reauthentication |
 | Capability gateway | Provider login/exchange or credential plugin, credential storage/refresh, real access verification, expiry detection, private hooks below |

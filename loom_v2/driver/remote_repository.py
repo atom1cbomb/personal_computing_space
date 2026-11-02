@@ -28,15 +28,15 @@ from loom_v2.contracts.refs import (
     slave_supports_package,
 )
 
-from .control_client import ObserverControlClient
+from .control_client import PoolControlClient
 
 
 @dataclass
 class RemoteRunRecord:
-    """The small read model the Driver needs from Observer.
+    """The small read model the Driver needs from Pool.
 
     It intentionally contains no mutation methods.  All writes go through
-    ``ObserverControlClient.command`` so the Observer remains the authority.
+    ``PoolControlClient.command`` so the Pool remains the task authority.
     """
 
     run_id: str
@@ -88,10 +88,10 @@ def _decode_run(payload: dict[str, Any]) -> RemoteRunRecord:
     )
 
 
-class RemoteObserverRepository:
-    """Repository-shaped Driver adapter backed solely by Observer RPC."""
+class RemotePoolRepository:
+    """Repository-shaped Driver adapter backed solely by Pool RPC."""
 
-    def __init__(self, control: ObserverControlClient, content_store: ContentStore | None = None) -> None:
+    def __init__(self, control: PoolControlClient, content_store: ContentStore | None = None) -> None:
         self.control = control
         self.content_store = content_store or ContentStore.from_settings(Settings())
         self.names = self.content_store.names
@@ -224,31 +224,6 @@ class RemoteObserverRepository:
         )
         return DynamicNode.model_validate(payload)
 
-    async def execute_dynamic_node(
-        self,
-        run_id: str,
-        node_id: str,
-        *,
-        target: str,
-        provision_payload: dict[str, Any],
-        dispatch_payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Ask Observer to fence, execute and record one dynamic node.
-
-        The Driver supplies the immutable execution envelope it decided on;
-        Observer owns the Attempt transition and all Worker forwarding.
-        """
-        return dict(await self.control.command(
-            "node.execute",
-            {
-                "run_id": run_id,
-                "node_id": node_id,
-                "target": target,
-                "provision_payload": provision_payload,
-                "dispatch_payload": dispatch_payload,
-            },
-            request_id=f"node-execute:{run_id}:{node_id}:{dispatch_payload.get('attempt_id', '')}",
-        ))
 
     async def register_resource(self, resource: dict[str, Any]) -> dict[str, Any]:
         """Register a workspace resource through Observer's narrow command."""

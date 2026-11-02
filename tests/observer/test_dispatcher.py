@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from loom_v2.observer.dispatcher import ObserverMessageDispatcher
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 class Gateway:

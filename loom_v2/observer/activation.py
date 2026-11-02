@@ -19,18 +19,8 @@ from loom_v2.contracts.types import (
 
 
 async def _driver_fencing(repository: Any, workspace_id: str) -> dict[str, Any]:
-    """Read the active Driver lease used only for Slave fencing metadata."""
-    agents = await repository.list_agents(workspace_id, role="driver")
-    driver = next(
-        (item for item in agents if item.get("lease_state") == "active"),
-        None,
-    )
-    if driver is None:
-        raise RuntimeError("driver_unavailable")
-    return {
-        "driver_id": str(driver["agent_id"]),
-        "driver_epoch": int(driver["epoch"]),
-    }
+    """Resource management is fenced by activation revision, independently of Drivers."""
+    return {"driver_id": "observer-resource-controller", "driver_epoch": 0}
 
 
 async def execute_activation_targets(

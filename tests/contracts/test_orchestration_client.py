@@ -11,7 +11,7 @@ import pytest
 from loom_orchestration import ClosureContract, GripError, LoomClient, OrchestratorPackage, ResourceEffect, ResourceRef, SubmissionBuilder, TaskClosure
 from loom_v2.observer.app import create_app
 from loom_v2.settings import Settings
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.testing.observer import seed_embedded_slaves
 from tests.api.test_public_resource_effect_metadata import _register_packages
 
@@ -97,7 +97,12 @@ async def test_public_client_native_submission_read_cancel_and_close_use_grip(na
     assert await client.run(first["run_id"]) == by_uri
     assert by_uri["state"] == "committed"
     assert by_uri["plan"] == first["plan"]
-    assert by_uri["events"]
+    assert "events" not in by_uri
+    history = await client.run(first["run"], include_history=True, history_limit=1)
+    assert len(history["events"]) == 1
+    assert history["history_cursor"] == 1
+    following = await client.run(first["run"], include_history=True, history_after=history["history_cursor"], history_limit=1)
+    assert following["history_cursor"] == 2
     frozen = await client.invoke(first["plan"], client.names.action("read"), {})
     assert frozen["closure_version"] == first["closure_version"]
     assert frozen["plan"] == first["closure_contract"]

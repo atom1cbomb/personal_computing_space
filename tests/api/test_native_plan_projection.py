@@ -8,7 +8,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from loom_v2.contracts.types import ClosureContract
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 @pytest.fixture(params=["memory", "sqlite"])

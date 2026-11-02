@@ -1,7 +1,7 @@
 # Observer External-Agent Workflow
 
 The external agent is the planner. The logical GRIP Driver accepts a complete
-`ClosureContract`; Observer validates, freezes and queues it. The Driver process
+`ClosureContract`; the Driver Pool validates, freezes and queues it. The Driver process
 claims immutable execution requests and never receives prompts or conversations
 for planning.
 
@@ -10,8 +10,8 @@ for planning.
 1. Discover `client.resources(mcue="computing/driver")`, DESCRIBE its URI, and
    read its `how-to-use` and offered schemas. There is one logical Driver at
    `drivers/default`; its URI remains stable across process restarts.
-   `metadata.accepting_submissions` describes the Observer entry point, while
-   `metadata.available` describes the execution lease. A Driver offline lease
+   `metadata.accepting_submissions` describes Pool availability, while
+   `metadata.available` describes whether any Driver lease is active; `active_drivers` counts them. A Driver offline lease
    permits durable queueing; report the waiting state without treating a Run URI
    as evidence of execution. `metadata.task_format.schema` describes the accepted
    complete closure; both ordinary plans and `container:python_orchestrator/1`
@@ -104,8 +104,12 @@ readable.
 
 Poll `client.submission(business_key)` or invoke `read` on the returned Run URI.
 The default Run read input `{}` returns state, outcome, execution identity,
-Driver and current Plan references. Set `{"include_history":true}` for attempts,
-events, dynamic nodes and evidence; `client.run(run_uri)` requests that view.
+Driver and current Plan references. SDK 0.13 also defaults to that view. Use
+`client.run(run_uri, include_history=True, history_after=0, history_limit=100)`
+for attempts, dynamic nodes, evidence and a bounded event page. Pass the returned
+`history_cursor` as the next `history_after`; stop when `events` is empty.
+Driver, Run and Plan offers bind the Pool endpoint, which must be explicitly
+configured as a trusted binding (see [sdk.md](sdk.md)).
 The relevant states are:
 
 - `queued`, `committed`, `running`, `cleaning_up`: keep polling;
@@ -159,7 +163,7 @@ poll through `cleaning_up` and inspect `outcome.cleanup`.
 
 `await client.close(run_uri)` closes a completed, failed or cancelled Run.
 Repeated close is idempotent; it does not destroy external resources. Lifecycle
-offers remain discoverable for retries, with state conditions checked by Observer.
+offers remain discoverable for retries, with state conditions checked by the Pool.
 
 Use public GRIP offers and the content/package authoring data plane. The old
 task REST submission, single-Run read and lifecycle routes have been removed.

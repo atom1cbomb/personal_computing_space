@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom_v2.contracts.types import ResourceRef
-from loom_v2.observer.orchestration_preflight import validate_entry_signature
+from loom_v2.pool.orchestration_preflight import validate_entry_signature
 
 
 ReadJsonCallback = Callable[[ResourceRef], Any]

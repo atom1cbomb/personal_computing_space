@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
 from loom_v2.contracts.types import CapabilityHealthReport, ClosureContract, ComputeBinding, ResourceRef, TaskClosure
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.testing.observer import create_embedded_app
 from loom_v2.testing.observer import seed_embedded_slaves
 from tests.support.grip_client import invoke, resources

@@ -4,7 +4,7 @@ import pytest
 
 from loom_v2.coding_agents.base import AgentEvent
 from loom_v2.driver.service import DriverService
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 class BlockingProvider:

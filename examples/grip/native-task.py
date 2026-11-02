@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import os
+from loom_orchestration.grip import Names
 
 from loom_orchestration import (
     LoomClient, OrchestratorPackage, ResourceRef, SubmissionBuilder, TaskClosure,
@@ -54,9 +55,14 @@ async def prepare_plan(client, request_id, value=21):
 
 
 async def main(args):
+    trusted = []
+    if getattr(args, "pool", None):
+        trusted.append({"protocol": "https-json.v1" if args.pool.startswith("https://") else "loom-http-json.v1",
+                        "audience": Names(args.authority, args.workspace).root,
+                        "endpoint": args.pool.rstrip("/") + "/.well-known/grip"})
     async with LoomClient(args.observer, token=os.environ["LOOM_GRIP_TOKEN"],
                           grip_authority=args.authority, workspace_id=args.workspace,
-                          allow_insecure_grip=args.allow_http) as client:
+                          allow_insecure_grip=args.allow_http, trusted_bindings=trusted) as client:
         driver = next(r for r in await client.resources(mcue="computing/driver")
                       if r["uri"] == client.names.name("drivers", "default"))
         plan = await prepare_plan(client, args.request_id, args.value)
@@ -75,6 +81,7 @@ async def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--observer", default=os.getenv("LOOM_OBSERVER_URL", "http://127.0.0.1:18080"))
+    parser.add_argument("--pool", default=os.getenv("LOOM_POOL_PUBLIC_BASE_URL"), help="operator-trusted Pool base URL")
     parser.add_argument("--authority", default=os.getenv("LOOM_GRIP_AUTHORITY", "loom.local"))
     parser.add_argument("--workspace", default=os.getenv("LOOM_WORKSPACE_ID", "workspace-default"))
     parser.add_argument("--allow-http", action="store_true")

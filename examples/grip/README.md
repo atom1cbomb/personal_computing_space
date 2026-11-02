@@ -1,7 +1,7 @@
 # GRIP 客户端示例
 
 先安装 `packages/loom-orchestration`，设置部署者提供的 `LOOM_OBSERVER_URL`、
-`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID`、`LOOM_GRIP_TOKEN`。以下命令在仓库根目录运行。
+`LOOM_POOL_PUBLIC_BASE_URL`（本地为 `http://localhost:18091`）、`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID`、`LOOM_GRIP_TOKEN`。以下命令在仓库根目录运行。
 本地 HTTP 入口需显式加 `--allow-http`。完整协议说明见 [资源使用指南](../../docs/grip-resource-usage.md)。
 
 描述工作空间并查看可用动作：

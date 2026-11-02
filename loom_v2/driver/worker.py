@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from loom_orchestration.grip import Names
 
 import httpx
 
@@ -23,7 +24,7 @@ class WorkerUnavailableError(RuntimeError):
 
 
 class WorkerSession:
-    """Authenticated Worker client, direct only for explicit test wiring."""
+    """Direct client for an authenticated Slave execution binding."""
 
     def __init__(
         self,
@@ -35,12 +36,15 @@ class WorkerSession:
         transport: httpx.AsyncBaseTransport | None = None,
         internal_api_secret: str | None = None,
         settings: Settings | None = None,
-        observer_url: str | None = None,
+        control=None,
+        execution_binding: dict | None = None,
     ) -> None:
         config = settings or Settings()
+        self.execution_binding = execution_binding
+        self.names = Names(config.grip_authority, config.workspace_id)
+        self.control = control
         self.slave_id = slave_id
         self.base_url = base_url.rstrip("/")
-        self.observer_url = (observer_url or "").rstrip("/") or None
         self.action_timeout = action_timeout if action_timeout is not None else timeout if timeout is not None else config.worker_action_timeout_seconds
         self.timeout = self.action_timeout
         self.transport = transport
@@ -86,7 +90,23 @@ class WorkerSession:
             request["driver_epoch"] = driver_epoch
         if not closure.node_input_bindings:
             request["payload"] = payload
-        response = await self._post("/worker/v1/dispatch", request)
+        if self.control is not None:
+            request["execution_owner"] = {"instance_id": self.control.instance_id, "lease_id": self.control.lease_id}
+        if self.execution_binding is not None:
+            from uuid import uuid4
+            binding = self.execution_binding
+            self._http.transport = self.transport
+            response = await self._http.request("POST", binding["endpoint"], headers=self._headers(),
+                json={"version": "grip.v1", "request_id": uuid4().hex, "method": "INVOKE",
+                      "target": self.names.name("slaves", self.slave_id), "action": self.names.action("execute-attempt"),
+                      "auth": {"scheme": "bearer", "credential": self.internal_api_secret},
+                      "accepted_protocols": [binding["protocol"]], "input": request}, timeout=self.action_timeout)
+            envelope = response.json()
+            if envelope.get("kind") != "reply":
+                raise RuntimeError(envelope.get("error_code", "worker_dispatch_failed"))
+            response = httpx.Response(response.status_code, json=envelope["body"])
+        else:
+            response = await self._post("/worker/v1/dispatch", request)
         if response.status_code >= 400:
             detail = response.json().get("detail", "worker_dispatch_failed")
             raise RuntimeError(str(detail))
@@ -155,14 +175,6 @@ class WorkerSession:
     async def _post(self, path: str, payload: dict[str, Any]) -> httpx.Response:
         try:
             self._http.transport = self.transport
-            if self.observer_url is not None:
-                return await self._http.request(
-                    "POST",
-                    f"{self.observer_url}/internal/v1/slaves/{self.slave_id}/forward",
-                    json={"path": path, "payload": payload},
-                    headers=self._headers(),
-                    timeout=self.action_timeout,
-                )
             if not self.base_url:
                 raise WorkerUnavailableError("worker_transport_not_configured")
             return await self._http.request(

@@ -98,7 +98,7 @@ async def test_slave_dispatch_endpoint_returns_ack_and_terminal_report():
     assert payload["terminal_report"]["result"]["value"] == {"value": 6}
 
 
-def test_slave_dispatch_requires_driver_epoch_when_internal_auth_is_enabled(monkeypatch):
+def test_slave_dispatch_requires_execution_owner_when_internal_auth_is_enabled(monkeypatch):
     monkeypatch.setenv("LOOM_INTERNAL_API_SECRET", "secret")
     app = create_app("slave-a")
     with TestClient(app) as client:
@@ -115,7 +115,7 @@ def test_slave_dispatch_requires_driver_epoch_when_internal_auth_is_enabled(monk
             },
         )
     assert response.status_code == 422
-    assert response.json()["detail"] == "driver_identity_required"
+    assert response.json()["detail"] == "execution_owner_required"
 
 
 @pytest.mark.asyncio

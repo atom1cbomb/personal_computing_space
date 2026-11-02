@@ -14,7 +14,7 @@ from sqlalchemy import text, Table, MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from loom_v2.db.migrations import _config, apply_migrations
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.observer.mcue_migration import backfill_resource_mcue
 
 
@@ -152,7 +152,7 @@ async def test_failed_migration_rolls_back_schema_and_version(database, monkeypa
         assert (await connection.execute(text(f"SELECT to_regclass('{other_table}')"))).scalar() is None
         assert (await connection.execute(text(
             f"SELECT version_num FROM loom_{role}_alembic_version"
-            ))).scalar_one() == "009_history_isolation"
+            ))).scalar_one() == "010_driver_pool"
 
 
 @pytest.mark.parametrize("role", ["observer", "slave"])
@@ -198,7 +198,7 @@ asyncio.run(main())
         async with engine.connect() as connection:
             assert (await connection.execute(text(
                 f"SELECT version_num FROM loom_{role}_alembic_version"
-                ))).scalars().all() == ["009_history_isolation"]
+                ))).scalars().all() == ["010_driver_pool"]
     finally:
         for process in processes:
             if process.returncode is None:

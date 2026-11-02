@@ -2,13 +2,15 @@
 
 **把分散的计算资源和外部服务，组织成 AI 可以发现、调用和协作使用的个人计算工作空间。**
 
-你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，并将完整执行计划提交给发现的 Driver 资源。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由 Observer 校验、冻结计划并排队，Driver 领取执行，再保存结果和执行证据。
+你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，并将完整执行计划提交给发现的 Driver 资源。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由独立 Driver Pool 校验、冻结计划并排队，多个 Driver 领取后直连 Slave 执行，由 Pool 保存结果、历史和验收证据。
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
-外部 agent 通过独立 SDK 和通用 skill 使用 Loom；可选的业务经验插件把探索得到的方法保存在 agent 本地，复用前重新核验线上资源。业务经验的学习与检索由插件承担，Observer、Driver、Slave 保持通用运行职责。
+外部 agent 通过独立 SDK 和通用 skill 使用 Loom；可选的业务经验插件把探索得到的方法保存在 agent 本地，复用前重新核验线上资源。业务经验的学习与检索由插件承担，Observer、Pool、Driver、Slave 保持通用运行职责。
 
-按使用目的阅读：[使用已有工作空间](skills/personal-computing-space/SKILL.md) · [部署 Loom](#快速开始) · [接入服务](capability_services/README.md) · [统一登录](docs/authentication.md) · [业务经验插件](plugins/loom-business-skills/README.md)。
+按使用目的阅读：[使用已有工作空间](skills/personal-computing-space/SKILL.md) · [入口与端口](#入口与端口) · [部署 Loom](#快速开始) · [接入服务](capability_services/README.md) · [统一登录](docs/authentication.md) · [业务经验插件](plugins/loom-business-skills/README.md)。
+
+2026-11-02 已完成独立 Driver Pool、两个 Driver 和三个 Slave 的生产部署，验证了并行执行、跨机编排与崩溃接管。部署方式见 [Driver Pool](docs/driver-pool.md)，实测范围与数据保全情况见[生产验收记录](docs/superpowers/reports/2026-11-02-driver-pool-production.md)。
 
 ## 能做什么
 
@@ -42,7 +44,7 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 **已有资源可以协同使用。** 本地服务器、远程 Slave、云 VM 和外部 API 不必使用相同的底层技术；能力包把它们转换成可发现、有输入输出契约的操作。
 
-**业务扩展与系统核心分离。** 新增普通 HTTP 服务能力包时，主要工作是实现服务适配、描述能力和提供契约，不需要修改 Observer、Driver 或 Slave 主体源码。
+**业务扩展与系统核心分离。** 新增普通 HTTP 服务能力包时，主要工作是实现服务适配、描述能力和提供契约，不需要修改 Observer、Pool、Driver 或 Slave 主体源码。
 
 **AI 的决策与实际执行可以分别检查。** 系统保留执行时使用的计划版本、能力包引用、输入、尝试记录和输出。模型说“完成”不等于任务成功，最终以 Run 状态、结果及验收证据为准。
 
@@ -52,41 +54,39 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 ## 系统如何运行
 
-### 三个角色：Observer、Driver、Slave
+### 四个角色：Observer、Driver Pool、Driver、Slave
 
-```text
-用户 / Web UI / 外部 agent
-            │ 公共 API、提交与状态查询
-            ▼
-        Observer ◀──────────▶ Driver
-            │                 └─ 执行服务：运行已提交的普通/编排程序
-            │ 中继执行命令、接收结果与健康报告
-            ├───────────────▶ Slave A
-            │                 └─ 执行器 / runtime plugin
-            │                      └─ 进程或能力容器 → 外部服务 / VM
-            └───────────────▶ Slave B …
-
-状态：Observer → 自己的 PostgreSQL；每个 Slave → 自己的 PostgreSQL
-内容：Observer / Driver / Slave → 共享的 MinIO / S3 内容存储
+```mermaid
+flowchart LR
+    Agent[外部 agent / Web UI] -->|资源发现与管理| Observer
+    Agent -->|提交、查询与验收| Pool[Driver Pool]
+    Driver -->|领取任务、记录结果| Pool
+    Driver -->|直连执行| Slave
+    Slave -->|注册与健康| Observer
+    Slave -->|校验执行所有权| Pool
 ```
 
-**Observer 是公共控制入口和状态权威。** 它保存 Run、计划版本、执行事件、资源和能力包激活记录，接收节点注册与心跳，并中继 Driver 发出的执行请求。它不调用 LLM，也不自行替用户生成业务计划。服务数据入口可由 operator 单独发布，调用方按 Observer 描述的 binding 和受限凭据访问。
+Observer 和 Pool 共用 PostgreSQL，分别写资源与任务状态；每个 Slave 保留本地 PostgreSQL 执行账本。所有服务共享 MinIO / S3 内容存储。
 
-**外部 agent 负责编排，Driver 负责执行。** GRIP 目录中的 `computing/driver` 是单一逻辑执行资源，URI 不随 Driver 进程重启变化。外部 agent 对它调用 `submit-plan`，Observer 校验完整 `ClosureContract`、冻结版本并排队；Driver 领取队列项，在沙箱中运行普通程序或 `container:python_orchestrator/1`。它不接收 prompt、不维护会话，也不持有模型 secret。`accepting_submissions` 表示入口可接受提交，`available` 表示 Driver 租约在线；离线时仍可持久化排队。
+**Observer 管理资源，Pool 管理任务。** Observer 保存资源、Workspace 包和激活投影，接收 Slave 注册与健康报告。Pool 负责提交幂等、契约校验、计划冻结、Run／Node／Attempt 状态、执行队列、历史和结果验收；Run 内的包也随任务由 Pool 管理。公开资源通过 GRIP offers 声明各自入口，客户端显式信任运营者提供的 Pool binding。
 
-当前每个 Workspace 使用一个活跃 Driver，逻辑资源为 `drivers/default`；多 Driver 自动路由尚未实现。
+**外部 agent 负责编排，Driver 负责执行。** GRIP 目录中的 `computing/driver` 是单一逻辑执行资源，URI 不随 Driver 进程重启变化。外部 agent 对它调用 `submit-plan`，Driver Pool 校验完整 `ClosureContract`、冻结版本并排队；Driver 领取队列项，向 Slave 派发普通任务，并在沙箱中运行 `container:python_orchestrator/1` 编排程序。它不接收 prompt、不维护会话，也不持有模型 secret。`accepting_submissions` 表示入口可接受提交，`available` 表示 Driver 租约在线；所有 Driver 离线时，Pool 仍可持久化排队。
+
+每个 Workspace 可以有多个活跃 Driver，由 Pool 分配任务。公开提交入口仍是稳定的逻辑资源 `drivers/default`，`active_drivers` 返回在线实例数量。
+
+每个 Run 同时只有一个有效执行所有者。所有者租约失效后，Pool 允许其他 Driver 接管，保持原 execution／Attempt 身份，并记录新的领取事件。Slave 使用本地账本重放已完成的结果；副作用结果未知时交由失败与修复流程处理。
 
 **Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
 
-持久化任务的执行路径是 **Driver → Observer → Slave**。Driver 按计划选择逻辑执行目标，不直接连接 Slave endpoint；Observer 根据已注册的节点信息中继。直接服务调用与字节流按 offer 选择服务入口、Slave 数据入口或 Observer 中转，不经过 Driver。服务内部地址和容器端点由 Slave/runtime 管理，Observer 不需要认识 Kubernetes、Suanli Cloud 等业务协议。
+持久化任务的执行路径是 **Driver → Slave**。Driver 从注册信息取得 Slave 的执行 binding，Slave 在运行前向 Pool 验证租约、任务所有权和冻结契约。直接服务调用与字节流继续按 offer 选择服务入口、Slave 数据入口或 Observer 中转。
 
 ### 从需求到结果
 
 1. **形成任务闭包。** 外部 agent 明确目标和验收标准，准备输入、程序与契约，选择能力包及计算资源。
-2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 的 GRIP `submit-plan` 提交完整闭包；Observer 检查引用、能力绑定、契约和资源就绪条件并冻结版本，返回 Run URI。
-3. **排队执行。** Driver 领取不可变执行请求，沙箱产生动态节点并交给 Observer 记录和中继执行。
-4. **执行和编排。** 普通任务经 Observer 派发到 Slave；编排沙箱只执行外部 agent 提交的源码，并通过受控原语产生动态节点、资源登记和 activation。
-5. **记录结果并验收。** Slave 返回输出、状态和验证证据，结果写入内容存储。Observer 更新 Run；无法自动确认的成功语义会要求人工验收，失败则保留结构化原因。
+2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 的 GRIP `submit-plan` 提交完整闭包；Pool 检查引用、能力绑定、契约和资源就绪条件并冻结版本，返回 Run URI。
+3. **排队执行。** Driver 领取不可变执行请求，沙箱产生的动态节点由 Pool 记录。
+4. **执行和编排。** Driver 将普通任务和动态节点直接派发到 Slave；编排沙箱只执行外部 agent 提交的源码，并通过受控原语产生动态节点、资源登记和 activation。
+5. **记录结果并验收。** Slave 返回输出、状态和验证证据，结果写入内容存储。Pool 更新 Run；无法自动确认的成功语义会要求人工验收，失败则保留结构化原因。
 6. **复用或清理。** 用户可显式发布任务产生的能力包。外部资源的回收应纳入任务流程；关闭 Run 不意味着自动销毁云 VM。
 
 编排程序通过受限的 `read_json`、`materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、`emit_node`、`result` 接口读取内容、管理资源并等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 通过同一个 Driver 的 `submit-plan` 接受完整闭包；普通能力包的业务调用仍在 Slave 一侧完成。每个已提交版本有不可变的 `execution/plan` 资源，Run 的 `read` 返回当前计划引用、状态和结果，并可用 `include_history=true` 读取执行证据。
@@ -112,7 +112,7 @@ SDK 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_prefere
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
 `metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。SDK 0.10 的计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。当前配套 SDK 为 0.13.0，计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
 
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
 同包不同实例可以使用不同账号或集群。旧部署引入实例凭据时需执行 Alembic 007，见
@@ -216,11 +216,22 @@ VM 访问包还提供 `files.upload`、`files.download` 流式动作，复用 ac
 6. 通过 VM SSH 包执行计算，取回输出并按任务标准验收。
 7. 不再需要时，通过云包终止 VM，停用对应访问实例并更新资源状态。
 
-云 API、SSH 和 OIDC 的专用逻辑都在能力包里；外部 agent 选择并组织这些动作，Driver 执行提交的计划，Observer 负责状态与中继，Slave 负责容器及执行。
+云 API、SSH 和 OIDC 的专用逻辑都在能力包里；外部 agent 选择并组织这些动作，Driver 执行提交的计划，Observer 负责资源管理，Pool 负责任务状态，Slave 负责容器及执行。
 
 当前已分别验证真实云端 VM 创建、浏览器认证和 SSH 执行链路；新本地助手也已验证到 `ready/authenticated`。这些验证**不等于**“coding agent 生成单个 Run 后，从创建、等待人工认证、恢复计算到失败自动清理”的完整无人值守闭环已验收。具体测试边界见 [VM 生产验证记录](docs/superpowers/reports/2026-09-22-vm-browser-ssh-production-validation.md)（其中记录的是早期 SSH 隧道方案）。
 
 ## 快速开始
+
+### 入口与端口
+
+| 入口 | 职责 | 本地 Compose | 生产（2026-11-02 验收） |
+| --- | --- | --- | --- |
+| **Driver Pool** | 任务 Web 界面、任务 API；提交与查询 Run、结果和历史，以及 Driver 领取与上报 | [localhost:18091](http://localhost:18091/) | [9.0.16.66:8093](http://9.0.16.66:8093/) |
+| **Observer** | 资源发现、包与激活管理、Slave 注册；SDK 的资源发现入口 | [localhost:18080](http://localhost:18080/) | [9.0.16.66:8080](http://9.0.16.66:8080/) |
+
+**8093 是生产 Driver Pool 的入口。** 查看任务可以直接打开该地址；Observer 首页也会跳转到 Pool。客户端先通过 Observer 发现资源，再按 offer 中的 binding 调用 Pool 或其他服务。Driver 工作进程领取任务后直连 Slave 执行。
+
+生产验收时运行两个 Driver 和三个 Slave；各节点地址、镜像与验收结果见[生产部署记录](docs/superpowers/reports/2026-11-02-driver-pool-production.md)。
 
 ### 本地启动
 
@@ -237,13 +248,19 @@ fi
 export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 ```
 
-检查 [Compose 配置](deploy/docker-compose.yml) 中 Observer、Driver、Slave 和 ContentStore 配置后启动：
+检查 [Compose 配置](deploy/docker-compose.yml) 中 Observer、Pool、Driver、Slave 和 ContentStore 配置后启动：
 
 ```bash
 ./scripts/dev-up.sh
 ```
 
-打开 **http://localhost:18080**。该栈包含 Observer、Driver、两个 Slave、三个独立 PostgreSQL 和 MinIO；Driver 与 Slave 不发布公共端口。外部 agent 的使用流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。
+启动后打开上表中的本地 Pool 任务界面。该栈包含 Observer、Pool、一个 Driver、两个 Slave、三个独立 PostgreSQL 和 MinIO；Driver 与 Slave 不发布公共端口。要增加到两个 Driver，在同一 shell 中执行：
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d --scale driver=2 driver
+```
+
+外部 agent 使用 SDK 0.13，并显式配置可信的 Pool binding，见 [SDK 连接配置](skills/personal-computing-space/references/sdk.md#driver-pool-binding)；完整流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。从其他机器访问时，设置 `LOOM_PUBLIC_BASE_URL` 和 `LOOM_POOL_PUBLIC_BASE_URL` 为客户端可达的地址。
 
 未配置 GRIP token 时，GRIP 接口拒绝访问。本地 SDK 连接 HTTP 入口需显式传入 `allow_insecure_grip=True`；使用当前 shell 中的 token，或让认证客户端读取 token 文件，避免把密钥复制进示例源码。`secrets/`、`.env` 和 `production/` 已被 Git 忽略，实际凭据应保留在这些本地位置或外部密钥存储中。
 
@@ -252,14 +269,14 @@ export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 ### 外部 agent 的 SDK 与 skill 分发
 
 `loom-orchestration` 是独立 Python 包，源码保留在 `loom_orchestration/`，不复制到 skill。
-Observer 提供无需 GRIP token 的发布文件下载（以部署的 Observer URL 为前缀）：
+Observer 和 Pool 提供无需 GRIP token 的发布文件下载（以下路径以对应服务 URL 为前缀；当前发布 SDK 为 0.13.0）：
 
 - `/downloads/personal-computing-space.zip`：完整 skill，含配套 SDK wheel。
 - `/downloads/manifest.json`：技能包和 SDK 的文件名、大小、SHA-256，以及 SDK 版本。
 - `/downloads/<sdk.filename>`：清单所列的独立 SDK wheel，可直接下载安装。
 
 默认 Dockerfile 在构建镜像时，从同一份源码生成三个文件；技能、SDK 或其构建脚本
-变更后，下一次构建会自动更新。发布新 Observer 镜像即可同时更新下载内容，无需
+变更后，下一次构建会自动更新。同步发布 Observer 与 Pool 镜像后，两个入口提供同版本的下载内容，无需
 手动复制文件到运行中的容器。文件响应要求缓存重新验证。SDK 源码或依赖发生变化时，
 同时维护 `packages/loom-orchestration/pyproject.toml` 的版本号。
 
@@ -283,7 +300,7 @@ python scripts/build_agent_skill.py --output dist
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
 
-需要业务经验复用时，用解压得到的 SDK wheel 构建独立插件，将下面的路径替换为实际位置：
+业务经验插件当前仍依赖 SDK 0.10.x，构建脚本仅接受该版本的 wheel；与 Driver Pool 配套 SDK 0.13 的集成尚未适配和验收。以下为插件现有构建命令，将路径替换为独立保存的 0.10.x wheel：
 
 ```bash
 python plugins/loom-business-skills/scripts/build_plugin.py \
@@ -300,22 +317,24 @@ metadata 发布校验与发现已支持资源身份、readiness 映射和访问/
 
 ### 常用查询入口
 
-以下入口均由 Observer 承载。GRIP 动作的输入输出格式通过 DESCRIBE 返回的 Schema 资源读取；REST 管理接口可在运行实例的 `/docs` 或 `/openapi.json` 查询。
+Observer 提供统一资源发现，Driver／Plan／Run 的公开任务动作绑定 Pool；Observer 保留任务请求转发入口。GRIP 动作的输入输出格式通过 DESCRIBE 返回的 Schema 资源读取；REST 管理接口可在对应实例的 `/docs` 或 `/openapi.json` 查询。
 
-| API | 用途 |
-| --- | --- |
-| GRIP Driver `submit-plan` / `get-submission` | 提交完整计划，按业务 `idempotency_key` 查询提交、队列和结果 |
-| GRIP Plan `read` | 读取 `plans/{run_id}/{closure_version}` 的不可变闭包 |
-| GRIP Run `read` | 查询状态、结果和当前计划；`include_history=true` 返回执行记录 |
-| GRIP Run `resubmit` / `cancel` / `resolve` / `close` | 修复计划、取消、验收或放弃、关闭终态任务 |
-| `GET /api/v1/runtime` | 查询 Driver 执行运行信息 |
-| `POST /.well-known/grip` | 统一描述与调用 Driver、Slave、能力包、激活实例、领域资源、Plan 和 Run |
-| `GET /api/v1/capability-packages` | 包制作与完整编排所需的不可变契约、descriptor 和发布记录 |
-| `GET /api/v1/content/{digest}` | 取回实际内容，核验 `X-Content-Digest` |
+| API | 主要入口 | 用途 |
+| --- | --- | --- |
+| GRIP Driver `submit-plan` / `get-submission` | Pool | 提交完整计划，按业务 `idempotency_key` 查询提交、队列和结果 |
+| GRIP Plan `read` | Pool | 读取 `plans/{run_id}/{closure_version}` 的不可变闭包 |
+| GRIP Run `read` | Pool | 查询状态、结果和当前计划；显式分页读取执行历史 |
+| GRIP Run `resubmit` / `cancel` / `resolve` / `close` | Pool | 修复计划、取消、验收或放弃、关闭终态任务 |
+| `GET /api/v1/runtime` | Observer／Pool | 查询 Driver 执行运行信息 |
+| `POST /.well-known/grip` | Observer／Pool，按 offer 路由 | 描述和调用资源；任务动作绑定 Pool，服务动作使用其发布的 binding |
+| `GET /api/v1/capability-packages` | Observer | 包制作与完整编排所需的不可变契约、descriptor 和发布记录 |
+| `GET /api/v1/content/{digest}` | Observer／Pool | 取回实际内容，核验 `X-Content-Digest` |
+
+SDK 0.13 的 `client.run(uri)` 默认读取当前状态与结果。需要历史时传入 `include_history=True, history_limit=100`，再将返回的 `history_cursor` 作为下一页的 `history_after`；每页上限为 1,000 条。
 
 Slave 在线只说明租约有效，不保证空闲容量或指定能力可用。包已发布也不保证某个实例已完成认证，任务仍须通过就绪检查。
 
-SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，升级需使用 SDK 0.10 与对应 Observer。
+SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，当前部署使用 SDK 0.13 与配套 Observer／Pool。
 
 ### 多机部署与安全边界
 
@@ -326,13 +345,15 @@ python scripts/deploy_cluster.py --config deploy/deployment.example.toml --dry-r
 python scripts/deploy_cluster.py --config deploy/deployment.example.toml
 ```
 
-远程部署在 `[cluster]` 配置 `grip_authority`、`public_base_url`、`grip_token_file`；token 文件仅作为 Observer secret 挂载，dry-run 会隐藏内容。
+远程部署在 `[cluster]` 配置 `grip_authority`、`public_base_url`、`grip_token_file`；token 文件作为 Observer 和 Pool 的 secret 挂载，dry-run 会隐藏内容。Observer 部署项目包含独立 Pool 服务，通过 Observer 机器配置的 `pool_port` 设置公开端口，默认 8091；本次生产配置使用 8093。Driver 与 Slave 的 `LOOM_POOL_URL` 必须可达，Slave 注册的执行 endpoint 也必须能被 Driver 直接访问。
 
 服务直连和中转还需配置 `[cluster.service_access]` 的签名、验证公钥及 data/upstream bindings，并在对应 Slave 设置 `grip_data_port`。部署清单会拒绝已声明路由却缺少数据监听或签名密钥的配置；远端 TLS 和连通性仍需实际验证。配置模板与步骤见 [节点服务入口部署说明](docs/service-bindings-deployment.md)。
 
 `[driver]` 仅配置 `workspace_path`。Driver 执行已提交的任务，无需模型服务、Codex/Volcengine 配置或模型 API key；旧的模型配置字段会被拒绝。
 
-目标机需要 Docker/Compose，部署账号需要相应 SSH 和 Docker 权限。这是 **operator 的部署权限**，不是用户使用工作空间或认证外部服务所需的权限。Observer、Driver、Slave 和 MinIO 也可以用 `scripts/deploy_*.py` 分别更新。
+目标机需要 Docker/Compose，部署账号需要相应 SSH 和 Docker 权限。这是 **operator 的部署权限**，不是用户使用工作空间或认证外部服务所需的权限。Observer／Pool、Driver、Slave 和 MinIO 也可以用 `scripts/deploy_*.py` 分别更新。
+
+从旧版本升级到 Driver Pool 时，先备份并停止旧写入服务，再协调更新 Observer、Pool、Driver、Slave 与 SDK，执行 `010_driver_pool` 迁移。原有 Run 历史按序迁入追加事件表；升级与回退步骤见 [Driver Pool 部署说明](docs/driver-pool.md#升级与恢复)。
 
 当前系统不是多租户公共云平台。公开 API 的访问范围需要部署方通过网络、反向代理及访问控制保护；内部服务使用独立 token。开发 Compose 的数据库和 MinIO 默认密码不能直接用于公网生产环境。
 
@@ -362,14 +383,17 @@ python -m venv .venv
 
 GRIP Driver 与原生任务的[自动化验证](docs/superpowers/reports/2026-10-30-grip-native-tasks-validation.md)和[生产部署验收](docs/superpowers/reports/2026-10-30-grip-native-tasks-production.md)覆盖完整计划、普通函数任务、幂等找回、冻结计划与 Run 生命周期；各路径的测试环境和限制分别记录。
 
+Driver Pool 的[生产验收](docs/superpowers/reports/2026-11-02-driver-pool-production.md)覆盖三个 Slave 的直连执行、双 Driver 离线排队与并行领取、真实三节点 Docker 编排、历史分页及两个方向的 Driver 崩溃接管。接管保持同一 execution／Attempt，测试副作用只执行一次，历史记录接管所有者。原有 619 个 Run、103 个包、113 个激活及 11 个待决定状态已核对保全；Pool、数据库和内容存储仍为当前单实例部署。
+
 业务经验插件的[验证记录](plugins/loom-business-skills/VALIDATION.md)包含 42 项自动化测试、独立安装包检查、1,000 条经验的上下文边界测试，以及 AutoPaper 与 Overleaf 的真实只读调用和新进程复用。当前尚未完成独立模型会话的冷启动/复用 A/B，未测得模型 token 节省或跨模型成功率；既有通用 skill 冷启动验收保持独立。
 
 ## 代码与文档导航
 
-- `loom_v2/observer/`：公共 API、权威状态、激活管理和 Slave 中继。
-- `loom_v2/driver/`：冻结计划的队列领取、沙箱执行与动态编排运行时。
+- `loom_v2/observer/`：资源目录、Workspace 包与激活管理、Slave 注册，以及任务入口转发。
+- `loom_v2/pool/`：任务 API、准入校验、不可变计划、Run／Node／Attempt 状态、队列、历史和结果验收。
+- `loom_v2/driver/`：冻结计划的队列领取、Slave 直连派发、沙箱执行与动态编排运行时。
 - `loom_v2/slave/`：执行请求、执行账本和 runtime plugin 宿主。
-- `loom_v2/contracts/`：三方共享的任务、资源、能力包及协议契约。
+- `loom_v2/contracts/`：各角色共享的任务、资源、能力包及协议契约。
 - `runtime_plugins/`、`package_contracts/`：可安装运行时及其 contract schema。
 - `capability_services/`：业务能力服务、IO contract 和随包提供的客户端。
 - `loom_orchestration/`、`packages/loom-orchestration/`：独立 SDK、GRIP 客户端、认证助手与分发配置。
@@ -378,4 +402,4 @@ GRIP Driver 与原生任务的[自动化验证](docs/superpowers/reports/2026-10
 - `loom_v2/content_store.py`、`loom_v2/db/`、`migrations/`：内容存储、数据库模型和 Alembic 迁移。
 - `deploy/`、`scripts/`、`tests/`：部署配置、运维脚本与验证。
 
-进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Observer 中继与 VM 编排设计](docs/superpowers/specs/2026-09-22-observer-mediated-execution-and-vm-orchestration-design.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。[能力包部署前检查验证记录](docs/superpowers/reports/2026-10-26-package-deployment-preflight-validation.md) 说明了对应功能的本地回归范围与生产升级边界。
+进一步阅读：[能力包模型](docs/capability-package-model.md)、[Slave 发现 API](docs/observer-slaves-api.md)、[Driver Pool 与直连执行](docs/driver-pool.md)、[设计规范](docs/superpowers/spec-design-guidance.md)、[竞品对比与 Loom 的特色](docs/competitive-analysis.md)、[Loom 对外讲稿](docs/loom-pitch.md)。历史 spec 记录各阶段决策，具体支持范围以当前实现和验证记录为准。[能力包部署前检查验证记录](docs/superpowers/reports/2026-10-26-package-deployment-preflight-validation.md) 说明了对应功能的本地回归范围与生产升级边界。

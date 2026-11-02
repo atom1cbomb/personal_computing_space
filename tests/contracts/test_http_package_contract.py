@@ -253,7 +253,7 @@ def test_content_backed_descriptor_digest_participates_in_package_identity() -> 
 
 
 async def test_new_package_publication_rejects_package_level_credentials():
-    from loom_v2.observer.repository import ObserverRepository
+    from loom_v2.pool.repository import PoolRepository as ObserverRepository
     repo = ObserverRepository()
     payload = http_package_payload()
     payload['body']['credential_profile'] = 'k8s-prod'

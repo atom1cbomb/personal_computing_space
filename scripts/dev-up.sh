@@ -18,7 +18,8 @@ if [[ ! -s "$INTERNAL_SECRET_FILE" ]]; then
 fi
 
 export LOOM_INTERNAL_API_SECRET_FILE="$INTERNAL_SECRET_FILE"
-"$DOCKER_BIN" compose -f deploy/docker-compose.yml up -d --build --remove-orphans minio minio-init observer-db slave-a-db slave-b-db observer driver slave-a slave-b
+"$DOCKER_BIN" compose -f deploy/docker-compose.yml up -d --build --remove-orphans minio minio-init observer-db slave-a-db slave-b-db observer pool driver slave-a slave-b
 
 echo "Loom v2 Observer: http://localhost:18080"
-echo "Driver and Slaves run on the internal Compose network (Observer is the public entry point)"
+echo "Loom Driver Pool: http://localhost:18091"
+echo "Driver and Slaves use the internal Compose network"

@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
 
 from loom_v2.testing.observer import create_embedded_app as create_app, seed_embedded_slaves
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from tests.support.grip_client import resources
 
 

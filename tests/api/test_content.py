@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from loom_v2.driver.mcp import DriverMCP
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 def test_content_endpoint_canonicalizes_json_and_returns_semantic_ref() -> None:

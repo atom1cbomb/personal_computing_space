@@ -11,7 +11,7 @@ from typing import Any
 from loom_v2.coding_agents.fake import FakeCodingAgentProvider
 from loom_v2.contracts.types import ResourceRef
 from loom_v2.driver.service import DriverService
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository
 from loom_v2.content_store import ContentStat, ContentStore, canonical_json_bytes
 from loom_v2.slave.service import SlaveService
 from loom_v2.testing.observer import seed_embedded_slaves
@@ -52,7 +52,7 @@ class _SelfTestContentStore:
 
 async def _self_test() -> None:
     store = _SelfTestContentStore({})
-    repository = ObserverRepository(content_store=store)
+    repository = PoolRepository(content_store=store)
     slave = SlaveService("slave-a", content_store=store)
     seed_embedded_slaves(repository, {"slave-a": slave})
     result = await DriverService(repository, FakeCodingAgentProvider(), slaves={"slave-a": slave}).run_prompt("cli-self-test", "run the packaged test program")

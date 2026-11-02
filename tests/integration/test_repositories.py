@@ -1,6 +1,6 @@
 import pytest
 
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 @pytest.mark.asyncio

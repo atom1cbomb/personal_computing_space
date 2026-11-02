@@ -8,11 +8,11 @@ import pytest
 from loom_orchestration import LoomClient, OrchestratorPackage, SubmissionBuilder, publish_function
 from loom_orchestration import ResourceRef as PublicResourceRef
 from loom_v2.contracts.types import ResourceRef
-from loom_v2.driver.control_client import ObserverControlClient
+from loom_v2.driver.control_client import PoolControlClient
 from loom_v2.driver.service import DriverService
 from loom_v2.driver.worker import WorkerSession
 from loom_v2.observer.app import create_app as create_observer_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.app import create_app as create_slave_app
 from tests.api.test_dynamic_nodes import _register_slave
@@ -21,30 +21,20 @@ from tests.api.test_dynamic_nodes import _register_slave
 @pytest.fixture
 async def discovery_runtime(monkeypatch):
     settings = Settings(internal_api_secret="discovery-secret", grip_token="discovery-token",
-                        observer_url="http://observer")
+                        observer_url="http://observer", pool_url="http://observer")
     repository = ObserverRepository(settings=settings)
     observer = create_observer_app(repository, settings=settings)
     transport = httpx.ASGITransport(app=observer)
-    control = ObserverControlClient("http://observer", driver_id="discovery-driver",
+    control = PoolControlClient("http://observer", driver_id="discovery-driver",
         instance_id="discovery-instance", internal_api_secret=settings.internal_api_secret,
         transport=transport, settings=settings)
     await control.register()
-    slaves = {name: create_slave_app(name, settings=settings)
+    slaves = {name: create_slave_app(name, settings=settings, observer_transport=transport)
               for name in ("slave-a", "slave-npc")}
-
-    async def forward_to_slave(slave_id, path, payload):
-        async with httpx.AsyncClient(base_url="http://" + slave_id,
-                transport=httpx.ASGITransport(app=slaves[slave_id])) as http:
-            response = await http.post(path, json=payload,
-                headers={"X-Loom-Internal-Token": settings.internal_api_secret})
-            response.raise_for_status()
-            return response.json()
-
-    monkeypatch.setattr(observer.state.slave_gateway, "forward", forward_to_slave)
 
     def worker_session(slave_id, **kwargs):
         # Keep real provisioning/execution, with HTTP routed to the test Slave.
-        kwargs.pop("observer_url")
+        kwargs.pop("base_url")
         return WorkerSession(slave_id, "http://" + slave_id,
             transport=httpx.ASGITransport(app=slaves[slave_id]), **kwargs)
 
@@ -155,3 +145,20 @@ async def test_new_slave_executes_after_worker_cache_is_populated(discovery_runt
         await execute_orchestration_on(runtime, "slave-npc", 7)
 
     assert runtime.driver.workers["slave-a"] is original_worker
+
+
+async def test_changed_slave_endpoint_replaces_cached_connection(discovery_runtime, monkeypatch):
+    runtime = discovery_runtime
+    await _register_slave(runtime.repository, "slave-a", "initial-instance")
+    await runtime.driver._refresh_remote_workers()
+    previous = runtime.driver.workers["slave-a"]
+    agents = await runtime.driver.remote_repository.refresh_slaves()
+    agents[0]["endpoint_url"] = "http://relocated-slave"
+    agents[0]["execution_offer"]["bindings"][0]["endpoint"] = "http://relocated-slave/.well-known/grip"
+    async def refresh():
+        return agents
+    monkeypatch.setattr(runtime.driver.remote_repository, "refresh_slaves", refresh)
+    await runtime.driver._refresh_remote_workers()
+    current = runtime.driver.workers["slave-a"]
+    assert current is not previous
+    assert current.execution_binding["endpoint"] == "http://relocated-slave/.well-known/grip"

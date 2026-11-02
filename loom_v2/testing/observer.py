@@ -12,8 +12,7 @@ from loom_v2.coding_agents.codex import CodexAppServerProvider
 from loom_v2.coding_agents.fake import FakeCodingAgentProvider
 from loom_v2.driver.service import DriverService
 from loom_v2.driver.worker import WorkerSession
-from loom_v2.observer.app import create_app as create_observer_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.service import SlaveService
 
@@ -94,8 +93,9 @@ def create_embedded_app(
     settings: Settings | None = None,
 ):
     """Build the in-process Driver/Slave topology used by hermetic tests."""
+    from loom_v2.observer.app import create_app as create_observer_app
     settings = settings or Settings()
-    app = create_observer_app(repository, settings=settings)
+    app = create_observer_app(repository or ObserverRepository(settings=settings), settings=settings)
     repository = app.state.repo
     slaves = {
         "slave-a": SlaveService(

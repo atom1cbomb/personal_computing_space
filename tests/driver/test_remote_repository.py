@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 
 from loom_v2.contracts.types import ResourceRef
-from loom_v2.driver.remote_repository import RemoteObserverRepository
+from loom_v2.driver.remote_repository import RemotePoolRepository
 
 
 class Control:
@@ -39,7 +39,7 @@ class Control:
 @pytest.mark.asyncio
 async def test_remote_repository_reads_runs_and_refreshes_registered_slaves():
     control = Control()
-    repository = RemoteObserverRepository(control, content_store=None)
+    repository = RemotePoolRepository(control, content_store=None)
     record = await repository.get_run("run-1")
     assert record.run_id == "run-1"
     await repository.refresh_slaves()
@@ -50,7 +50,7 @@ async def test_remote_repository_reads_runs_and_refreshes_registered_slaves():
 @pytest.mark.asyncio
 async def test_remote_repository_namespaces_message_command_request_id():
     control = Control()
-    repository = RemoteObserverRepository(control, content_store=None)
+    repository = RemotePoolRepository(control, content_store=None)
 
     await repository.append_message("run-1", "user", "hello", request_id="turn-1")
 
@@ -88,7 +88,7 @@ class MixedControl:
 
 @pytest.mark.asyncio
 async def test_refresh_slaves_prefers_active_lease_over_stale_registration():
-    repository = RemoteObserverRepository(MixedControl(), content_store=None)
+    repository = RemotePoolRepository(MixedControl(), content_store=None)
     await repository.refresh_slaves()
     assert repository.slave_agents["slave-a"]["instance_id"] == "slave-a-old"
     assert repository.slave_agents["slave-b"]["instance_id"] == "slave-b-new"
@@ -109,7 +109,7 @@ async def test_refresh_slaves_prefers_active_lease_over_stale_registration():
 @pytest.mark.asyncio
 async def test_remote_repository_reassigns_with_idempotent_request_id():
     control = Control()
-    repository = RemoteObserverRepository(control, content_store=None)
+    repository = RemotePoolRepository(control, content_store=None)
     replacement = {"attempt_id": "attempt-new", "target": "slave-b"}
 
     async def command(name, arguments=None, **kwargs):

@@ -21,14 +21,21 @@ class RunRow(Base):
     latest_event_at: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     outcome: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     attempts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    events: Mapped[list] = mapped_column(JSON, nullable=False, default=list, deferred=True)
     capability_packages: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     capability_activations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     dynamic_nodes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
 
+class RunEventRow(Base):
+    __tablename__ = "run_events"
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
 class RunExecutionRequestRow(Base):
-    """Durable execution queue item owned by Observer."""
+    """Durable execution queue item owned by the Driver Pool."""
 
     __tablename__ = "run_execution_requests"
     __table_args__ = (
@@ -128,13 +135,6 @@ class RuntimeAgentRow(Base):
             unique=True,
             postgresql_where=text("lease_state = 'active'"),
             sqlite_where=text("lease_state = 'active'"),
-        ),
-        Index(
-            "uq_runtime_agents_active_driver",
-            "workspace_id",
-            unique=True,
-            postgresql_where=text("role = 'driver' AND lease_state = 'active'"),
-            sqlite_where=text("role = 'driver' AND lease_state = 'active'"),
         ),
     )
 

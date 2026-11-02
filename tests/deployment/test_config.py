@@ -330,3 +330,13 @@ def test_invalid_grip_deployment_configuration_is_rejected(values):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         ClusterConfig(name="test", remote_dir="/test", workspace_id="default", internal_secret_file="internal", postgres_password_file="pg", minio_secret_key_file="s3", **values)
+
+
+def test_pool_port_cannot_collide_with_another_service_on_same_host(tmp_path):
+    for name in ('internal.secret','postgres.secret','minio.secret'):
+        write_secret(tmp_path/name, 'test-secret')
+    content = config_text().replace('ssh_host = "10.0.0.13"','ssh_host = "10.0.0.11"')
+    content = content.replace('service_id = "slave-a"','service_id = "slave-a"\nservice_port = 8091')
+    path = tmp_path/'deployment.toml'; path.write_text(content)
+    with pytest.raises(DeploymentConfigError, match='port'):
+        DeploymentConfig.from_file(path)

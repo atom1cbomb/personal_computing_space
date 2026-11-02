@@ -1,6 +1,6 @@
 import pytest
 
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_receipt_only_projection_can_be_loaded():
 
 
 @pytest.mark.asyncio
-async def test_new_driver_registration_releases_old_message_claims():
+async def test_new_driver_registration_preserves_existing_message_claims():
     from loom_v2.contracts.agents import AgentRegistration
 
     repo = ObserverRepository()
@@ -56,4 +56,4 @@ async def test_new_driver_registration_releases_old_message_claims():
     assert claimed.state == "in_flight"
     await repo.register_agent(AgentRegistration(role="driver", agent_id="driver", instance_id="new", workspace_id="workspace-default", endpoint_url="http://driver", protocol_version="loom.v1"))
     recovered = await repo.get_message_receipt("workspace-default", receipt.request_id)
-    assert recovered is not None and recovered.state == "retryable" and recovered.claim_token is None
+    assert recovered is not None and recovered.state == "in_flight" and recovered.claim_token == "old"

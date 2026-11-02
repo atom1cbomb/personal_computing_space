@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
 from typing import Any, cast
@@ -11,7 +12,7 @@ from loom_v2.contracts.agents import AgentRegistration
 from loom_v2.settings import Settings
 from loom_v2.content_store import ContentStore
 
-from .control_client import ObserverControlClient
+from .control_client import PoolControlClient
 from .service import DriverService
 from .worker import WorkerSession
 from loom_v2.contracts.package_contracts import load_operator_package_contracts
@@ -21,10 +22,12 @@ def create_app(
     *,
     settings: Settings | None = None,
     observer_transport: Any | None = None,
-    control_client: ObserverControlClient | None = None,
+    control_client: PoolControlClient | None = None,
     provider: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
+    if settings.agent_id == "driver-default" and settings.agent_instance_id is None:
+        settings = settings.model_copy(update={"agent_id": "driver-" + socket.gethostname()})
     load_operator_package_contracts(settings.package_contract_dir)
     # Driver is execution-only.  The optional argument is retained solely so
     # old embedding code can construct the app; no provider is created or
@@ -62,8 +65,8 @@ def create_app(
 
     app = FastAPI(title="Loom v2 Driver", lifespan=lifespan)
     instance_id = settings.agent_instance_id or f"driver-{uuid4().hex[:12]}"
-    control = control_client or ObserverControlClient(
-        settings.observer_url,
+    control = control_client or PoolControlClient(
+        settings.pool_url,
         driver_id=settings.agent_id,
         instance_id=instance_id,
         workspace_id=settings.workspace_id,
@@ -98,8 +101,6 @@ def create_app(
                     if app.state.service.coordinator is not None:
                         app.state.service.coordinator.driver_epoch = lease.epoch
                     await control.command("execution.recover", {"workspace_id": settings.workspace_id})
-                    with suppress(Exception):
-                        await control.command("run.recovery.list", {"workspace_id": settings.workspace_id})
                     app.state.lease = lease
                     app.state.execution_task = app.state.service.start_execution_loop()
                 else:

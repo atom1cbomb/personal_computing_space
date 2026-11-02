@@ -81,7 +81,7 @@ def test_public_slaves_released_and_expired_are_not_available(client):
     })
     assert released.status_code == 200
     register(client, "slave-b")
-    with patch("loom_v2.observer.repository.datetime") as clock:
+    with patch("loom_v2.observer.resources.datetime") as clock:
         clock.now.return_value = datetime.now(timezone.utc) + timedelta(minutes=5)
         slaves = [r["metadata"] for r in resources(client, "computing/slave")]
         assert sorted((s["slave_id"], s["lease_state"], s["available"]) for s in slaves) == [
@@ -109,10 +109,10 @@ def test_grip_discovery_does_not_mutate_dispatch_cache(client):
 def test_public_slaves_uses_latest_offline_instance(client):
     register(client)
     future = datetime.now(timezone.utc) + timedelta(seconds=2)
-    with patch("loom_v2.observer.repository.datetime") as clock:
+    with patch("loom_v2.observer.resources.datetime") as clock:
         clock.now.return_value = future
         register(client, instance="newer")
-    with patch("loom_v2.observer.repository.datetime") as clock:
+    with patch("loom_v2.observer.resources.datetime") as clock:
         clock.now.return_value = future + timedelta(minutes=5)
         slaves = [r["metadata"] for r in resources(client, "computing/slave")]
     assert len(slaves) == 1

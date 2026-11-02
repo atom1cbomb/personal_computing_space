@@ -8,7 +8,7 @@ from loom_v2.contracts.types import ComputeRequirement
 from loom_v2.driver.orchestration_runtime import DynamicOrchestrationRuntime
 from loom_v2.driver.orchestrator import DockerOrchestrationExecutor
 from loom_v2.driver.service import DriverService
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.driver.worker import WorkerSession, WorkerUnavailableError
 from loom_v2.slave.app import create_app as create_slave_app
 from loom_v2.testing.observer import seed_embedded_slaves

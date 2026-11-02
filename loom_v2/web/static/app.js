@@ -6,13 +6,18 @@ const output = document.querySelector('#run-output');
 const runtime = document.querySelector('#agent-status');
 const tokenInput = document.querySelector('#grip-token');
 const workspaceInput = document.querySelector('#workspace-uri');
+const previousHistory = document.querySelector('#previous-history');
+const nextHistory = document.querySelector('#next-history');
+let historyAfter = 0;
+let historyCursor = 0;
+let displayedRun = null;
 const protocol = location.protocol === 'https:' ? 'https-json.v1' : 'loom-http-json.v1';
 
 // Connection credentials stay in this page's input; never persist them in browser storage.
 async function exchange(method, target, fields = {}, endpoint = '/.well-known/grip') {
   if (!tokenInput.value) throw new Error('Enter your workspace token');
   const url = new URL(endpoint, location.href);
-  if (url.origin !== location.origin) throw new Error('The workspace binding must use this Observer origin');
+  if (url.origin !== location.origin) throw new Error('The workspace binding must use this application origin');
   const requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)),
     byte => byte.toString(16).padStart(2, '0')).join('');
   const response = await fetch(url, {
@@ -22,11 +27,11 @@ async function exchange(method, target, fields = {}, endpoint = '/.well-known/gr
       auth: {scheme: 'bearer', credential: tokenInput.value, tenant: workspaceInput.value.trim()},
       accepted_protocols: [protocol], ...fields}),
   });
-  if (!response.ok) throw new Error(`Observer request failed (${response.status})`);
+  if (!response.ok) throw new Error(`GRIP request failed (${response.status})`);
   const message = await response.json();
-  if (message.version !== 'grip.v1' || message.request_id !== requestId) throw new Error('Invalid Observer reply');
+  if (message.version !== 'grip.v1' || message.request_id !== requestId) throw new Error('Invalid GRIP reply');
   if (message.kind === 'error') throw new Error(message.error_code || 'GRIP request failed');
-  if (message.kind !== 'reply' || !message.body) throw new Error('Invalid Observer reply');
+  if (message.kind !== 'reply' || !message.body) throw new Error('Invalid GRIP reply');
   return message.body;
 }
 
@@ -48,8 +53,14 @@ async function loadDriver() {
   return driver.uri;
 }
 
-async function loadRun(runUri) {
-  const value = await invoke(runUri, 'read', {include_history: true});
+async function loadRun(runUri, after = 0) {
+  if (displayedRun !== runUri) after = 0;
+  const value = await invoke(runUri, 'read', {include_history: true, history_after: after, history_limit: 100});
+  displayedRun = runUri;
+  historyAfter = after;
+  historyCursor = value.history_cursor;
+  previousHistory.disabled = after === 0;
+  nextHistory.disabled = (value.events || []).length < 100;
   status.textContent = value.state || 'unknown';
   output.textContent = JSON.stringify(value, null, 2);
 }
@@ -79,3 +90,12 @@ document.querySelector('#refresh-run').addEventListener('click', async () => {
 });
 
 runtime.textContent = 'Connect to submit or inspect a Run';
+
+previousHistory.addEventListener('click', async () => {
+  try { await loadRun(runInput.value.trim(), Math.max(0, historyAfter - 100)); }
+  catch (error) { status.textContent = error.message; }
+});
+nextHistory.addEventListener('click', async () => {
+  try { await loadRun(runInput.value.trim(), historyCursor); }
+  catch (error) { status.textContent = error.message; }
+});

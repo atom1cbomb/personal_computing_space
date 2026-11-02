@@ -18,8 +18,8 @@ from loom_v2.settings import Settings
 logger = logging.getLogger(__name__)
 
 
-class ObserverControlClient:
-    """Small authenticated client for Observer's fixed Driver RPC surface."""
+class PoolControlClient:
+    """Small authenticated client for Pool's fixed Driver RPC surface."""
 
     ALLOWED_COMMANDS = DRIVER_COMMANDS
     READ_ONLY_COMMANDS = frozenset({
@@ -29,7 +29,7 @@ class ObserverControlClient:
 
     def __init__(
         self,
-        observer_url: str,
+        pool_url: str,
         *,
         driver_id: str,
         instance_id: str,
@@ -42,7 +42,7 @@ class ObserverControlClient:
         settings: Settings | None = None,
     ) -> None:
         config = settings or Settings()
-        self.observer_url = observer_url.rstrip("/")
+        self.pool_url = pool_url.rstrip("/")
         self.driver_id = driver_id
         self.instance_id = instance_id
         self.lease_id = lease_id
@@ -71,23 +71,23 @@ class ObserverControlClient:
                 self._http.transport = self.transport
                 response = await self._http.request(
                     method,
-                    f"{self.observer_url}{path}",
+                    f"{self.pool_url}{path}",
                     json=payload,
                     headers=self._headers(),
                     timeout=request_timeout,
                 )
                 break
             except (TimeoutError, httpx.TimeoutException, httpx.TransportError) as exc:
-                logger.warning("observer_transport_failure method=%s command=%s exception=%s attempt=%s",
+                logger.warning("pool_transport_failure method=%s command=%s exception=%s attempt=%s",
                                method, command, type(exc).__name__, attempt + 1)
                 if attempt + 1 == attempts:
-                    raise RuntimeError("observer_unavailable") from exc
+                    raise RuntimeError("pool_unavailable") from exc
                 await asyncio.sleep(0.1 * (attempt + 1))
         if response.status_code >= 400:
             try:
-                detail = response.json().get("detail", "observer_request_failed")
+                detail = response.json().get("detail", "pool_request_failed")
             except Exception:
-                detail = "observer_request_failed"
+                detail = "pool_request_failed"
             if isinstance(detail, dict) and detail.get("code"):
                 try:
                     raise DomainError(DomainErrorEnvelope.model_validate(detail))

@@ -12,7 +12,7 @@ from loom_orchestration import LoomClient, GripError
 from loom_orchestration.grip import Request
 from loom_orchestration.streams import TCPStream, STREAM_PROTOCOL, StreamAborted
 from loom_v2.contracts.types import CapabilityHealthReport
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.grip_data import create_data_app
 from loom_v2.testing.observer import create_embedded_app

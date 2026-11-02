@@ -6,10 +6,10 @@ import httpx
 import pytest
 
 from loom_v2.contracts.types import NodeIntent, ResourceRef
-from loom_v2.driver.control_client import ObserverControlClient
-from loom_v2.driver.remote_repository import RemoteObserverRepository
+from loom_v2.driver.control_client import PoolControlClient
+from loom_v2.driver.remote_repository import RemotePoolRepository
 from loom_v2.observer.app import create_app
-from loom_v2.observer.repository import ObserverRepository
+from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from tests.api.test_dynamic_nodes import _dynamic_run
 
@@ -18,13 +18,13 @@ from tests.api.test_dynamic_nodes import _dynamic_run
 async def repositories():
     authority = ObserverRepository()
     app = create_app(authority, settings=Settings(internal_api_secret="parity-secret"))
-    control = ObserverControlClient(
+    control = PoolControlClient(
         "http://observer", driver_id="parity-driver", instance_id="parity-instance",
         internal_api_secret="parity-secret", transport=httpx.ASGITransport(app=app),
     )
     try:
         await control.register()
-        remote = RemoteObserverRepository(control, content_store=authority.content_store)
+        remote = RemotePoolRepository(control, content_store=authority.content_store)
         local = ObserverRepository()
         yield local, authority, remote, control
     finally:
