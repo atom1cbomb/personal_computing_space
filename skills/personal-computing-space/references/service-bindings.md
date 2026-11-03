@@ -1,4 +1,4 @@
-# Service bindings (SDK 0.8 and matching server/runtime)
+# Service bindings (SDK 0.14 and matching server/runtime)
 
 Discover resources and contracts through Observer. Invoke the exact offer using
 an operator-trusted endpoint/audience. A binding may reach an independent
@@ -12,7 +12,8 @@ sending a request.
 Before activating a package, call the Slave's discovered `check-package` with
 `{package: package_uri, instance_name: instance}`. It returns `ready`,
 `required_interactions` and `issues` (code, interaction, affected action URIs).
-Missing keys/entries or invalid bindings stop activation before state changes.
+Missing JSON routes or signing keys are reported but do not block task activation.
+Stream-only routing faults and runtime/configuration faults block activation.
 Node DESCRIBE includes `service_interactions` as a general configuration summary;
 check-package also accounts for activation-specific routes. This does not probe
 network reachability, pull an image or authenticate the provider. Node setup is
@@ -24,27 +25,24 @@ degraded; inspect `service_access.issues` and each action's availability. Existi
 usable actions remain offered. Restoring routes restores availability without
 recreating the instance. Stop remains available during a binding outage.
 
-Read the offer's mode and schemas together with the selected declaration's
-`resource.metadata.actions[].interaction`. GRIP `mode=request-reply` alone does
-not mean direct business execution or no Run: task admission uses the same wire
-mode. Package `runtime_binding.interaction` controls its exported interface:
+Read the offer's mode and business schemas together with the selected action's
+`execution.direct` / `execution.task` availability. Ordinary `request-reply`
+actions (the default interaction) take business input and return business JSON.
+They can also be bound into a complete plan; see [single-action-plan.md](single-action-plan.md).
+Missing direct offers do not remove task-capable action declarations.
+`run-package` submits a task against the specified Slave's default instance;
+use a full plan to pin an existing named instance.
 
-- `task` (default): request-reply with `{arguments, expected_revision,
-  idempotency_key}` and `{run: URI}`. Poll that Run.
-- `request-reply`: business input and business result, no implicit Run.
-- `byte-stream`: business admission input and stream-open output, followed by
-  ordered bytes. Use `await client.open_stream(target, action, input)` as an
-  async context manager with `read`, `write`, `aclose`. No half-close, stream ID,
-  transparent reconnection, or replay. A new channel is a new invocation.
+`byte-stream` uses business admission input and stream-open output, followed by
+ordered bytes. Use `await client.open_stream(target, action, input)` as an
+async context manager with `read`, `write`, `aclose`. A new channel is a new
+invocation; streams cannot become task nodes. Bindings of the same action share
+the same schemas, mode and result semantics.
 
-For any package, the declared interaction and output schema determine whether
-the response is a Run reference or business data. If declarations and schemas
-disagree, report the conflicting evidence rather than choosing an interpretation
-from the mode alone.
-
-A business request can still be explicitly submitted with `run-package` for
-persistent task execution. A stream export cannot become a persistent task node.
-Bindings of the same action share the same schemas/mode/result semantics.
+For direct calls, `LoomClient(timeout=None, connect_timeout=10)` removes the local
+HTTP wait limit while bounding connection setup. A numeric timeout sets a local
+wait limit. An explicit `deadline` bounds the request end to end; grant expiry
+also bounds execution. A lost response leaves the business outcome uncertain.
 
 Managed service calls exchange the Observer owner token at `/api/v1/auth/token`
 for short-lived target/action/audience/activation-revision grants. The SDK caches

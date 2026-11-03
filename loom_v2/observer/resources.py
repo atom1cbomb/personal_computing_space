@@ -3,6 +3,7 @@ from loom_orchestration.naming import content_digest
 from loom_orchestration.grip import Names
 from loom_orchestration.mcue import McueDefinition, merge_attributes
 import asyncio
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -18,7 +19,7 @@ from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import load_only
 from loom_v2.contracts.types import ActionExport, CapabilityHealthReport, CapabilityPackage, CapabilityPackageActivation, CapabilityPackageVersion, ExecutionContract, IoContract, ResourceRef, TaskClosure, ManagedResource
-from loom_v2.db.models import RunExecutionRequestRow, RunRow, RuntimeAgentRow, WorkspaceCapabilityPackageRow, CapabilityAuditEventRow, WorkspaceResourceRow, McueDefinitionRow
+from loom_v2.db.models import RunExecutionRequestRow, RunRow, RunCapabilityStateRow, RuntimeAgentRow, WorkspaceCapabilityPackageRow, CapabilityAuditEventRow, WorkspaceResourceRow, McueDefinitionRow
 from loom_v2.db.migrations import apply_migrations
 from loom_v2.contracts.agents import AgentLease, AgentRegistration, DriverThreadBinding
 from loom_v2.contracts.messages import MessageReceipt
@@ -54,6 +55,7 @@ class ResourceRepository:
         self.workspace_packages: dict[tuple[str, str], CapabilityPackageVersion] = {}
         self.workspace_package_activations: dict[tuple[str, str], list[CapabilityPackageActivation]] = {}
         self.workspace_package_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._validated_package_records: OrderedDict[bytes, CapabilityPackageVersion] = OrderedDict()
         self._run_capabilities: dict[str, RunCapabilities] = {}
         self.workspace_resources: dict[tuple[str, str], ManagedResource] = {}
         self.mcue_definitions: dict[tuple[str, str], dict[str, Any]] = {}
@@ -64,6 +66,7 @@ class ResourceRepository:
         self.engine = engine
         self.sessions = make_session_factory(engine) if engine is not None else None
         self.settings = settings or Settings()
+        self._submission_slots = asyncio.Semaphore(self.settings.pool_submission_concurrency)
         self.names = Names(self.settings.grip_authority, self.settings.workspace_id)
         from .service_routes import ServiceRoutes
         self.service_routes = ServiceRoutes(self.settings)
@@ -79,10 +82,6 @@ class ResourceRepository:
         # A deployed Observer deliberately has no Docker CLI/socket. Driver
         # readiness is responsible for its own runtime.
         self.orchestrator_runtime_available = orchestrator_runtime_available
-        # Promotion mutates a RunRecord's package list.  The single Observer
-        # process serializes concurrent retries so two requests cannot both
-        # pass the existence check before either persists its derivative.
-        self._promotion_lock = asyncio.Lock()
         self._dynamic_intent_locks: dict[str, asyncio.Lock] = {}
         self._activation_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         # Runtime agent state is kept in-memory when no database is configured
@@ -144,6 +143,16 @@ class ResourceRepository:
                 self._execution_loaded_runs.reset(runs_token)
                 self._execution_loaded_requests.reset(requests_token)
 
+
+    @asynccontextmanager
+    async def _execution_read_session(self):
+        """Borrow the caller's connection without committing its transaction."""
+        session = self._execution_session.get()
+        if session is not None:
+            yield session
+        else:
+            async with self.sessions() as session:
+                yield session
 
     @asynccontextmanager
     async def _execution_write_session(self):
@@ -303,7 +312,7 @@ class ResourceRepository:
                 value["lease_state"] = "expired"
             self.agents[key] = dict(values, epoch=epoch)
         else:
-            async with self.sessions() as session, session.begin():
+            async with self._execution_write_session() as session:
                 if session.bind.dialect.name == "postgresql":
                     await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                         {"key": "agent:" + ":".join(key[:3])})
@@ -336,7 +345,7 @@ class ResourceRepository:
                 return None
             matching.sort(key=lambda item: item.get("updated_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
             return matching[0]
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             query = select(RuntimeAgentRow).where(RuntimeAgentRow.workspace_id == workspace_id, RuntimeAgentRow.role == role, RuntimeAgentRow.agent_id == agent_id)
             if instance_id is not None:
                 query = query.where(RuntimeAgentRow.instance_id == instance_id)
@@ -368,7 +377,7 @@ class ResourceRepository:
                 record = candidates[0]
                 workspace_id = str(record["workspace_id"])
             elif self.sessions is not None:
-                async with self.sessions() as session:
+                async with self._execution_read_session() as session:
                     row = (await session.scalars(select(RuntimeAgentRow).where(RuntimeAgentRow.agent_id == agent_id, RuntimeAgentRow.role == role))).first()
                     if row is not None:
                         workspace_id = row.workspace_id
@@ -391,12 +400,11 @@ class ResourceRepository:
             record["last_seen_at"] = now
             record["updated_at"] = now
         else:
-            async with self.sessions() as session:
+            async with self._execution_write_session() as session:
                 row = (await session.scalars(select(RuntimeAgentRow).where(RuntimeAgentRow.workspace_id == workspace_id, RuntimeAgentRow.role == role, RuntimeAgentRow.agent_id == agent_id, RuntimeAgentRow.instance_id == instance_id))).first()
                 if row is not None:
                     row.last_seen_at = now
                     row.updated_at = now
-                    await session.commit()
         return AgentLease(agent_id=agent_id, instance_id=instance_id, workspace_id=workspace_id, lease_id=lease_id, epoch=int(epoch), heartbeat_interval_seconds=5.0)
 
     async def release_agent(self, agent_id: str, instance_id: str, lease_id: str, epoch: int, *, workspace_id: str | None = None, role: str = "driver") -> None:
@@ -413,12 +421,11 @@ class ResourceRepository:
             record["lease_state"] = "released"
             record["updated_at"] = now
         else:
-            async with self.sessions() as session:
+            async with self._execution_write_session() as session:
                 row = (await session.scalars(select(RuntimeAgentRow).where(RuntimeAgentRow.workspace_id == workspace_id, RuntimeAgentRow.role == role, RuntimeAgentRow.agent_id == agent_id, RuntimeAgentRow.instance_id == instance_id))).first()
                 if row is not None:
                     row.lease_state = "released"
                     row.updated_at = now
-                    await session.commit()
 
     async def list_agents(self, workspace_id: str, role: str | None = None) -> list[dict[str, Any]]:
         lease_ttl = self.settings.agent_lease_ttl_seconds
@@ -433,19 +440,17 @@ class ResourceRepository:
                     item["lease_state"] = "expired"
                 rows.append(dict(item))
         else:
-            async with self.sessions() as session:
+            async with self._execution_write_session() as session:
                 query = select(RuntimeAgentRow).where(RuntimeAgentRow.workspace_id == workspace_id)
                 if role is not None:
                     query = query.where(RuntimeAgentRow.role == role)
                 db_rows = (await session.scalars(query.order_by(RuntimeAgentRow.role, RuntimeAgentRow.agent_id))).all()
                 rows = []
-                expired = False
                 for row in db_rows:
                     seen_timestamp = self._utc_timestamp(row.last_seen_at)
                     if row.lease_state == "active" and seen_timestamp is not None and seen_timestamp < cutoff:
                         row.lease_state = "expired"
                         row.updated_at = datetime.now(timezone.utc)
-                        expired = True
                     rows.append({
                         "workspace_id": row.workspace_id,
                         "role": row.role,
@@ -458,8 +463,6 @@ class ResourceRepository:
                         "lease_state": row.lease_state,
                         "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
                     })
-                if expired:
-                    await session.commit()
         for row in rows:
             if hasattr(row.get("last_seen_at"), "isoformat"):
                 row["last_seen_at"] = row["last_seen_at"].isoformat()
@@ -498,32 +501,9 @@ class ResourceRepository:
                 capabilities.get("base_actions", capabilities.get("actions", []))
             )
             projected = set(base_actions)
-            for record in self._package_records():
-                for activation in record.capability_activations:
-                    if (
-                        activation.target_slave != target
-                        or activation.desired_state != "running"
-                        or activation.activation_state != "ready"
-                    ):
-                        continue
-                    # A reusable coordinate can be present in more than one
-                    # run-bound record.  Resolve the manifest with the
-                    # activation's digest assertion so a different package
-                    # sharing the coordinate cannot hide this activation's
-                    # exports from the projection.
-                    package = self._find_package(
-                        ResourceRef(
-                            resource_id=activation.package_version_ref,
-                            version_or_digest=activation.package_digest,
-                        )
-                    )
-                    if package is None or package.package_digest != activation.package_digest:
-                        continue
-                    projected.update(
-                        action_name(export.action_descriptor_ref.resource_id)
-                        for export in package.action_exports
-                    )
-            for activation_list in self.workspace_package_activations.values():
+            for (workspace, _), activation_list in self.workspace_package_activations.items():
+                if workspace != agent.get("workspace_id"):
+                    continue
                 for activation in activation_list:
                     if (
                         activation.target_slave != target
@@ -547,8 +527,7 @@ class ResourceRepository:
 
     async def refresh_slaves(self, workspace_id: str | None = None) -> list[dict[str, Any]]:
         agents = await self.list_agents(workspace_id or "workspace-default", role="slave")
-        await self._load_run_capabilities()
-        await self._load_workspace_packages()
+        await self._load_workspace_packages(workspace_id=workspace_id or "workspace-default")
         self._store_slave_snapshot(agents)
         self._project_ready_capabilities()
         return agents
@@ -561,12 +540,12 @@ class ResourceRepository:
             if record is None:
                 raise KeyError(run_id)
             return record.closure_contract.workspace_id if record.closure_contract else "workspace-default"
-        query = select(RunRow.closure_contract["workspace_id"].as_string()).where(RunRow.run_id == run_id)
+        query = select(RunCapabilityStateRow.workspace_id).where(RunCapabilityStateRow.run_id == run_id)
         session = self._execution_session.get()
         if session is not None:
             row = (await session.execute(query)).first()
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 row = (await session.execute(query)).first()
         if row is None:
             raise KeyError(run_id)
@@ -620,29 +599,47 @@ class ResourceRepository:
             raise ValueError("workspace_package_workspace_required")
         return package.workspace_id, package.version_ref
 
-    def _package_records(self) -> list[RunCapabilities]:
-        records = dict(self._run_capabilities)
+    def _package_records(self, run_id: str) -> list[RunCapabilities]:
+        record = self.runs.get(run_id)
         touched = self._execution_loaded_runs.get() or set()
-        for key, record in self.runs.items():
-            if self.sessions is None or key not in records or key in touched:
-                records[key] = RunCapabilities(key,
-                    record.closure_contract.workspace_id if record.closure_contract else None,
-                    record.capability_packages, record.capability_activations)
-        return list(records.values())
+        if record is not None and (self.sessions is None or run_id in touched):
+            return [RunCapabilities(run_id,
+                record.closure_contract.workspace_id if record.closure_contract else "workspace-default",
+                record.capability_packages, record.capability_activations)]
+        projection = self._run_capabilities.get(run_id)
+        return [projection] if projection is not None else []
 
-    async def _load_run_capabilities(self) -> None:
-        """Refresh catalog projections without reading execution bodies or history."""
-        if self.sessions is None:
+    def _package_from_record(self, value: dict) -> CapabilityPackageVersion:
+        # Cache the entire persisted value, including lifecycle/provenance.
+        # A digest alone would conceal publication changes or corrupted bytes.
+        key = canonical_json_bytes(value)
+        package = self._validated_package_records.get(key)
+        if package is None:
+            package = CapabilityPackageVersion.from_record(value)
+            self._validated_package_records[key] = package
+            if len(self._validated_package_records) > 256:
+                self._validated_package_records.popitem(last=False)
+        else:
+            self._validated_package_records.move_to_end(key)
+        # Callers may abandon or promote their copy. Never mutate the cache.
+        return package.model_copy(deep=True)
+
+    async def _load_run_capabilities(self, run_id: str) -> None:
+        """Read one Run's indexed capability state, never its execution history."""
+        if run_id in (self._execution_loaded_runs.get() or ()) and run_id in self.runs:
             return
-        async with self._execution_write_session() as session:
-            rows = (await session.execute(select(
-                RunRow.run_id, RunRow.closure_contract["workspace_id"].as_string(),
-                RunRow.capability_packages, RunRow.capability_activations,
-            ))).all()
-        self._run_capabilities = {key: RunCapabilities(key, workspace,
-            [CapabilityPackageVersion.model_validate(p) for p in packages or []],
-            [CapabilityPackageActivation.model_validate(a) for a in activations or []])
-            for key, workspace, packages, activations in rows}
+        if self.sessions is None:
+            if run_id not in self.runs:
+                raise KeyError(run_id)
+            return
+        async with self._execution_read_session() as session:
+            row = await session.get(RunCapabilityStateRow, run_id)
+            if row is None:
+                self._run_capabilities.pop(run_id, None)
+                raise KeyError(run_id)
+            self._run_capabilities[run_id] = RunCapabilities(run_id, row.workspace_id,
+                [self._package_from_record(p) for p in row.capability_packages],
+                [CapabilityPackageActivation.model_validate(a) for a in row.capability_activations])
 
     def _run_workspace(self, run_id: str) -> str | None:
         record = self.runs.get(run_id)
@@ -651,18 +648,29 @@ class ResourceRepository:
         projection = self._run_capabilities.get(run_id)
         return projection.workspace_id if projection else None
 
-    async def _load_workspace_packages(self) -> None:
+    async def _load_workspace_packages(self, *, workspace_id: str | None = None, package_ref: str | None = None) -> None:
         if self.sessions is None:
             return
-        async with self._execution_write_session() as session:
-            rows = (await session.execute(select(
+        query = select(
                 WorkspaceCapabilityPackageRow.workspace_id,
                 WorkspaceCapabilityPackageRow.package_ref,
                 WorkspaceCapabilityPackageRow.package,
                 WorkspaceCapabilityPackageRow.capability_activations,
-            ))).all()
+            ).where(WorkspaceCapabilityPackageRow.package["scope"].as_string() == "workspace_reusable")
+        if workspace_id is not None:
+            query = query.where(WorkspaceCapabilityPackageRow.workspace_id == workspace_id)
+        if package_ref is not None:
+            query = query.where(WorkspaceCapabilityPackageRow.package_ref == package_ref)
+        async with self._execution_read_session() as session:
+            rows = (await session.execute(query)).all()
+        current_keys = {(row.workspace_id, row.package_ref) for row in rows}
+        for key in list(self.workspace_packages):
+            if ((workspace_id is None or key[0] == workspace_id)
+                    and (package_ref is None or key[1] == package_ref) and key not in current_keys):
+                self.workspace_packages.pop(key, None)
+                self.workspace_package_activations.pop(key, None)
         for row in rows:
-            package = CapabilityPackageVersion.model_validate(row.package)
+            package = self._package_from_record(row.package)
             key = (row.workspace_id, row.package_ref)
             self.workspace_packages[key] = package
             self.workspace_package_activations[key] = [
@@ -678,7 +686,7 @@ class ResourceRepository:
         key = self._workspace_package_key(package)
         if self.sessions is None:
             return deepcopy(self.workspace_package_events.get(key, [])[after:after + limit])
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             return list((await session.scalars(select(CapabilityAuditEventRow.event).where(
                 CapabilityAuditEventRow.workspace_id == key[0], CapabilityAuditEventRow.package_ref == key[1],
                 CapabilityAuditEventRow.sequence > after,
@@ -702,7 +710,7 @@ class ResourceRepository:
             async with self._resource_lock:
                 yield None
             return
-        async with self.sessions() as session, session.begin():
+        async with self._execution_write_session() as session:
             if session.bind.dialect.name == "postgresql":
                 await session.execute(
                     text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
@@ -759,7 +767,7 @@ class ResourceRepository:
         await self.ensure_mcue_definitions(workspace_id)
         if self.sessions is None:
             return {uri: deepcopy(body) for (scope, uri), body in self.mcue_definitions.items() if scope == workspace_id}
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             rows = (await session.scalars(select(McueDefinitionRow).where(McueDefinitionRow.workspace_id == workspace_id))).all()
         result = {}
         names = Names(self.settings.grip_authority, workspace_id)
@@ -785,7 +793,7 @@ class ResourceRepository:
     async def _load_workspace_resources(self, workspace_id: str) -> None:
         if self.sessions is None:
             return
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             rows = (await session.scalars(select(WorkspaceResourceRow).where(WorkspaceResourceRow.workspace_id == workspace_id))).all()
         self.workspace_resources = {key: value for key, value in self.workspace_resources.items() if key[0] != workspace_id} | {
             (row.workspace_id, row.resource_id): self._resource_from_row(row) for row in rows
@@ -901,15 +909,10 @@ class ResourceRepository:
             package_id = normalized.resource_id
             package_digest = normalized.digest
         result: list[CapabilityPackageActivation] = []
-        await self._load_run_capabilities()
-        for record in self._package_records():
-            contract_workspace = record.workspace_id or workspace_id
-            if contract_workspace != workspace_id:
-                continue
-            result.extend(record.capability_activations)
-        await self._load_workspace_packages()
-        for activations in self.workspace_package_activations.values():
-            result.extend(activations)
+        await self._load_workspace_packages(workspace_id=workspace_id)
+        for (scope, _), activations in self.workspace_package_activations.items():
+            if scope == workspace_id:
+                result.extend(activations)
         filtered: list[CapabilityPackageActivation] = []
         seen: set[tuple[str, str, str, int]] = set()
         for activation in result:
@@ -1077,38 +1080,9 @@ class ResourceRepository:
     def _package_ref(package: CapabilityPackageVersion) -> str:
         return package.version_ref
 
-    @classmethod
-    def _reusable_matches_candidate(
-        cls,
-        reusable: CapabilityPackageVersion,
-        candidate: CapabilityPackageVersion,
-    ) -> bool:
-        if reusable.scope != "workspace_reusable" or reusable.publication_state != "published":
-            return False
-        if reusable.package_id != candidate.package_id:
-            return False
-        # New versions carry an explicit lineage entry.  The deterministic
-        # version/source fallback also recognizes versions produced before
-        # lineage matching was fixed.
-        candidate_ref = cls._package_ref(candidate)
-        if any(
-            entry.get("derived_from") == candidate_ref
-            and entry.get("derived_from_digest") == candidate.package_digest
-            for entry in reusable.provenance
-        ):
-            return True
-        return (
-            reusable.package_version == f"{candidate.package_version}-reusable"
-            and reusable.package_type == candidate.package_type
-            and reusable.package_digest == candidate.package_digest
-            and reusable.source_run_ref == candidate.source_run_ref
-            and reusable.source_closure_version_ref == candidate.source_closure_version_ref
-        )
-
     def _package_visible_to_run(self, package: CapabilityPackageVersion, run_id: str | None) -> bool:
         if run_id is None:
-            return package.scope == "run_bound" or (
-                package.scope == "workspace_reusable" and package.publication_state == "published")
+            return package.scope == "workspace_reusable" and package.publication_state == "published"
         workspace = self._run_workspace(run_id)
         if run_id not in self.runs and run_id not in self._run_capabilities:
             return False
@@ -1124,8 +1098,10 @@ class ResourceRepository:
         resource_id = package_ref.resource_id if isinstance(package_ref, ResourceRef) else package_ref
         digest = package_ref.digest if isinstance(package_ref, ResourceRef) and package_ref.digest else None
         candidates: list[CapabilityPackageVersion] = []
-        for record in self._package_records():
+        for record in self._package_records(run_id) if run_id is not None else []:
             for package in record.capability_packages:
+                if package.scope != "run_bound":
+                    continue
                 if not self._package_visible_to_run(package, run_id):
                     continue
                 if resource_id != package.version_ref:
@@ -1133,21 +1109,20 @@ class ResourceRepository:
                 if digest is not None and digest != package.package_digest.lower():
                     continue
                 candidates.append(package)
-        for package in self.workspace_packages.values():
-            if not self._package_visible_to_run(package, run_id):
+        for (_, version_ref), package in self.workspace_packages.items():
+            if resource_id != version_ref:
                 continue
-            if resource_id != package.version_ref:
+            if not self._package_visible_to_run(package, run_id):
                 continue
             if digest is not None and digest != package.package_digest.lower():
                 continue
             candidates.append(package)
         if not candidates:
             return None
-        # Prefer a published reusable version when resolving without a run
-        # context, then keep selection deterministic across persisted runs.
+        # A Run-local declaration takes precedence in its own scope.
         candidates.sort(
             key=lambda item: (
-                item.scope != "workspace_reusable",
+                item.scope != ("run_bound" if run_id is not None else "workspace_reusable"),
                 item.package_id,
                 item.package_version,
                 item.source_run_ref or "",
@@ -1156,50 +1131,33 @@ class ResourceRepository:
         return candidates[0]
 
     async def list_capability_packages(self, *, run_id: str | None = None, include_abandoned: bool = False, workspace_id: str | None = None) -> list[CapabilityPackageVersion]:
-        await self._load_workspace_packages()
-        await self._load_run_capabilities()
-        records = [r for r in self._package_records() if run_id is None or r.run_id == run_id]
-        if run_id is not None and not records:
-            raise KeyError(run_id)
-        packages = [package for record in records for package in record.capability_packages]
+        packages = []
         if run_id is not None:
-            run = records[0]
-            resolved_workspace = (
-                run.workspace_id
-                if run.workspace_id is not None
-                else workspace_id
-            )
-            packages.extend(
-                package
-                for package in self.workspace_packages.values()
-                if (resolved_workspace is None or package.workspace_id == resolved_workspace)
-                and self._package_visible_to_run(package, run_id)
-            )
-        else:
-            packages.extend(
-                package
-                for package in self.workspace_packages.values()
-                if workspace_id is None or package.workspace_id == workspace_id
-            )
+            await self._load_run_capabilities(run_id)
+            record = self._package_records(run_id)[0]
+            if workspace_id is not None and record.workspace_id != workspace_id:
+                raise ValueError("workspace_binding_mismatch")
+            workspace_id = record.workspace_id
+            packages.extend(p for p in record.capability_packages if p.scope == "run_bound")
+        workspace_id = workspace_id or self.settings.workspace_id
+        await self._load_workspace_packages(workspace_id=workspace_id)
+        packages.extend(p for (scope, _), p in self.workspace_packages.items()
+                        if scope == workspace_id and p.scope == "workspace_reusable")
         if not include_abandoned:
-            packages = [package for package in packages if package.publication_state != "abandoned"]
+            packages = [p for p in packages if p.publication_state != "abandoned"]
         return packages
 
     async def list_published_package_states(
         self, workspace_id: str, *, package_ref: str | None = None,
     ) -> list[tuple[CapabilityPackageVersion, list[CapabilityPackageActivation]]]:
-        """Request-local directory projection; never reload state per package.
-
-        Published versions can live in a Run or in the workspace package table.
-        Read only package/activation columns, not the execution/event histories.
-        """
+        """Workspace directory; Run-owned packages never enter this projection."""
         def visible(package):
-            return (package.workspace_id == workspace_id and package.publication_state == "published"
+            return (not package.has_retired_interaction and package.scope == "workspace_reusable"
+                    and package.workspace_id == workspace_id and package.publication_state == "published"
                     and (package_ref is None or package.version_ref == package_ref))
 
         if self.sessions is None:
-            packages = [p for record in self.runs.values() for p in record.capability_packages if visible(p)]
-            packages.extend(p for (scope, _), p in self.workspace_packages.items() if scope == workspace_id and visible(p))
+            packages = [p for (scope, _), p in self.workspace_packages.items() if scope == workspace_id and visible(p)]
             return [(p.model_copy(deep=True), deepcopy(self.workspace_package_activations.get(
                 (workspace_id, p.version_ref), [],
             ))) for p in packages]
@@ -1209,82 +1167,55 @@ class ResourceRepository:
         )
         if package_ref is not None:
             query = query.where(WorkspaceCapabilityPackageRow.package_ref == package_ref)
-        async with self.sessions() as session:
-            run_packages = (await session.scalars(select(RunRow.capability_packages))).all()
+        async with self._execution_read_session() as session:
             rows = (await session.execute(query)).all()
         activations = {}
         packages = []
-        for values in run_packages:
-            for value in values or []:
-                if value.get("workspace_id") == workspace_id and value.get("publication_state") == "published":
-                    package = CapabilityPackageVersion.model_validate(value)
-                    if visible(package):
-                        packages.append(package)
         for value, states in rows:
-            package = CapabilityPackageVersion.model_validate(value)
+            package = self._package_from_record(value)
             activations[package.version_ref] = [CapabilityPackageActivation.model_validate(a) for a in states or []]
             if visible(package):
                 packages.append(package)
         return [(package, activations.get(package.version_ref, [])) for package in packages]
 
     async def get_capability_package(self, package_ref: str | ResourceRef, *, run_id: str | None = None) -> CapabilityPackageVersion:
-        await self._load_workspace_packages()
+        resource_id = package_ref.resource_id if isinstance(package_ref, ResourceRef) else package_ref
         if run_id is not None:
-            await self._load_run_capabilities()
-            if run_id not in self._run_capabilities and run_id not in self.runs:
-                raise KeyError(run_id)
-        package = self._find_package(package_ref, run_id=run_id)
-        if package is not None and package.workspace_id is not None:
-            return package
-        if self.sessions is not None:
-            await self._load_run_capabilities()
+            await self._load_run_capabilities(run_id)
+        await self._load_workspace_packages(package_ref=resource_id)
         package = self._find_package(package_ref, run_id=run_id)
         if package is None:
             raise KeyError(package_ref)
         return package
 
-    async def get_capability_package_aggregate(self, package_ref: str) -> CapabilityPackage:
-        version = await self.get_capability_package(package_ref)
-        await self._load_run_capabilities()
-        records = self._package_records()
-        key = (version.workspace_id, version.version_ref) if version.workspace_id else None
-        activations = [activation for record in records for activation in record.capability_activations if activation.package_version_ref == version.version_ref]
-        if key is not None:
-            activations.extend(self.workspace_package_activations.get(key, []))
-        versions = [item for record in records for item in record.capability_packages if item.package_id == version.package_id]
-        versions.extend(
-            item
-            for item in self.workspace_packages.values()
-            if item.package_id == version.package_id
-        )
-        return CapabilityPackage(package_id=version.package_id, versions=versions, activations=activations)
+    async def get_capability_package_aggregate(self, package_ref: str, *, run_id: str | None = None) -> CapabilityPackage:
+        version = await self.get_capability_package(package_ref, run_id=run_id)
+        versions = await self.list_capability_packages(run_id=run_id, workspace_id=version.workspace_id)
+        return CapabilityPackage(package_id=version.package_id,
+            versions=[p for p in versions if p.package_id == version.package_id],
+            activations=await self.list_package_activations(version))
 
     async def list_package_activations(
         self, package: CapabilityPackageVersion, *, refresh: bool = True
     ) -> list[CapabilityPackageActivation]:
+        if package.scope == "workspace_reusable":
+            if refresh:
+                await self._load_workspace_packages(workspace_id=package.workspace_id, package_ref=package.version_ref)
+            return list(self.workspace_package_activations.get(self._workspace_package_key(package), []))
+        if package.source_run_ref is None:
+            raise ValueError("run_package_owner_required")
         if refresh:
-            await self._load_workspace_packages()
-            await self._load_run_capabilities()
-        if package.workspace_id is not None:
-            return list(
-                self.workspace_package_activations.get(
-                    self._workspace_package_key(package), []
-                )
-            )
-        return [
-            activation
-            for record in self._package_records()
-            for activation in record.capability_activations
-            if activation.package_version_ref == package.version_ref
-        ]
+            await self._load_run_capabilities(package.source_run_ref)
+        return [a for r in self._package_records(package.source_run_ref) for a in r.capability_activations
+                if a.package_version_ref == package.version_ref and a.package_digest == package.package_digest]
 
     @execution_transaction
-    async def abandon_capability_package(self, package_ref: str, *, idempotency_key: str | None = None) -> CapabilityPackageVersion:
-        package = await self.get_capability_package(package_ref)
+    async def abandon_capability_package(self, package_ref: str, *, run_id: str | None = None, idempotency_key: str | None = None) -> CapabilityPackageVersion:
+        package = await self.get_capability_package(package_ref, run_id=run_id)
         if package.publication_state == "abandoned":
             return package
         package.publication_state = "abandoned"
-        if package.workspace_id is not None:
+        if package.scope == "workspace_reusable":
             events = []
             events.append(
                 {
@@ -1296,118 +1227,69 @@ class ResourceRepository:
             )
             await self._persist_workspace_package(package, events=events)
             return package
-        for projection in self._package_records():
-            if any(item.package_id == package.package_id and item.package_version == package.package_version for item in projection.capability_packages):
-                record = await self._load(projection.run_id)
-                next(p for p in record.capability_packages if p.version_ref == package.version_ref).publication_state = "abandoned"
-                record.events.append({"phase": "capability_package_abandoned", "package_ref": self._package_ref(package), "idempotency_key": idempotency_key, "created_at": datetime.now(timezone.utc).isoformat()})
-                await self._persist(record)
-                break
+        record = await self._activation_record(package)
+        next(p for p in record.capability_packages if p.version_ref == package.version_ref).publication_state = "abandoned"
+        record.events.append({"phase": "capability_package_abandoned", "package_ref": self._package_ref(package), "idempotency_key": idempotency_key, "created_at": datetime.now(timezone.utc).isoformat()})
+        await self._persist(record, fields={"capability_packages"})
         return package
 
-    async def promote_capability_package(self, package_ref: str | ResourceRef, *, idempotency_key: str | None = None, approved_digest: str | None = None) -> CapabilityPackageVersion:
-        async with self._promotion_lock:
-            # Resolve the input first.  A request normally carries the
-            # candidate ref (for example ``.../v1``), while the derived
-            # published version has a different identity (``.../v1-reusable``).
-            # Idempotency therefore has to follow the candidate -> reusable
-            # lineage, not compare the request string with the reusable ref.
-            candidate = await self.get_capability_package(package_ref)
-            if candidate.publication_state == "published" and candidate.scope == "workspace_reusable":
-                return candidate
-
-            candidate_ref = self._package_ref(candidate)
-            reusable_version = f"{candidate.package_version}-reusable"
-            for record in self._package_records():
-                reusable = next(
-                    (
-                        item
-                        for item in record.capability_packages
-                        if self._reusable_matches_candidate(item, candidate)
-                    ),
-                    None,
-                )
-                if reusable is not None:
-                    return reusable
-
-            if candidate.publication_state == "abandoned":
-                raise ValueError("capability_package_abandoned")
-            if approved_digest and approved_digest != candidate.package_digest:
-                raise ValueError("promotion_digest_mismatch")
-            if (
-                candidate.package_type,
-                candidate.execution.kind,
-                candidate.execution.version,
-            ) == DRIVER_ORCHESTRATOR_KEY:
-                if not bool(candidate.body.get("semantic_closed", True)):
-                    raise ValueError("package_promotion_denied:semantic_not_closed")
-                if (
-                    bool(candidate.body.get("captures_run_state", False))
-                    or candidate.body.get("captured_secret_refs")
-                    or candidate.body.get("captured_path_refs")
-                ):
-                    raise ValueError("package_captures_run_state")
-            await self._validate_package_exports(candidate, publication=True)
-            source_record = next(
-                (
-                    record
-                    for record in self._package_records()
-                    if any(
-                        item.package_id == candidate.package_id
-                        and item.package_version == candidate.package_version
-                        and item.package_digest == candidate.package_digest
-                        for item in record.capability_packages
-                    )
-                ),
-                None,
-            )
-            if source_record is None:
-                raise KeyError(package_ref)
-            source_record = await self._load(source_record.run_id)
-            if source_record.state not in {"completed", "closed", "failed", "cancelled"}:
-                raise ValueError("run_not_terminal")
-            reusable_payload = candidate.model_dump(mode="json")
-            reusable_payload.update({"package_version": reusable_version, "scope": "workspace_reusable", "publication_state": "published", "provenance": [*candidate.provenance, {"derived_from": candidate_ref, "derived_from_digest": candidate.package_digest, "idempotency_key": idempotency_key}], "package_digest": ""})
-            reusable = CapabilityPackageVersion.model_validate(reusable_payload)
-            for record in self._package_records():
-                conflicting = next(
-                    (
-                        item
-                        for item in record.capability_packages
-                        if item.package_id == reusable.package_id
-                        and item.package_version == reusable.package_version
-                    ),
-                    None,
-                )
-                if conflicting is not None:
-                    if conflicting.package_digest == reusable.package_digest:
-                        return conflicting
+    @resource_transaction
+    async def promote_capability_package(self, package_ref: str | ResourceRef, *, run_id: str | None = None,
+                                         idempotency_key: str | None = None, approved_digest: str | None = None) -> CapabilityPackageVersion:
+        candidate = await self.get_capability_package(package_ref, run_id=run_id)
+        if approved_digest and approved_digest != candidate.package_digest:
+            raise ValueError("promotion_digest_mismatch")
+        if candidate.publication_state == "published" and candidate.scope == "workspace_reusable":
+            return candidate
+        if candidate.publication_state == "abandoned":
+            raise ValueError("capability_package_abandoned")
+        if candidate.source_run_ref is None or run_id != candidate.source_run_ref:
+            raise ValueError("run_package_owner_required")
+        if (candidate.package_type, candidate.execution.kind, candidate.execution.version) == DRIVER_ORCHESTRATOR_KEY:
+            if not bool(candidate.body.get("semantic_closed", True)):
+                raise ValueError("package_promotion_denied:semantic_not_closed")
+            if (candidate.body.get("captures_run_state", False) or candidate.body.get("captured_secret_refs")
+                    or candidate.body.get("captured_path_refs")):
+                raise ValueError("package_captures_run_state")
+        await self._validate_package_exports(candidate, publication=True)
+        if self.sessions is None:
+            state = self.runs[run_id].state
+        else:
+            async with self._execution_read_session() as session:
+                state = await session.scalar(select(RunRow.state).where(RunRow.run_id == run_id))
+        if state not in {"completed", "closed", "failed", "cancelled"}:
+            raise ValueError("run_not_terminal")
+        workspace_id = candidate.workspace_id or self._run_workspace(run_id) or self.settings.workspace_id
+        candidate_ref = self._package_ref(candidate)
+        payload = candidate.model_dump(mode="json")
+        payload.update({"package_version": f"{candidate.package_version}-reusable", "workspace_id": workspace_id,
+            "scope": "workspace_reusable", "publication_state": "published",
+            "provenance": [*candidate.provenance, {"derived_from": candidate_ref,
+                "derived_from_digest": candidate.package_digest, "idempotency_key": idempotency_key}]})
+        reusable = CapabilityPackageVersion.model_validate(payload)
+        async with self._resource_transaction(workspace_id, reusable.version_ref):
+            await self._load_workspace_packages(workspace_id=workspace_id, package_ref=reusable.version_ref)
+            existing = self.workspace_packages.get(self._workspace_package_key(reusable))
+            if existing is not None:
+                if existing.package_digest != reusable.package_digest:
                     raise ValueError("capability_package_identity_conflict")
-            source_record.capability_packages.append(reusable)
-            source_record.events.append({"phase": "capability_package_promoted", "package_ref": self._package_ref(reusable), "derived_from": candidate_ref, "derived_from_digest": candidate.package_digest, "idempotency_key": idempotency_key, "created_at": datetime.now(timezone.utc).isoformat()})
-            await self._persist(source_record)
-            return reusable
+                return existing
+            await self._persist_workspace_package(reusable, events=[{
+                "phase": "capability_package_promoted", "package_ref": reusable.version_ref,
+                "derived_from": candidate_ref, "derived_from_digest": candidate.package_digest,
+                "source_run_ref": run_id, "idempotency_key": idempotency_key,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }])
+        return reusable
 
-    async def _activation_record(
-        self, package: CapabilityPackageVersion
-    ) -> RunRecord:
-        await self._load_run_capabilities()
-        records = self._package_records()
-        record = next(
-            (
-                item
-                for item in records
-                if any(
-                    candidate.version_ref == package.version_ref
-                    and candidate.package_digest == package.package_digest
-                    for candidate in item.capability_packages
-                )
-            ),
-            None,
-        )
-        if record is None:
+    async def _activation_record(self, package: CapabilityPackageVersion) -> RunRecord:
+        if package.scope != "run_bound" or package.source_run_ref is None:
+            raise ValueError("run_package_owner_required")
+        record = await self._load(package.source_run_ref)
+        if not any(p.version_ref == package.version_ref and p.package_digest == package.package_digest
+                   for p in record.capability_packages):
             raise KeyError(package.version_ref)
-        return await self._load(record.run_id)
+        return record
 
     @resource_transaction
     async def set_capability_desired(
@@ -1447,10 +1329,10 @@ class ResourceRepository:
         package = await self.get_capability_package(package_ref, run_id=run_id)
         if package.publication_state == "abandoned":
             raise ValueError("capability_package_abandoned")
-        if package.is_interface:
+        if not package.is_executable:
             raise ValueError("capability_package_not_executable")
         record: RunRecord | None = None
-        if package.workspace_id is not None:
+        if package.scope == "workspace_reusable":
             package_key = self._workspace_package_key(package)
             activation_list = self.workspace_package_activations.setdefault(package_key, [])
             event_list = []
@@ -1472,7 +1354,7 @@ class ResourceRepository:
             raise ValueError("workspace_binding_mismatch")
         if desired_state == "running":
             self.service_routes.require(package, target_slave, instance_name)
-        lock_key = (record_workspace, package.version_ref, "*", "*") if package.workspace_id else (record_workspace, package.version_ref, target_slave, instance_name)
+        lock_key = (record_workspace, package.version_ref, "*", "*") if package.scope == "workspace_reusable" else (record_workspace, package.version_ref, target_slave, instance_name)
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             session = self._execution_session.get()
@@ -1480,7 +1362,7 @@ class ResourceRepository:
                 await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                     {"key": "activation:" + ":".join(lock_key[:2])})
             if record is None:
-                await self._load_workspace_packages()
+                await self._load_workspace_packages(workspace_id=package.workspace_id, package_ref=package.version_ref)
                 activation_list = self.workspace_package_activations.setdefault(package_key, [])
                 event_list = []
             else:
@@ -1571,7 +1453,7 @@ class ResourceRepository:
                     or (
                         current.activation_closure_version_ref
                         if current is not None
-                        else package.package_closure_version_ref
+                        else package.package_closure_version_ref or ""
                     )
                 ),
                 compute_binding_ref=(
@@ -1616,7 +1498,7 @@ class ResourceRepository:
                 }
             )
             if record is not None:
-                await self._persist(record)
+                await self._persist(record, fields={"capability_activations"})
             else:
                 await self._persist_workspace_package(package, activations=activation_list, events=event_list)
             self._project_ready_capabilities(target_slave)
@@ -1632,7 +1514,7 @@ class ResourceRepository:
         package = await self.get_capability_package(
             report.package_version_ref, run_id=run_id
         )
-        if package.workspace_id is not None:
+        if package.scope == "workspace_reusable":
             workspace = package.workspace_id
         else:
             record = await self._activation_record(package)
@@ -1641,7 +1523,7 @@ class ResourceRepository:
                 if record.closure_contract is not None
                 else "workspace-default"
             )
-        lock_key = (workspace, package.version_ref, "*", "*") if package.workspace_id else (workspace, package.version_ref, report.target_slave, report.instance_name)
+        lock_key = (workspace, package.version_ref, "*", "*") if package.scope == "workspace_reusable" else (workspace, package.version_ref, report.target_slave, report.instance_name)
         lock = self._activation_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             session = self._execution_session.get()
@@ -1659,11 +1541,11 @@ class ResourceRepository:
         if package.package_digest != report.package_digest:
             raise ValueError("capability_package_digest_mismatch")
         record: RunRecord | None = None
-        if package.workspace_id is not None:
+        if package.scope == "workspace_reusable":
             package_key = self._workspace_package_key(package)
             # Refresh the current revision after acquiring the activation lock.
             # Package lookup may have raced a desired-state update.
-            await self._load_workspace_packages()
+            await self._load_workspace_packages(workspace_id=package.workspace_id, package_ref=package.version_ref)
             activation_list = self.workspace_package_activations.setdefault(package_key, [])
             event_list = []
         else:
@@ -1688,7 +1570,7 @@ class ResourceRepository:
             raise ValueError("future_activation_revision")
 
         previous_report = (await self._health_report_event(package, report.report_id)
-                           if package.workspace_id is not None else next(
+                           if package.scope == "workspace_reusable" else next(
                                (event for event in event_list if event.get("phase") == "capability_health_report"
                                 and event.get("report_id") == report.report_id), None))
         if previous_report is not None:
@@ -1771,7 +1653,7 @@ class ResourceRepository:
             }
         )
         if record is not None:
-            await self._persist(record)
+            await self._persist(record, fields={"capability_activations"})
         else:
             await self._persist_workspace_package(package, activations=activation_list, events=event_list)
         self._project_ready_capabilities(report.target_slave)
@@ -1841,7 +1723,7 @@ class ResourceRepository:
         ).order_by(RunRow.run_id)
         if run_id is not None:
             query = query.where(RunRow.run_id == run_id)
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             return [RunSummary(*row) for row in (await session.execute(query)).all()]
 
 
@@ -1869,5 +1751,5 @@ class ResourceRepository:
             query = query.where(RunExecutionRequestRow.run_id == run_id)
         if closure_version is not None:
             query = query.where(RunExecutionRequestRow.closure_version == closure_version)
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             return [PlanSummary(*row) for row in (await session.execute(query)).all()]

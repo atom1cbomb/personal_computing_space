@@ -106,7 +106,7 @@ v7 起将 kubelogin HOME 保存到实例持久卷 `/var/lib/loom/service/kube`�
 
 | action | 交互 | 用途 |
 |---|---|---|
-| services-ensure | task，返回 Run | 创建或更新本实例拥有的普通 ClusterIP Service |
+| services-ensure | request-reply | 创建或更新本实例拥有的普通 ClusterIP Service |
 | service-access-status | request-reply，直接返回 | 查询连接状态和最近错误 |
 | open-service-stream | byte-stream | 向白名单中的 Service 建立一条字节通道 |
 

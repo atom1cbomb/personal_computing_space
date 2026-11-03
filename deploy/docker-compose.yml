@@ -142,6 +142,7 @@ services:
       minio-init: {condition: service_completed_successfully}
 
   slave-a:
+    init: true
     build:
       context: ..
       dockerfile: Dockerfile
@@ -176,6 +177,7 @@ services:
     networks: [default, loom-internal]
 
   slave-b:
+    init: true
     build:
       context: ..
       dockerfile: Dockerfile

@@ -30,7 +30,7 @@ class PoolRepository(TaskRepository, ResourceRepository):
         if self.sessions is None:
             matches = [r.run_id for r in self.runs.values() if r.execution_id == payload["execution_id"]]
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 matches = list((await session.scalars(select(RunRow.run_id).where(RunRow.execution_id == payload["execution_id"]))).all())
         if len(matches) != 1:
             raise ValueError("stale_execution_id")
@@ -90,9 +90,14 @@ class PoolRepository(TaskRepository, ResourceRepository):
             return await self.resource_client.register_workspace_package(*args, **kwargs)
         return await super().register_workspace_package(*args, **kwargs)
 
+    async def promote_capability_package(self, *args, **kwargs):
+        if getattr(self, "resource_client", None) is not None:
+            return await self.resource_client.promote_capability_package(*args, **kwargs)
+        return await super().promote_capability_package(*args, **kwargs)
+
     async def set_capability_desired(self, package_ref, *args, **kwargs):
         package = await self.get_capability_package(package_ref, run_id=kwargs.get("run_id"))
-        if package.workspace_id is not None and getattr(self, "resource_client", None) is not None:
+        if package.scope == "workspace_reusable" and getattr(self, "resource_client", None) is not None:
             result = await self.resource_client.set_capability_desired(package_ref, *args, **kwargs)
             await self._load_workspace_packages()
             return result
@@ -102,7 +107,7 @@ class PoolRepository(TaskRepository, ResourceRepository):
         if not isinstance(report, CapabilityHealthReport):
             report = CapabilityHealthReport.model_validate(report)
         package = await self.get_capability_package(report.package_version_ref, run_id=kwargs.get("run_id"))
-        if package.workspace_id is not None and getattr(self, "resource_client", None) is not None:
+        if package.scope == "workspace_reusable" and getattr(self, "resource_client", None) is not None:
             result = await self.resource_client.record_capability_health(report, **kwargs)
             await self._load_workspace_packages()
         else:

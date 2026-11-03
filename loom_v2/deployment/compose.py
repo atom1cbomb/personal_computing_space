@@ -185,6 +185,8 @@ def _render_slave(config: DeploymentConfig, machine: MachineConfig) -> tuple[dic
     app = _base_service(config, machine, dockerfile="Dockerfile")
     app.update(
         {
+            # Reap orphaned children when a function's process group is killed.
+            "init": True,
             "command": [
                 "/bin/sh",
                 "-c",

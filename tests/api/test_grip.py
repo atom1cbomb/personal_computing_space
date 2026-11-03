@@ -9,11 +9,20 @@ from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.testing.observer import create_embedded_app
 from tests.support.package_fixture import process_package_value
+from tests.support.action_plan import submit_activation_plan
 
 
 @pytest.fixture
-async def setup():
-    settings = Settings(grip_token="test-grip-token", public_base_url="http://observer", coding_agent_backend="none")
+async def setup(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+    key = Ed25519PrivateKey.generate()
+    private, public = tmp_path / "sign.pem", tmp_path / "verify.pem"
+    private.write_bytes(key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
+    public.write_bytes(key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo))
+    settings = Settings(grip_token="test-grip-token", public_base_url="http://observer", coding_agent_backend="none",
+        grip_allow_insecure_services=True, grip_signing_key_file=str(private),
+        grip_verification_keys={"service-access-v1": str(public)})
     repo = ObserverRepository(settings=settings)
     program = await repo.put_content('import json,sys; d=json.load(sys.stdin); print(json.dumps({"value": d["value"] * 2}))', media_type="text/x-python")
     schema = await repo.put_content({"type": "object", "properties": {"value": {"type": "integer"}}, "required": ["value"]}, media_type="application/schema+json")
@@ -101,10 +110,8 @@ async def test_named_activation_invocation_keeps_instance_and_revision(setup, mo
     async def no_provision(*args, **kwargs):
         pytest.fail("invoking existing activation must not provision")
     monkeypatch.setattr(app.state.slaves["slave-a"], "provision", no_provision)
-    run = await client.invoke(target, action, {"arguments": {"value": 4}, "expected_revision": activated["revision"], "idempotency_key": "named-call"})
-    result = await wait_result(app, client, run["run"])
-    assert result["state"] == "completed", result
-    assert result["outcome"]["value"] == {"value": 8}
+    assert await client.invoke(target, action, {"value": 4}) == {"value": 8}
+    assert not repo.runs and not app.state.slaves["slave-a"].attempts
     stopped = await client.invoke(target, client.names.action("stop"), {"expected_revision": activated["revision"], "idempotency_key": "stop-named"})
     assert stopped["state"] == "stopped"
     assert await client.invoke(target, client.names.action("stop"), {"expected_revision": activated["revision"], "idempotency_key": "stop-named"}) == stopped
@@ -176,8 +183,8 @@ async def test_resource_binding_is_explicit_and_ambiguous_instances_are_not_chos
     assert after["resource"]["metadata"]["activations"] == before["resource"]["metadata"]["activations"]
     assert "private.example" not in json.dumps(after)
     assert (await client.describe(activation["resource"]))["resource"]["metadata"]["revision"] == activation["revision"]
-    run = await client.invoke(target, action, {"arguments": {"value": 3}, "expected_revision": activation["revision"], "idempotency_key": "vm-call"})
-    assert (await wait_result(app, client, run["run"]))["outcome"]["value"] == {"value": 6}
+    assert await client.invoke(target, action, {"value": 3}) == {"value": 6}
+    assert before["resource"]["metadata"]["actions"][0]["execution"]["task"]["available"]
     await client.invoke(slave, client.names.action("activate-package"), {
         "package": package, "instance_name": "vm-two", "target": target, "idempotency_key": "vm-two",
     })
@@ -192,7 +199,7 @@ async def test_activation_stopped_after_enqueue_is_rejected_at_slave(setup):
     activation = await client.invoke(slave, client.names.action("activate-package"), {
         "package": package, "instance_name": "fenced", "idempotency_key": "fenced-start",
     })
-    run = await client.invoke(activation["resource"], action, {"arguments": {"value": 5}, "expected_revision": activation["revision"], "idempotency_key": "fenced-call"})
+    run = await submit_activation_plan(client, activation["resource"], action, {"value": 5}, "fenced-call")
     await client.invoke(activation["resource"], client.names.action("stop"), {"expected_revision": activation["revision"], "idempotency_key": "fenced-stop"})
     result = await wait_result(app, client, run["run"])
     assert result["state"] == "failed", result
@@ -236,7 +243,7 @@ async def test_access_package_upgrade_changes_only_derived_resource_views(setup)
     assert old_action in {o["action"]["uri"] for o in (await client.describe(target))["offers"]}
 
     await report("ready")
-    ambiguous = await client.describe(target)
+    ambiguous = await client.describe(target, refresh=True)
     assert set(ambiguous["resource"]["metadata"]["activations"]) == {old["resource"], new["resource"]}
     assert {o["action"]["uri"] for o in ambiguous["offers"]} == {
         client.names.action("update-attributes"), client.names.action("how-to-use"),
@@ -257,9 +264,7 @@ async def test_access_package_upgrade_changes_only_derived_resource_views(setup)
     assert listed["metadata"] == description["resource"]["metadata"]
     instances = await client.resources(mcue="capability/activation")
     assert next(row for row in instances if row["uri"] == old["resource"])["metadata"]["state"] == "stopped"
-    submitted = await client.invoke(target, action, {
-        "arguments": {"value": 21}, "expected_revision": new["revision"], "idempotency_key": "new-access-call",
-    })
+    submitted = await submit_activation_plan(client, new["resource"], action, {"value": 21}, "new-access-call")
     result = await wait_result(app, client, submitted["run"])
     assert result["state"] == "completed" and result["outcome"]["value"] == {"value": 42}
     executed = await repo.get_run(result["run_id"])
@@ -332,7 +337,7 @@ async def test_named_activation_binding_survives_http_worker_envelope(setup, mon
     worker = WorkerSession("slave-a", "http://slave-a", transport=httpx.ASGITransport(app=remote))
     app.state.driver.workers["slave-a"] = worker
     try:
-        run = await client.invoke(activation["resource"], action, {"arguments": {"value": 6}, "expected_revision": activation["revision"], "idempotency_key": "http-call"})
+        run = await submit_activation_plan(client, activation["resource"], action, {"value": 6}, "http-call")
         result = await wait_result(app, client, run["run"])
         assert result["state"] == "completed", result
         assert result["outcome"]["value"] == {"value": 12}
@@ -392,10 +397,12 @@ async def test_pending_auth_instance_offers_auth_action_and_forwards_revision(se
     assert result["authentication"]["status"] == "authenticated"
     assert any("/exports/" in offer["action"]["uri"] for offer in (await client.describe(target))["offers"])
     ready, = (await client.describe(target))["resource"]["metadata"]["actions"]
-    assert ready == {**declared, "available": True, "unavailable_reason": None}
+    assert ready == {**declared, "available": True, "unavailable_reason": None,
+                     "execution": {m: {"available": True, "unavailable_reason": None} for m in ("direct", "task")}}
     await repo.record_capability_health(report("failed", "activation-failed"))
-    failed = await client.describe(target)
-    assert failed["resource"]["metadata"]["actions"] == [{**declared, "unavailable_reason": "activation_failed"}]
+    failed = await client.describe(target, refresh=True)
+    assert failed["resource"]["metadata"]["actions"] == [{**declared, "unavailable_reason": "activation_failed",
+        "execution": {m: {"available": False, "unavailable_reason": "activation_failed"} for m in ("direct", "task")}}]
     assert all("/exports/" not in offer["action"]["uri"] for offer in failed["offers"])
     with pytest.raises(ValueError, match="activation_state_transition_invalid"):
         await repo.record_capability_health(report("ready", "unsolicited-recovery"))

@@ -15,27 +15,36 @@ action. This is one logical Driver whose resource URI survives process restarts.
 
 ## Decide how an action executes
 
-GRIP `offer.action.mode` describes the wire exchange, not whether the business
-action creates a Run. Both a durable task and a direct business call can have
-`mode=request-reply`. Read `resource.metadata.actions[].interaction` for the
-selected action and its offered input/output schemas before calling or reporting:
+Ordinary JSON actions support two execution choices. Read the selected action's
+`resource.metadata.actions[].execution` and business schemas before calling:
 
-- `task`: submit the declared wrapper and follow the returned `run` URI to its
-  terminal state and result. This includes task exports of service packages.
-- `request-reply`: pass business input and verify the direct business result.
-- `byte-stream`: use the offered stream contract and `open_stream`.
+- Prefer direct execution for exploration, tests and simple reads: if
+  `execution.direct.available`, pass business input to `client.invoke()` and
+  verify the returned business result. No Run, durable Attempt or automatic
+  result content is created. The caller handles uncertain outcomes, retries
+  and business idempotency; a GRIP request ID is not an idempotency key.
+- Prefer task execution when records, scheduling or recovery are needed: if
+  `execution.task.available`, bind the action in a complete plan and use
+  `client.submit()` / Driver `submit-plan`. Save the plan and stable submission
+  key before sending. Follow the Run and verify its persisted result. See the
+  [single-node plan template](references/single-action-plan.md).
+- `interaction=byte-stream` uses `open_stream()` and cannot be a task node.
+  Python orchestration programs run through a complete plan with Run context.
 
-The package's `runtime_binding.interaction` defaults to `task` when omitted.
-Do not infer interaction from a package name, an HTTP endpoint, or wire mode.
-If metadata is incomplete, read the output schema and retain uncertainty instead
-of declaring that no Run or Driver is involved. Driver availability is required
-for task execution, including service exports that return a Run.
+`runtime_binding.interaction` defaults to `request-reply`; it describes the
+business exchange. The agent chooses direct or task, including for the same
+action. `execution.task` describes action-local readiness; check the Driver's
+submission status separately. Missing direct routes need not block task use.
+Do not fall back to a task after an uncertain direct call: it may repeat effects.
 
-For an existing named service, target that activation's URI. Slave `run-package`
-does not select a named instance and falls back to `default`; it must not be used
-as a substitute when that instance's action is unavailable. For a persistent Run
-that waits for authentication on an existing instance, read
-[references/existing-activations.md](references/existing-activations.md).
+Direct calls may exceed 30 seconds: configure the SDK wait with `timeout=None`
+or a suitable duration. Explicit request deadlines and grant expiry still bound
+server execution. Duration alone is not a reason to choose a Run.
+
+A Run recovers at recorded node boundaries. It does not checkpoint an action's
+internal A/B/C calls. An action must handle its internal failures or, with the
+necessary authorization, submit an explicit child plan for separately recoverable steps; Run execution alone does
+not provide exactly-once side effects.
 
 ## Public SDK
 
@@ -173,6 +182,12 @@ and schemas; project-level examples must not override them.
   creates a workspace-reusable package without a Run and does not activate a
   Slave. Run-bound packages are part of the complete external submission.
 
+Run-owned packages and activations are visible only with their owning Run
+context. To share them across Runs, explicitly publish a workspace package,
+activate a new workspace instance, verify it, then stop the private instance.
+Read [capability scope and migration](references/capability-scope.md) for the
+scoped package APIs and the activation migration sequence.
+
 Credentials are selected per activation. For a named service, pass the
 operator-provided `credential_profile` in the Slave's `activate-package` input,
 alongside `instance_config`; never put the selection in a package manifest or
@@ -223,7 +238,7 @@ action.
    entry point; `available` describes the Driver lease. Offline execution does
    not prevent durable submission: report that accepted work is queued pending
    a Driver. Direct request-reply and byte-stream business interactions use
-   their own availability and contracts; task exports require Driver execution.
+   their own availability and contracts; task execution uses a Driver.
 2. Discover compute with `await client.resources(mcue="computing/slave")` and inspect descriptions
    for Slave `run-package` / `check-package` / `activate-package` offers. Select available leases
    using `metadata.available` and inspect executor/runtime descriptors.

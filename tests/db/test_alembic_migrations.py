@@ -16,7 +16,7 @@ def _scripts() -> ScriptDirectory:
 
 def test_alembic_has_one_linear_head_and_safe_revision_names() -> None:
     scripts = _scripts()
-    assert scripts.get_heads() == ["010_driver_pool"]
+    assert scripts.get_heads() == ["011_run_capability_scope"]
 
     revisions = list(scripts.walk_revisions(base="base", head="009_history_isolation"))
     assert [script.revision for script in revisions] == ["009_history_isolation", "008_resource_access_bindings", "007_activation_credentials", "006_mcue_attributes", "005_slave_action_name", "004_run_execution_requests", "003_workspace_resources", "002_workspace_packages", "001_release_baseline"]

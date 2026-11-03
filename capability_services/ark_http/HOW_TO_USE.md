@@ -13,22 +13,18 @@ Model ID 或 Endpoint ID。模型的模态、参数、额度和套餐权限由�
 
 | action 名称 | 交互 | 用途与结果 |
 |---|---|---|
-| `chat_completions` | task | 原生 `messages` 多模态对话，返回 `result.choices`、usage、工具调用 |
-| `responses_create` | task | 原生 `input` 多模态理解，返回 `result.id`、`result.output`、usage |
+| `chat_completions` | request-reply | 原生 `messages` 多模态对话，返回 `result.choices`、usage、工具调用 |
+| `responses_create` | request-reply | 原生 `input` 多模态理解，返回 `result.id`、`result.output`、usage |
 | `responses_get` / `responses_delete` | request-reply | 按 `response_id` 读取或删除已存储 Response |
-| `images_generate` | task | 文生图、参考图编辑、组图和图层拆分，返回 `result.data` 中的 URL／Base64 |
-| `embeddings_multimodal` | task | 图文／视频向量化，返回 `result.data` 和 usage |
-| `videos_create` | task | 提交生视频任务，返回供应商 `result.id`，随后查询生成状态 |
+| `images_generate` | request-reply | 文生图、参考图编辑、组图和图层拆分，返回 `result.data` 中的 URL／Base64 |
+| `embeddings_multimodal` | request-reply | 图文／视频向量化，返回 `result.data` 和 usage |
+| `videos_create` | request-reply | 提交生视频任务，返回供应商 `result.id`，随后查询生成状态 |
 | `videos_get` / `videos_list` | request-reply | 查询任务状态、产物 URL 或分页列表 |
 | `videos_delete` | request-reply | 取消排队中的视频任务，或删除任务记录 |
-| `audio_speech` | task | Agent Plan HTTP 语音合成，返回 `result.audio_base64`、格式及 usage |
+| `audio_speech` | request-reply | Agent Plan HTTP 语音合成，返回 `result.audio_base64`、格式及 usage |
 
-`task` 需要 Driver，调用时传 `{arguments, expected_revision, idempotency_key}`，返回
-`{run: URI}`。读取该 Run 至终态，业务结果在完成 Run 的 `outcome.value` 中。
-`request-reply` 直接传业务输入并得到 `{action, result}`；不要使用 task 的输入包装。
-任务提交和直接调用都可能使用 GRIP request-reply wire mode，以声明的 interaction 为准。
-
-以下 JSON 均为业务参数；task 动作将其放入 `arguments`。
+业务输入和输出遵循各 action 的 Schema，业务结果为 `{action, result}`。
+以下 JSON 均为业务参数。
 
 ## 多模态理解
 
@@ -105,7 +101,7 @@ schema。所有生成动作均非流式，`stream=true` 不受支持。
    }
    ```
 
-2. 等待 Loom Run 完成，从 `outcome.value.result.id` 取供应商 task ID。
+2. 从业务响应的 `result.id` 取供应商 task ID；任务执行时该响应位于 Run 的 `outcome.value`。
    这一步只表示任务被供应商接受。
 3. 直接调用 `videos_get`，输入 `{"task_id": "上一步的ID"}`。
    `queued`、`running` 时按有界间隔继续查询；`succeeded` 才表示视频生成成功，

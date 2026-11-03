@@ -132,25 +132,37 @@ SSH 包的 `instance_config` 必须提供 `host`、`port`、`user`。
 `pending_auth` 时调用实例的 `auth-start`，输入当前 `expected_revision`；按返回指引完成认证，
 重新描述实例确认 ready 后调用业务 action。认证接口不再列作 Kubernetes 业务导出。
 
-以下是任务 action 的调用方式：
+普通 JSON action 的直接调用方式：
 
 ```python
-run = await client.invoke(activation["resource"], selected_action_uri, {
-    "arguments": business_input,
-    "expected_revision": description["resource"]["metadata"]["revision"],
-    "idempotency_key": "business-call-1",
-})
-result = await client.invoke(run["run"], client.names.action("read"), {})
+result = await client.invoke(activation["resource"], selected_action_uri, business_input)
 ```
 
-`selected_action_uri` 必须取自 offers。可以先按 `metadata.actions` 的名称选动作，再匹配其 offer；
-对 action 资源 DESCRIBE 也可查看 `metadata.descriptor`。输入以 offer 的 schema 为准。
-任务动作返回 `{run: <GRIP URI>}`，按 Run 的状态继续查询结果。复用相同幂等 key 时参数必须保持一致。
-直接请求回复动作传业务输入，返回业务结果；流动作使用 `client.open_stream(target, action, input)`。
-它们不使用任务的 arguments/revision/idempotency 包装。以 DESCRIBE 的 mode、Schema 为准，
-不能把 `request-reply` mode 一律理解成直接业务结果：任务提交本身也是请求回复，结果 Schema 是 Run 引用。
+`selected_action_uri` 取自 `metadata.actions`，直接调用需要对应 offer 和
+`execution.direct.available`。输入与结果遵循业务 Schema；SDK 和 Slave 均进行校验。
+同一 action 也能绑定到任务计划，通过 Driver 的 `submit-plan` 获得 Run；参见
+[单节点模板](../skills/personal-computing-space/references/single-action-plan.md)。
+任务路径保存输入、结果和 Attempt，提交重试使用同一计划与幂等键。
+流动作使用 `client.open_stream(target, action, input)`。
 停止实例调用其 `stop`，输入 `expected_revision` 和一个新的 `idempotency_key`。
 SSH 的成功标准是退出码为 0 且没有超时，两种 SSH 包均携带确定性 validator。
+
+## action 的容错与复合编排
+
+Loom 管理显式提交的 Run／Node／Attempt；能力包实现负责 action 内部业务流程的幂等、错误处理、恢复和补偿。通过任务节点执行时，平台会保存该 action 的输入、执行尝试和结果。能力包内部的普通 HTTP 或 SDK 调用保持为业务实现细节，平台不会自动将它们登记为独立节点。
+
+例如 action 内部顺序调用 A、B、C，在 B 完成后中断。能力包可以自行持久保存进度，通过业务幂等键或结果查询确认 A、B 的状态后继续 C；也可以由具备任务提交权限的包实现或外部调用方，使用 SDK 显式提交一个以 A、B、C 为节点的编排 Run。后者复用 Loom 的持久化、节点结果复用和 Driver 接管机制，复合 action 仍可保留一个对外接口。
+
+选择显式提交编排 Run 时：
+
+- 使用稳定的业务幂等键和相同计划重试；通过 `client.submission(key)` 找回同一次提交及其 Run，保存业务操作与 Run 的关联。
+- 在计划中声明所需包、权限和预算，使用稳定的节点步骤标识；绑定已有命名实例时使用精确的 activation 引用。
+- 由包实现或调用方处理另行提交的 Run 的等待、超时、取消、结果衔接和清理。当前这些 Run 按独立任务管理，没有自动的父子 Run 生命周期联动。
+- 由部署者明确配置可提交任务的调用身份、网络可达性和可信 Pool binding。`DependencyContext` 中声明服务动作的受限凭据不自动授予 Driver 的 `submit-plan` 权限；Driver 编排沙箱继续通过 `ctx.emit_node()` 产生节点。
+
+即使 action 在 Run 内执行，进程在外部服务已成功而结果尚未写入 Attempt 账本时中断，重启后仍可能出现 `attempt_outcome_unknown`。恢复前需由业务实现查询和对账，或进入修复流程。Loom 的执行记录不能替代上游的业务幂等。
+
+包的 `HOW_TO_USE.md` 应说明业务幂等键与重试规则、超时后如何查询结果，以及内部步骤自行容错还是交给显式编排 Run。简单查询可继续使用直接 `request-reply`，按业务需要选择任务记录和恢复粒度。平台职责见[项目说明](../README.md#编排恢复与-action-的责任边界)。
 
 ## SSH 执行限制
 

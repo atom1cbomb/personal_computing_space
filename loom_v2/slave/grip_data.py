@@ -109,7 +109,10 @@ class SlaveGripData:
                 raise GripError("unsupported_action")
             if sum(c["activation"] == claims["activation"] for c in self.calls.values()) >= self.service.settings.grip_stream_max_concurrency:
                 raise GripError("internal_error")
-            await self._validate(export, request.input)
+            try:
+                await self.service._validate_input_payload(export, request.input)
+            except RuntimeError as exc:
+                raise GripError("invalid_input") from exc
             self.calls[call_id] = {"activation": claims["activation"], "subject": claims["sub"], "task": asyncio.current_task(), "stream": None}
             snapshot = activation.model_dump(mode="json")
             snapshot["workspace_id"] = self.service.workspace_id
@@ -123,19 +126,19 @@ class SlaveGripData:
     async def invoke(self, request, *, claims=None):
         claims = claims or self.tokens.verify(request, self.audience)
         async with self.admission(request, claims, "request-reply") as (call_id, package, export, snapshot):
-            timeout = min(30.0, claims["exp"] - time.time())
+            timeout = claims["exp"] - time.time()
             if request.deadline:
                 timeout = min(timestamp(request.deadline) - time.time(), claims["exp"] - time.time())
             if timeout <= 0:
                 raise GripError("deadline_exceeded")
             async with asyncio.timeout(timeout):
-                result = await self.service.runtime_plugin_host.invoke(package, export, request.input,
+                result = await self.service.invoke_export(package, export, request.input,
                     activation=snapshot, attempt_id=call_id, deadline_seconds=timeout)
-                value = result.get("value")
-                if not isinstance(value, dict):
+                result = await self.service._validate_terminal_result(
+                    result, attempt_id=call_id, execution_epoch=1, closure=None, action_export=export)
+                if result.terminal_state != "completed" or not isinstance(result.value, dict):
                     raise GripError("internal_error")
-                await self._validate(export, value, output=True)
-            return value
+            return result.value
 
     async def open_stream(self, request, *, claims=None):
         claims = claims or self.tokens.verify(request, self.audience)

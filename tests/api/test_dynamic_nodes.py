@@ -675,7 +675,7 @@ async def test_reassign_persistence_failure_leaves_original_projection_unchanged
     await _expire_slave(repo, "slave-a")
     before = deepcopy(await repo.get_run(run.run_id))
 
-    async def fail_persist(_record):
+    async def fail_persist(_record, **kwargs):
         raise RuntimeError("persistence_failed")
 
     repo._persist = fail_persist

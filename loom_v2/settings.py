@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 from loom_orchestration.mcue import ResourceMetadata
 
 
@@ -12,6 +13,8 @@ class Settings(BaseSettings):
     codex_message_limit_bytes: int = 16 * 1024 * 1024
     coding_agent_deadline_seconds: float = 86400.0
     execution_timeout_seconds: float = 86400.0
+    driver_execution_concurrency: int = Field(default=4, ge=1, le=64)
+    pool_submission_concurrency: int = Field(default=4, ge=1, le=64)
     coding_agent_poll_interval_seconds: float = 5.0
     coding_agent_protocol_failure_seconds: float = 60.0
     worker_action_timeout_seconds: float = 3720.0

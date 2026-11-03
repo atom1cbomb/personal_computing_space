@@ -91,19 +91,33 @@ Observer 和 Pool 共用 PostgreSQL，分别写资源与任务状态；每个 Sl
 
 编排程序通过受限的 `read_json`、`materialize_json`、`register_resource`、`ensure_activation`、`wait_activation`、`defer_cleanup`、`emit_node`、`result` 接口读取内容、管理资源并等待结果，不能在编排沙箱里任意访问网络。`container:python_orchestrator/1` 通过同一个 Driver 的 `submit-plan` 接受完整闭包；普通能力包的业务调用仍在 Slave 一侧完成。每个已提交版本有不可变的 `execution/plan` 资源，Run 的 `read` 返回当前计划引用、状态和结果，并可用 `include_history=true` 读取执行证据。
 
+### 编排恢复与 action 的责任边界
+
+**Loom 提供显式编排和恢复机制，能力包实现决定哪些内部步骤交给该机制管理。** Pool 持久保存 Run、Node、Attempt 和执行历史；Driver 接管后重新运行冻结的编排程序，通过稳定的步骤标识复用已完成节点的结果。Slave 用 Attempt 账本保存单次执行结果；Slave 重启后账本中只有“执行中”记录而没有结果时，返回 `attempt_outcome_unknown`，交由失败与修复流程处理。Run 的恢复粒度由显式登记的执行节点决定，外部副作用的业务幂等仍由能力包及上游服务保证。
+
+例如，一个 action 内部依次调用 A、B、C，在 B 之后中断。如果这些只是普通 HTTP 或 SDK 直接调用，平台记录的是外层 action 的 Attempt，内部步骤的状态、重试和补偿由该 action 自己管理。复合 action 可以保留单个对外接口，并选择两种实现方式：
+
+- **自行容错**：在能力包内保存步骤状态，使用业务幂等键、结果查询和补偿逻辑恢复内部流程。
+- **显式复用 Loom 编排**：具备任务提交权限的能力包实现或外部调用方，通过 SDK 提交一个把 A、B、C 分别作为 Node 的编排 Run，由 Loom 管理这些节点的执行与恢复。
+
+另行提交的 Run 当前按独立任务管理。提交方需要使用稳定的业务幂等键、保存并找回 Run 引用，以及处理等待、超时、取消和清理；平台不会自动把它与外层 Run 的生命周期关联。服务依赖授权也不自动授予提交 Run 的权限。能力包应在自己的 `HOW_TO_USE.md` 中说明采用的恢复方式和调用方责任，详见[能力包容错与复合编排](capability_services/README.md#action-的容错与复合编排)。
+
 ## 统一使用资源：GRIP
 
 Driver、Slave、能力包、激活实例、领域资源、Plan 和 Run 都可通过稳定的 `grip://` URI 发现。使用流程是 `DESCRIBE(target)` 获取动作与 binding，再 `INVOKE(target, action, input)`。例如对 Slave 调用 `run-package`，input 引用能力包与业务输入，结果返回可查询的任务资源。激活实例直接提供自身的业务动作。
 
-包导出的 `runtime_binding.interaction` 决定调用方式：
+包导出的 `runtime_binding.interaction` 描述业务交互，省略时为 `request-reply`：
 
 | 交互类型 | 调用与结果 |
 | --- | --- |
-| `task` | 提交带业务输入、修订和幂等键的任务，返回 Run URI，再查询状态和结果 |
 | `request-reply` | 直接传入业务输入并返回业务结果，不创建 Run |
 | `byte-stream` | 使用 SDK `open_stream()` 建立通道，再读写二进制数据 |
 
-任务提交本身也使用 GRIP 的 request-reply mode，调用时应同时读取 offer 的 Schema，不能仅凭 mode 判断结果格式。需要执行记录时，可用 `run-package` 将普通服务动作作为任务运行；字节流动作不能作为任务节点。
+普通 JSON action 同时支持直接调用和显式任务执行，由调用方选择。探索和测试宜直接执行；需要持久记录、调度或恢复时，将 action 放入完整计划，经 Driver 的 `submit-plan` 提交并读取 Run。两条路径使用同一业务实现和校验，任务路径额外记录 Node／Attempt、输入与结果。`metadata.actions[].execution` 分别说明 direct 和 task 的可用性；缺少直调路由不阻断普通 JSON action 的任务执行。
+
+`run-package` 使用指定 Slave 的 `default` 实例；已有命名实例通过完整计划绑定其 activation。字节流不能作为任务节点。直接调用没有固定的 30 秒服务端上限，但仍受请求 deadline 和授权有效期约束；SDK 可配置 `timeout=None` 或较长等待值。
+
+参见[执行方式选择设计](docs/superpowers/specs/2026-11-02-action-execution-choice-design.md)及通用 skill 的[单节点计划模板](skills/personal-computing-space/references/single-action-plan.md)。
 
 SDK 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_preference` 选择已发布路由。服务授权限定目标、动作、激活修订和有效期；请求发送后失败不会自动换路重放。协议和流限制见 [GRIP 服务 binding 与字节流](docs/grip-service-bindings.md)。
 
@@ -296,7 +310,7 @@ python scripts/build_agent_skill.py --output dist
 技能会先检查 SDK；未安装时提示用户安装，并提供 Observer 下载地址和安装命令。
 安装、升级与完整性校验见 [SDK 使用说明](skills/personal-computing-space/references/sdk.md)。
 
-普通 Python 计算的完整发布契约见 [函数包指南](skills/personal-computing-space/references/function-packages.md)。GRIP `mode=request-reply` 表示协议交互方式，业务是否创建 Run 应结合 `interaction` 与输出 Schema 判断。使用已有命名实例时，直接调用该实例，或通过 SDK 的只读 `activation_ref()` 构造编排引用；不要把 Slave 的默认实例调用当作已认证命名实例，详见 [已有实例编排](skills/personal-computing-space/references/existing-activations.md)。
+普通 Python 计算的完整发布契约见 [函数包指南](skills/personal-computing-space/references/function-packages.md)。GRIP `mode=request-reply` 表示协议交互方式，业务 action 直接返回业务结果，显式任务提交返回 Run；应读取所选 offer 的输出 Schema。使用已有命名实例时，直接调用该实例，或通过 SDK 的只读 `activation_ref()` 构造编排引用；不要把 Slave 的默认实例调用当作已认证命名实例，详见 [已有实例编排](skills/personal-computing-space/references/existing-activations.md)。
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
 
@@ -334,7 +348,7 @@ SDK 0.13 的 `client.run(uri)` 默认读取当前状态与结果。需要历史�
 
 Slave 在线只说明租约有效，不保证空闲容量或指定能力可用。包已发布也不保证某个实例已完成认证，任务仍须通过就绪检查。
 
-SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，当前部署使用 SDK 0.13 与配套 Observer／Pool。
+SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，本次版本使用 SDK 0.14 与配套 Observer／Pool／Slave。
 
 ### 多机部署与安全边界
 

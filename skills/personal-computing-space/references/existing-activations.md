@@ -8,8 +8,9 @@ Instances with different names or Slaves do not share authentication implicitly.
 For a ready instance, invoke its exact offered action on its activation URI using
 the declared interaction. `Slave.run-package` has no instance-name argument and
 uses `default`; it does not mean “run on whichever named instance I discovered”.
-Missing business offers are readiness/authentication evidence, not a reason to
-switch to the Slave route. A failed default-instance Run does not prove that the
+If direct offers are missing, inspect `execution` for routing and activation
+conditions. A task-capable action can still use the [single-node plan](single-action-plan.md)
+on that same instance. A failed default-instance Run does not prove that the
 named instance's authentication recovery failed.
 
 ## A persistent task that waits for existing-instance login

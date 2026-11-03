@@ -63,8 +63,9 @@ async def execute_activation_targets(
             desired_state=desired_state,
             idempotency_key=requested_key,
             workspace_id=workspace_id,
+            run_id=package.source_run_ref if package.scope == "run_bound" else None,
             activation_closure_version_ref=(
-                package.package_closure_version_ref if desired_state == "running" else ""
+                (package.package_closure_version_ref or "") if desired_state == "running" else ""
             ),
             compute_binding_ref=str((compute_binding or {}).get("binding_id") or ""),
             instance_name=instance_name,
@@ -92,7 +93,7 @@ async def execute_activation_targets(
         if desired_state == "running":
             command_values.update(
                 {
-                    "activation_closure_version_ref": package.package_closure_version_ref,
+                    "activation_closure_version_ref": desired.activation_closure_version_ref,
                     "compute_binding": compute_binding,
                 }
             )
@@ -132,7 +133,7 @@ async def execute_activation_targets(
                 )
             else:
                 raise RuntimeError("slave_not_found")
-            await repository.record_capability_health(report)
+            await repository.record_capability_health(report, run_id=package.source_run_ref if package.scope == "run_bound" else None)
             reports.append(report.model_dump(mode="json"))
         except (RuntimeError, ValueError) as exc:
             reports.append(

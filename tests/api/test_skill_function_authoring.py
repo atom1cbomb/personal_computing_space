@@ -21,8 +21,8 @@ async def test_skill_example_publishes_executes_and_returns_readable_remote_cont
     description = await client.describe(published["resource"])
     action, = description["resource"]["metadata"]["actions"]
     assert action["mode"] == "request-reply"
-    assert action["interaction"] == "task"
-    assert action["output_schema"] == client.names.schema("run-output")
+    assert action["interaction"] == "request-reply"
+    assert action["output_schema"] != client.names.schema("run-output")
     slave = next(r for r in await client.resources(mcue="computing/slave") if r["metadata"]["available"])
     started = await client.invoke(slave["uri"], client.names.action("run-package"), {
         "package": published["resource"], "action": action["uri"],

@@ -199,7 +199,7 @@ description = await client.describe(activation["resource"])
 DESCRIBE 的 `metadata.actions` 列出包声明的全部业务动作，包括名称、说明、描述符、
 IoContract、权限和副作用，以及 `available` / `unavailable_reason`。其中 `arguments_schema`
 和 `result_schema` 是业务输入输出 Schema 引用；`input_schema` / `output_schema` 则描述 GRIP
-调用契约：task 使用参数包装及 `{run: ...}`；request-reply 直接使用业务输入输出，byte-stream 使用建流契约。Schema 正文按引用继续读取。
+调用契约：request-reply 直接使用业务输入输出，byte-stream 使用建流契约。`execution.direct` 与 `execution.task` 分别表示两种执行方式的可用性；直接 offer 缺失时仍可发现任务节点契约。Schema 正文按引用继续读取。
 `offers` 列出当前可调用的动作与 binding。实例未就绪或停止时，仍能查看全部业务动作说明。
 
 instance_config 必须符合包的配置 Schema；target 可省略，提供时必须是已登记在当前 workspace 的领域资源。配置仅进入受控激活记录，不放进公开目录。`pending_auth` 表示还需认证，不能执行业务动作；如果描述提供 auth-start，可在该实例上调用它，输入 `{"expected_revision": revision}`，按返回的认证指引完成操作。浏览器 bridge 复用现有认证辅助通道。
@@ -211,17 +211,15 @@ instance_config 必须符合包的配置 Schema；target 可省略，提供时�
 此接口需要激活凭据版本的 Observer、Driver、Slave 和 SDK 0.6.0；见
 [升级说明](activation-credentials-upgrade.md)。
 
-ready 后，从实例的 offers 选定业务动作并按其 Schema 调用。以下 SSH 导出仍为 task：
+ready 后，从实例的 offers 选定业务动作并按其 Schema 直接调用，例如：
 
 ```python
 result = await client.invoke(activation_uri, business_action_uri, {
-    "arguments": {"command": "hostname"},
-    "expected_revision": description["resource"]["metadata"]["revision"],
-    "idempotency_key": "hostname-1",
+    "command": "hostname",
 })
 ```
 
-这里的完整动作 URI 来自描述；command 只是 SSH 包输入示意，实际字段以所选动作的 Schema 为准。业务动作输入契约包装原始包输入，输出契约为异步任务 URI，业务输出仍由原 IoContract 验证。SDK 会读取 Schema 并校验调用输入及协议输出；服务端也始终校验。
+这里的完整动作 URI 来自描述；command 只是 SSH 包输入示意，实际字段以所选动作的 Schema 为准。直接调用返回业务结果。需要 Run 时，将同一 action 放入[单节点计划](../skills/personal-computing-space/references/single-action-plan.md)，通过 Driver 提交。SDK 会读取 Schema 并校验调用输入及协议输出；服务端也始终校验。
 
 调用已激活实例不会重新 provision，Slave 在生命周期锁内检查 revision 和 ready 状态。停用是在实例上调用 stop，输入 expected_revision 与 idempotency_key。若 VM 明确绑定一个 ready 实例，可以直接对 VM 调用相同业务动作；存在多个候选时，VM metadata 列出实例 URI，由调用者明确选择。
 

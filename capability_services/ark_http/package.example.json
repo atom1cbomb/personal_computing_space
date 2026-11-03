@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "ark-http",
-  "package_version": "v1",
+  "package_version": "v2",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -33,7 +33,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/chat/completions",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/chat-completions/sha256/419e2a8020f914aa976b07c780fdfc17bcadf812e36d986ba746aa08bfdf7934",
@@ -53,7 +53,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/responses/create",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/responses-create/sha256/09aeb2528c67ab3959c7ca17ec847115a3b642cf8c0044b6f8ef1a2596ea277e",
@@ -113,7 +113,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/images/generate",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/images-generate/sha256/5eedc8d55ff8fb2b775b98368481ccf6c88657e0585aa8f28ccff3d7e582032c",
@@ -133,7 +133,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/embeddings/multimodal",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/embeddings-multimodal/sha256/fceb144d3e04ffca3a799f385b1f18a27b2037167bcd8b13761e630a597172f9",
@@ -153,7 +153,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/videos/create",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-create/sha256/d64f1ba43703ca696080fb9ae093d597000cd85e873123d1699b038d7f7dfe1b",
@@ -233,7 +233,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/audio/speech",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/audio-speech/sha256/873efb9fc7792a628da75e94218d25eab8bb6f8037530351e3b955814d0dde29",

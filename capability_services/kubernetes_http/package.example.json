@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "kubernetes-http",
-  "package_version": "v8",
+  "package_version": "v9",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -152,7 +152,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/services/ensure",
-        "interaction": "task"
+        "interaction": "request-reply"
       }
     },
     {

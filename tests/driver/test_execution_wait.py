@@ -25,11 +25,12 @@ def execution_lane(request, monkeypatch):
     driver = DriverService(repo, FakeCodingAgentProvider())
     failure = AsyncMock()
     repo.get_run = AsyncMock(side_effect=lambda _: SimpleNamespace(**state))
+    repo.get_run_status = AsyncMock(side_effect=lambda _: {"run_id": "run", "state": state["state"]})
     repo.fail_run = failure
     monkeypatch.setattr(DriverMCP, "run_view", staticmethod(lambda record: dict(vars(record))))
 
     async def command(name, arguments, **kwargs):
-        if name == "run.get":
+        if name in {"run.get", "run.status"}:
             return dict(state)
         assert name == "run.fail"
         await failure(arguments["run_id"], arguments["reason"])
@@ -175,6 +176,98 @@ async def test_execution_loop_claims_durable_submission_and_settles_outcome():
         queued = await repo.get_execution_request("workspace-default", item.request_id)
         assert queued.state == "settled"
         assert queued.outcome["value"]["payload"] == {}
+    finally:
+        await driver.stop_execution_loop()
+
+
+@pytest.mark.asyncio
+async def test_execution_slots_are_bounded_and_cancellation_does_not_stop_peers():
+    repo = ObserverRepository()
+    submissions = [await repo.submit_run_plan(workspace_id="workspace-default", request_id=f"slot-{i}",
+        plan=ClosureContract(closure_id=f"slot-{i}", goal="bounded execution", body={"closure_id": f"slot-{i}"}))
+        for i in range(3)]
+    entered = [asyncio.Event() for _ in submissions]
+    releases = [asyncio.Event() for _ in submissions]
+    started, cancelled = [], []
+
+    async def executor(_action, payload):
+        index = len(started)
+        started.append(index)
+        entered[index].set()
+        try:
+            await releases[index].wait()
+        except asyncio.CancelledError:
+            cancelled.append(index)
+            raise
+        value = {"index": index}
+        digest = hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+        return ExecutionResult(resource_ref=ResourceRef(
+            resource_id=f"grip://loom.local/workspaces/workspace-default/content/document/sha256/{digest}",
+            identity_criterion="content_digest"), value=value, replay_safety="Idempotent", terminal_state="completed")
+
+    driver = DriverService(repo, provider=None, executor=executor,
+        settings=Settings(driver_execution_concurrency=2))
+    driver.start_execution_loop()
+    try:
+        await asyncio.wait_for(asyncio.gather(entered[0].wait(), entered[1].wait()), 3)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(entered[2].wait(), 0.1)
+        assert (await repo.get_execution_request("workspace-default", "slot-2")).state == "queued"
+        await repo.cancel_run(submissions[0].run_id)
+        await asyncio.wait_for(entered[2].wait(), 3)
+        assert cancelled == [0]
+        assert (await repo.get_run(submissions[1].run_id)).state == "running"
+        releases[1].set()
+        releases[2].set()
+        async with asyncio.timeout(3):
+            while True:
+                states = [(await repo.get_run(item.run_id)).state for item in submissions]
+                if states == ["cancelled", "completed", "completed"]:
+                    break
+                await asyncio.sleep(0.01)
+        assert [len((await repo.get_run(item.run_id)).attempts) for item in submissions] == [1, 1, 1]
+    finally:
+        await driver.stop_execution_loop()
+    assert driver._execution_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_renewed_lease_releases_a_full_execution_slot(monkeypatch):
+    driver = DriverService(ObserverRepository(), None, settings=Settings(driver_execution_concurrency=1))
+    entered, recovered, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    control = SimpleNamespace(driver_epoch=1)
+    claimed_epochs = set()
+
+    async def command(name, _arguments, **_kwargs):
+        assert name == "execution.claim_next"
+        epoch = control.driver_epoch
+        if epoch in claimed_epochs:
+            return {}
+        claimed_epochs.add(epoch)
+        return {"run": {"run_id": "recover-same-run", "state": "running"}, "request": {"driver_epoch": epoch}}
+
+    async def execute(claim):
+        if claim["request"]["driver_epoch"] == 1:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+        else:
+            assert cancelled.is_set()
+            recovered.set()
+            await asyncio.Event().wait()
+
+    control.command = command
+    driver.control_client = control
+    monkeypatch.setattr(driver, "_execute_claim", execute)
+    driver.start_execution_loop()
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        control.driver_epoch = 2
+        await asyncio.wait_for(recovered.wait(), 2)
+        assert claimed_epochs == {1, 2}
     finally:
         await driver.stop_execution_loop()
 

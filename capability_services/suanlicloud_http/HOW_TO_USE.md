@@ -9,7 +9,7 @@ action URI。AK/SK 不进入 package、资源属性或 action 输入。
 `instances_status` 和 `images_list`。生命周期 action 包括 `instances_run`、
 `instances_start`、`instances_stop`、`instances_reboot`、`instances_shutdown` 和
 `instances_terminate`。每个 action 的字段和结果以当前 DESCRIBE 返回的 schema 为准，
-业务调用通常返回 Run URI，最终结果是 `{action, result}`。
+业务结果是 `{action, result}`，按各 action 的 Schema 读取。
 
 创建 VM 的使用顺序是：调用 `instances_run`，按 descriptor 声明用
 `instances_list` 等待对应 InstanceId 进入 running 且出现 IP；登记 VM resource，

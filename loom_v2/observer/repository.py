@@ -17,18 +17,15 @@ class ObserverRepository(ResourceRepository):
             return getattr(self.tasks, name)
         raise AttributeError(name)
 
-    async def promote_capability_package(self, *args, **kwargs):
-        return await self.tasks.promote_capability_package(*args, **kwargs)
-
     async def abandon_capability_package(self, package_ref, **kwargs):
-        package = await self.get_capability_package(package_ref)
-        if package.workspace_id is None:
+        package = await self.get_capability_package(package_ref, run_id=kwargs.get("run_id"))
+        if package.scope == "run_bound":
             return await self.tasks.abandon_capability_package(package_ref, **kwargs)
         return await super().abandon_capability_package(package_ref, **kwargs)
 
     async def set_capability_desired(self, package_ref, *args, **kwargs):
         package = await self.get_capability_package(package_ref, run_id=kwargs.get("run_id"))
-        if package.workspace_id is None:
+        if package.scope == "run_bound":
             return await self.tasks.set_capability_desired(package_ref, *args, **kwargs)
         return await super().set_capability_desired(package_ref, *args, **kwargs)
 
@@ -36,6 +33,6 @@ class ObserverRepository(ResourceRepository):
         if not isinstance(report, CapabilityHealthReport):
             report = CapabilityHealthReport.model_validate(report)
         package = await self.get_capability_package(report.package_version_ref, run_id=kwargs.get("run_id"))
-        if package.workspace_id is None:
+        if package.scope == "run_bound":
             return await self.tasks.record_capability_health(report, **kwargs)
         return await super().record_capability_health(report, **kwargs)

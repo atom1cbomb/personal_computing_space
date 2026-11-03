@@ -86,9 +86,9 @@ Slave 需要已配置服务入口和 `egress` 网络；节点与外部 Agent 都
 
 ## 行为与限制
 
-模型生成和向量动作使用 Loom `task`，调用返回 Run，Driver 负责执行并记录业务结果。
-供应商视频任务的创建也使用 `task`，但 Run 完成只表示已取得供应商 task ID；随后仍需
-调用 `videos_get` 观察生成状态。查询和删除动作直接请求回复。
+普通 JSON 动作直接返回业务结果，也可放入显式任务计划以记录和恢复执行。
+供应商视频任务创建返回 task ID，随后需调用 `videos_get` 观察生成状态；
+即使通过 Loom Run 执行创建动作，Run 完成也只表示已取得供应商 task ID。
 完整的业务示例与状态解释见 [HOW_TO_USE](HOW_TO_USE.md)。
 
 网关接收原生多模态 JSON；媒体使用供应商可访问的 URL、Base64 data URL 或已存在的
@@ -117,7 +117,7 @@ Small／Medium 的视频权限、模型列表及超额后付费设置由供应�
   tests/capability_services/test_service_contract_artifacts.py
 ```
 
-测试覆盖真实本地 HTTP gateway、GRIP 发布/激活/认证、Driver task、runtime 转发和每个业务
+测试覆盖真实本地 HTTP gateway、GRIP 发布/激活/认证、runtime 转发和每个业务
 导出。Docker 和供应商由测试替身提供；真实 Key、真实套餐权限及供应商计费需部署后验收。
 
 ## 接入依据

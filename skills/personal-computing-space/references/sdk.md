@@ -117,15 +117,18 @@ The SDK `request_id` parameter maps to business `idempotency_key`; the GRIP
 message ID is independent. `submit` and `resubmit` raise `PlanRejectedError`
 for a readiness rejection, preserving `.code` and `.details["blockers"]`;
 raw `invoke` returns that domain result under `rejected`. Omit `request_id` on `cancel` unless checking a known Driver
-submission belongs to the Run. Action-specific `run-package`/activation keys
+submission belongs to the Run. Action-specific `run-package` keys
 are not Driver submission keys. The matching Observer release removes the old
 task REST routes. See [observer-workflow.md](observer-workflow.md) for polling,
 immutable Plan reads, repair, attestation and cancellation.
-An activated instance's `interaction=task` export instead uses
-`{arguments, expected_revision, idempotency_key}` and returns a Run.
-`request-reply` exports take business input and return business output directly;
-`byte-stream` exports use `open_stream`. Read [service-bindings.md](service-bindings.md)
-for trusted routes, scoped credentials, `configure`, and dependency contexts.
+SDK 0.14 exposes each action's `execution` metadata in `inventory` and
+`action_contract`. `execute_action` only performs direct business calls;
+`client.submit` accepts a complete plan for task execution, including the
+[single-node template](single-action-plan.md). Ordinary `request-reply` exports
+accept business input and return business output directly; `byte-stream`
+exports use `open_stream`. `LoomClient(timeout=None, connect_timeout=10)` allows
+long HTTP waits; numeric timeouts and per-call `deadline` remain available.
+Read [service-bindings.md](service-bindings.md) for routes and scoped grants.
 Use `activate-package` on a Slave for named service instances, then `auth-start`
 when offered by a pending-auth instance. This does not create a second run.
 

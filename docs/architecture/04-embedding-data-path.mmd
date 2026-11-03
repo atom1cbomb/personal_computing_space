@@ -1,0 +1,30 @@
+%% Existing AutoPaper embedding route; deployment acceptance is documented at
+%% docs/superpowers/reports/2026-10-24-grip-bindings-production.md.
+%% Current directory confirms kubernetes-http/v8 and embedding-http/v1 targets.
+%% 2026-11-02 13:58 Asia/Shanghai: slave-autopaper lease is offline;
+%% activation ready flags are last-reported state, not a current connectivity test.
+flowchart LR
+    subgraph VM["9.0.16.113 · autopaper-vm · Slave 当前租约离线"]
+        AP["AutoPaper 应用后端"]
+        Emb["Embedding 容器<br/>embedding-http/v1 · autopapers"]
+        TLS["TLS 代理 :8092"]
+        Gateway["Slave GRIP 数据入口<br/>127.0.0.1:8091"]
+        Plugin["container-http-v1<br/>runtime plugin"]
+        K8s["Kubernetes 容器<br/>kubernetes-http/v8 · nanjing"]
+        Context["实例依赖上下文<br/>精确动作 / 路由 / 短期授权"]
+        Control["Slave 控制进程"]
+    end
+    Observer["Observer<br/>9.0.16.66:8080"]
+    API["南京 Kubernetes API Server"]
+    Pod["autopapers-embedding 模型 Pod<br/>Qwen3-Embedding-4B · 2560 维<br/>受管 Service: autopapers-embedding-access:8001"]
+
+    AP -->|HTTP 127.0.0.1:18001<br/>info / embed / embed-one| Emb
+    Emb -->|GRIP open-service-stream<br/>WSS 内承载模型 HTTP| TLS
+    TLS -->|本机 WebSocket| Gateway
+    Gateway -->|WebSocket 经 Unix socket| Plugin
+    Plugin -->|私有 WebSocket| K8s
+    K8s -->|受管 port-forward 通道| API
+    API -->|转发到目标 Pod| Pod
+    Control -.->|定期请求依赖授权| Observer
+    Control -.->|写入并刷新| Context
+    Context -.->|只读挂载| Emb

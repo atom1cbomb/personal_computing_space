@@ -220,26 +220,22 @@ class NativeTasks:
     async def submission(self, key: str) -> dict[str, Any]:
         if "tasks" in vars(self.repo):
             return await self.repo.tasks.native_submission(key)
-        # Refresh both records in one snapshot; the ordinary getters may cache
-        # rows while another Pool process records progress.
-        async with self.repo._execution_transaction():
-            item = await self.repo.get_execution_request(self.workspace, key)
-            run = await self.repo._assert_run_workspace(item.run_id, self.workspace)
+        item, state, waiting = await self.repo.read_submission(self.workspace, key)
         payload = {
             "run": self.names.name("runs", item.run_id),
             "plan": self.plan_uri(item.run_id, item.closure_version) if item.snapshot_digest else None,
             "request_id": item.request_id, "run_id": item.run_id, "closure_version": item.closure_version,
             "snapshot_digest": item.snapshot_digest, "closure_contract": item.closure_contract,
-            "current_run_state": run.state,
-            "state": (item.outcome or {}).get("disposition", run.state) if item.state == "settled" else run.state,
+            "current_run_state": state,
+            "state": (item.outcome or {}).get("disposition", state) if item.state == "settled" else state,
             "execution_request_state": item.state, "source": item.source,
             "conversation_ref": item.conversation_ref, "execution_id": item.execution_id,
             "execution_epoch": item.execution_epoch,
             "started_at": item.started_at.isoformat() if item.started_at else None,
             "deadline_at": item.deadline_at.isoformat() if item.deadline_at else None, "outcome": item.outcome,
         }
-        if run.state == "awaiting_auth":
-            payload["waiting"] = run_record_payload(run, include_snapshots=False).get("waiting", {})
+        if state == "awaiting_auth":
+            payload["waiting"] = waiting
         return payload
 
     async def invoke(self, action: str, data: dict, *, run_id: str | None = None) -> dict:

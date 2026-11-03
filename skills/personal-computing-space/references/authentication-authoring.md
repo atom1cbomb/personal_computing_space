@@ -232,8 +232,9 @@ support in a package declaration.
 ## Service interaction and restart recovery
 
 A package authentication hook remains private regardless of its public data
-binding. Declare `runtime_binding.interaction` per export; default task creates
-a Run, request-reply returns business JSON, byte-stream opens a channel. Follow
+binding. `runtime_binding.interaction` defaults to request-reply for business
+JSON; byte-stream opens a channel. Ordinary JSON actions also support explicit
+task plans. Follow
 [service-bindings.md](service-bindings.md) for endpoint trust and dependency grants.
 Do not put service access tokens in instance_config or package manifests.
 

@@ -153,6 +153,7 @@ async def test_listing_and_target_descriptions_agree_and_support_registered_buil
         description = await client.describe(resource["uri"])
         assert description["resource"] == resource
         revision = description.pop("revision")
+        description.pop("expires_at", None)  # cache lifetime is not descriptor identity
         assert revision == digest_json(description, domain="loom/grip-description/v1")
     filtered = await client.resources(mcue="grip/schema")
     assert filtered == [r for r in resources if r["mcue"] == "grip/schema"]
@@ -181,7 +182,7 @@ async def test_warm_directory_observes_external_updates_and_package_visibility(d
     # Commit from another repository instance to exercise database freshness.
     stopped = activation.model_copy(update={"desired_state": "stopped", "activation_state": "stopped", "activation_revision": 2})
     await writer._persist_workspace_package(package, activations=[stopped])
-    current = await client.describe(target)
+    current = await client.describe(target, refresh=True)
     assert current["revision"] != before["revision"]
     assert current["resource"]["metadata"]["attributes"]["display_name"] == "after"
     assert current["resource"]["metadata"]["activations"] == []
@@ -197,7 +198,7 @@ async def test_warm_directory_observes_external_updates_and_package_visibility(d
     await writer._persist_workspace_package(abandoned, activations=[stopped])
     for uri in (package.version_ref, activation_uri, declared["uri"], declared["input_schema"], declared["descriptor"]["resource_id"]):
         with pytest.raises(GripError, match="not_found"):
-            await client.describe(uri)
+            await client.describe(uri, refresh=True)
     assert await client.resources(mcue="capability/package") == []
     await seed_packages(repo, 1, start=1)
     assert len(await client.resources(mcue="capability/package")) == 1
@@ -208,7 +209,7 @@ async def test_run_projection_reads_fresh_state_without_loading_history(director
     run = await repo.open_run("live", "live", "live")
     await repo.open_run("foreign", "foreign", "foreign", workspace_id="foreign")
     uri = client.names.name("runs", run.run_id)
-    await client.describe(uri)
+    await client.describe(uri, refresh=True)
     async with repo.sessions() as session, session.begin():
         await session.execute(update(RunRow).where(RunRow.run_id == run.run_id).values(state="completed", outcome={"answer": 42}))
 
@@ -230,7 +231,7 @@ async def test_run_projection_reads_fresh_state_without_loading_history(director
         await client.describe(client.names.name("runs", "foreign"))
 
 
-async def test_published_run_packages_and_workspace_isolation(directory):
+async def test_directory_never_discovers_packages_from_run_snapshots(directory):
     repo, app, client, engine = directory
     package, = await seed_packages(repo, 1)
     run = await repo.open_run("published", "published", "published")
@@ -241,8 +242,9 @@ async def test_published_run_packages_and_workspace_isolation(directory):
         await session.delete(row)
     await seed_packages(repo, 1, start=10, workspace="foreign")
     resources = await client.resources(mcue="capability/package")
-    assert [r["uri"] for r in resources] == [package.version_ref]
-    assert (await client.describe(package.version_ref))["resource"] == resources[0]
+    assert resources == []
+    with pytest.raises(GripError, match="not_found"):
+        await client.describe(package.version_ref)
 
 
 async def test_shared_action_identity_tracks_current_published_revisions(directory):
@@ -263,3 +265,23 @@ async def test_shared_action_identity_tracks_current_published_revisions(directo
     assert (await client.invoke(identity, client.names.action("read"), {}))["descriptors"] == refs
     await repo.abandon_capability_package(second.version_ref)
     assert (await client.invoke(identity, client.names.action("read"), {}))["descriptors"] == refs[:1]
+
+
+async def test_old_contracts_survive_database_reload_without_becoming_executable(directory):
+    repo, app, client, engine = directory
+    package, = await seed_packages(repo, 1, exports=1, activations=0)
+    value = package.model_dump(mode="json")
+    value["action_exports"][0]["runtime_binding"]["interaction"] = "task"
+    value["package_digest"] = ""
+    legacy = CapabilityPackageVersion.from_record(value)
+    frozen = legacy.model_dump(mode="json")
+    await repo._persist_workspace_package(legacy, activations=[])
+    await repo.open_run("legacy-history", "history", "history")
+    async with repo.sessions() as session, session.begin():
+        await session.execute(update(RunRow).where(RunRow.run_id == "legacy-history").values(capability_packages=[frozen]))
+    restored = ObserverRepository(engine, content_store=repo.content_store, settings=repo.settings)
+    assert (await restored.get_capability_package(package.version_ref)).model_dump(mode="json") == frozen
+    record = await restored.get_run("legacy-history")
+    assert record.capability_packages[0].model_dump(mode="json") == frozen
+    assert await restored.list_published_package_states(repo.settings.workspace_id) == []
+    assert await client.resources(mcue="capability/package") == []

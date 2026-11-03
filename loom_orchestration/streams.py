@@ -140,7 +140,7 @@ class TCPStream:
             await self.writer.wait_closed()
 
 
-async def connect_stream(endpoint: str, request: dict, *, timeout: float = 30,
+async def connect_stream(endpoint: str, request: dict, *, timeout: float | None = 30,
                          expires_at: float | None = None, ssl: Any = None,
                          unix_path: str | None = None) -> WebSocketStream:
     """Send once; a failed/uncertain handshake is never retried."""
@@ -155,12 +155,12 @@ async def connect_stream(endpoint: str, request: dict, *, timeout: float = 30,
     if ssl is not None and urlsplit(endpoint).scheme == "wss":
         options["ssl"] = ssl
     connector = unix_connect(unix_path, uri=endpoint, **options) if unix_path else connect(endpoint, **options)
-    handshake_end = time.monotonic() + timeout
+    handshake_end = time.monotonic() + timeout if timeout is not None else None
     ws = await connector
     try:
         if ws.subprotocol != STREAM_PROTOCOL:
             raise GripError("unsupported_binding")
-        async with asyncio.timeout(max(0, handshake_end - time.monotonic())):
+        async with asyncio.timeout(max(0, handshake_end - time.monotonic()) if handshake_end is not None else None):
             await ws.send(raw)
             message = await ws.recv()
             if not isinstance(message, str):

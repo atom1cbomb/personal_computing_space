@@ -6,11 +6,12 @@
 
 | interaction | GRIP mode | 输入 / 输出 |
 |---|---|---|
-| task（默认） | request-reply | arguments、expected_revision、idempotency_key / Run URI |
-| request-reply | request-reply | IoContract 业务输入 / 业务结果 |
+| request-reply（默认） | request-reply | IoContract 业务输入 / 业务结果 |
 | byte-stream | byte-stream | 建流输入 / stream-open 确认，随后二进制数据 |
 
-`run-package` 可以显式持久执行普通服务动作；流动作不能作为任务节点。服务调用不创建 Run，也不把模型输入输出存入 ContentStore。调用者可以为同一动作选择直连或 Observer 中转，结果语义不变。
+直接 `request-reply` 服务调用不隐式创建 Run，也不自动把输入输出存入 ContentStore。普通 JSON 服务动作可以显式放入 Run 作为 Node，走 Slave 的任务执行入口，记录 Node／Attempt 并保存输入和结果。`run-package` 也可以显式持久执行普通服务动作，使用指定 Slave 的 `default` 实例；已有命名实例需要通过完整计划绑定其 activation。流动作不能作为任务节点。调用者可以为直接服务调用选择直连或 Observer 中转，结果语义不变。
+
+Run 的恢复边界是显式登记的 Node／Attempt。action 内部直接调用其他服务时，由能力包实现内部流程的容错；需要平台管理这些步骤时，由有权限的包实现或外部调用方显式提交编排 Run。另行提交的 Run 当前按独立任务管理，其关联、等待和取消由提交方处理，见[编排恢复与 action 的责任边界](../README.md#编排恢复与-action-的责任边界)。
 
 SDK 0.8 的 `trusted_bindings` 接收 operator 允许的 protocol、endpoint、audience；`binding_preference` 选择其中已被描述发布的 endpoint 或 audience。显式 endpoint 不会被改写，省略时必须唯一匹配受信路由。`invoke()` 处理 JSON 结果；`open_stream()` 返回支持异步上下文、read/write/aclose 的本地通道对象。默认 HTTP 客户端的认证头、Cookie 不会被转发。发送后失败不会换路重试。
 
@@ -22,7 +23,7 @@ Observer 用 Ed25519 签发最长一小时的访问凭据，限定主体、受�
 
 依赖上下文由 Slave 周期更新到每个实例独立的只读目录，包含描述、Schema、路由与短期凭据。应用使用 `DependencyContext`，可用 min_valid_seconds 为新请求预留授权有效期，不需要 Observer owner token，也不读取其他实例的上游凭据。变更依赖会删除旧上下文并关闭相关流。Observer 暂时不可用时，已有直连与缓存凭据在原期限内工作；本地容器恢复检查不依赖 Observer 注册成功。
 
-K8s v7 增加 services-ensure（task）、service-access-status（request-reply）、open-service-stream（byte-stream）。认证 HOME 位于持久卷 `/var/lib/loom/service/kube`。services-ensure 只管理明确配置且由本服务拥有的普通 ClusterIP Service，检查工作负载 UID、selector 和保存的 Service UID；不采用同名陌生资源或将 headless Service 转换成目标。配置更新可条件替换已拥有 Service，冲突时失败。端口转发运行在能力包内部；网络/进程故障退避恢复，RBAC 和身份配置错误停止重试，认证过期等待重新授权。
+K8s v7 增加 services-ensure（request-reply）、service-access-status（request-reply）、open-service-stream（byte-stream）。认证 HOME 位于持久卷 `/var/lib/loom/service/kube`。services-ensure 只管理明确配置且由本服务拥有的普通 ClusterIP Service，检查工作负载 UID、selector 和保存的 Service UID；不采用同名陌生资源或将 headless Service 转换成目标。配置更新可条件替换已拥有 Service，冲突时失败。端口转发运行在能力包内部；网络/进程故障退避恢复，RBAC 和身份配置错误停止重试，认证过期等待重新授权。
 
 embedding-http v1 使用 SDK 的 HTTPX/httpcore stream transport 经 K8s GRIP 通道请求实际模型，复用库解析 HTTP。原生适配使用 AutoPaper 当前契约：`/info` 返回 model/dimension/device，`/embed` 返回 embeddings/dimension，`/embed-one` 返回 embedding/dimension，并保留 normalize/instruction。私有动作在 8080，消费接口在 8081；发布端口只由 operator 批准。
 

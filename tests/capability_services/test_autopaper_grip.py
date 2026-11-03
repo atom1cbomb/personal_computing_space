@@ -119,16 +119,20 @@ async def test_autopaper_login_every_export_and_reauthentication(tmp_path):
                 with pytest.raises(GripError, match="invalid_input"):
                     await client.invoke(target, actions["papers_get"], {"paper_id": "../admin"})
 
-                payload = {"arguments": {"keywords": ["RAG"], "top_k": 5},
-                           "expected_revision": activated["revision"], "idempotency_key": "search-once"}
-                submitted = await client.invoke(target, actions["papers_search"], payload)
-                assert await client.invoke(target, actions["papers_search"], payload) == submitted
+                direct = await client.invoke(target, actions["papers_search"], {
+                    "keywords": ["agent"]})
+                assert direct["result"]["papers"][0]["id"] == PAPER["id"]
+                from tests.support.action_plan import submit_activation_plan
+                submitted = await submit_activation_plan(client, target, actions["papers_search"],
+                                                         {"keywords": ["RAG"], "top_k": 5}, "search-once")
+                assert await client.submission("search-once") == submitted
                 outcome = await wait_result(app, client, submitted["run"])
                 assert outcome["state"] == "completed", outcome
                 assert outcome["outcome"]["value"]["result"]["papers"][0]["title"] == PAPER["title"]
                 searches = [r for r in calls if r.url.path == "/api/search"]
-                assert len(searches) == 1
+                assert len(searches) == 2
                 assert json.loads(searches[0].content)["auto_ingest"] is False
+                assert json.loads(searches[1].content)["auto_ingest"] is False
                 assert "private-session" not in json.dumps(outcome)
                 assert "private-session" not in json.dumps(await client.resources())
                 created = [c for c in runner.calls if c[0] == "create"]

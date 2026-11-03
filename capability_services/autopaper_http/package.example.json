@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "autopaper-http",
-  "package_version": "v2",
+  "package_version": "v3",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -36,7 +36,7 @@
       "replay_safety": "NotReplaySafe",
       "runtime_binding": {
         "path": "/v1/papers/search",
-        "interaction": "task"
+        "interaction": "request-reply"
       },
       "io_contract_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-search/sha256/bcc0de06c47dac54309a933bb4c9f54216c2ccc832b4e4f8d778b19d94530397",

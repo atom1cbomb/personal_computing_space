@@ -203,7 +203,7 @@ async def test_catalog_and_startup_never_read_run_execution_history(history):
             await repo.refresh_slaves()
             await repo.list_capability_packages()
             assert (await repo.get_capability_package(legacy.version_ref, run_id=owner.run_id)).package_digest == legacy.package_digest
-            await repo.get_capability_package_aggregate(legacy.version_ref)
+            await repo.get_capability_package_aggregate(legacy.version_ref, run_id=legacy.source_run_ref)
             await repo.list_package_activations(legacy)
             await repo.recover_persisted_activation_waits()
             await repo.recover_stale_runs()

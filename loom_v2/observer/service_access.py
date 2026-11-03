@@ -1,6 +1,7 @@
 """Observer binding projection, scoped issuance and optional service relay."""
 from __future__ import annotations
 
+import asyncio
 import hmac
 import time
 from datetime import datetime, timezone
@@ -52,19 +53,18 @@ class ObserverServiceAccess:
     def bindings(self, package, activation, mode):
         return self.routes.bindings(activation.target_slave, activation_uri(self.names, package, activation), mode)
 
-    def project(self, package, activation, offers):
+    def project(self, package, activation, actions):
         result = []
-        for export, offer in zip(package.action_exports, offers, strict=True):
+        for export, offer, declaration in zip(package.action_exports, actions.offers, actions.declarations, strict=True):
             mode = interaction(export)
-            if mode == "task":
-                result.append(offer)
-            elif (not self.routes.problem(activation.target_slave, activation_uri(self.names, package, activation), mode)
+            if ("direct" in declaration["execution"]
+                  and self.routes.executions(package, export, activation).get("direct", {}).get("available")
                   and (bindings := self.bindings(package, activation, mode))):
                 result.append({"action": offer["action"], "bindings": bindings})
         return result
 
     def metadata(self, package, activation):
-        actions = [export_uri(self.names, package, e) for e in package.action_exports if interaction(e) != "task"]
+        actions = [export_uri(self.names, package, e) for e in package.action_exports]
         if not actions:
             return {}
         return {"service_access": {"activation": activation_uri(self.names, package, activation),
@@ -80,8 +80,6 @@ class ObserverServiceAccess:
         if offer is None:
             raise GripError("unsupported_action")
         export = self.app.state.grip._export(package, action)
-        if interaction(export) == "task":
-            raise GripError("unsupported_action")
         return entry, package, activation, export, offer
 
     async def issue_for(self, data, *, subject, caller_revision=None, expires_at=None):
@@ -182,12 +180,16 @@ class ObserverServiceAccess:
         if slave is not None:
             return await slave.grip_data.invoke(request, claims=claims)
         binding = self.upstream(package, activation, "request-reply")
-        timeout = min(30, claims["exp"] - time.time())
+        timeout = claims["exp"] - time.time()
         if request.deadline:
             timeout = min(timestamp(request.deadline) - time.time(), claims["exp"] - time.time())
         if timeout <= 0:
             raise GripError("deadline_exceeded")
-        response = await self.http.post(binding.endpoint, json=self._delegation(request, claims, binding), timeout=timeout)
+        try:
+            async with asyncio.timeout(timeout):
+                response = await self.http.post(binding.endpoint, json=self._delegation(request, claims, binding), timeout=timeout)
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise GripError("deadline_exceeded") from exc
         if response.status_code != 200 or response.headers.get("content-type", "").split(";")[0] != "application/json":
             raise GripError("internal_error")
         reply = Reply.model_validate(decode(response.content))

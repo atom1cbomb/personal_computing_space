@@ -82,7 +82,7 @@ def _decode_run(payload: dict[str, Any]) -> RemoteRunRecord:
         outcome=payload.get("outcome"),
         events=list(payload.get("events") or []),
         attempts=list(payload.get("attempts") or []),
-        capability_packages=[CapabilityPackageVersion.model_validate(item) for item in payload.get("capability_packages", [])],
+        capability_packages=[CapabilityPackageVersion.from_record(item) for item in payload.get("capability_packages", [])],
         capability_activations=[CapabilityPackageActivation.model_validate(item) for item in payload.get("capability_activations", [])],
         dynamic_nodes=[DynamicNode.model_validate(item) for item in payload.get("dynamic_nodes", [])],
     )
@@ -102,6 +102,9 @@ class RemotePoolRepository:
 
     async def get_run(self, run_id: str) -> RemoteRunRecord:
         return _decode_run(await self.control.command("run.get", {"run_id": run_id}))
+
+    async def get_run_status(self, run_id: str) -> dict[str, Any]:
+        return await self.control.command("run.status", {"run_id": run_id})
 
     async def _program_command(self, command: str, run_id: str, arguments: dict[str, Any]) -> Any:
         payload = {
@@ -183,7 +186,7 @@ class RemotePoolRepository:
     async def list_package_activations(self, package: CapabilityPackageVersion) -> list[CapabilityPackageActivation]:
         payload = await self.control.command("capability.activations", {"package_ref": {
             "resource_id": package.version_ref, "version_or_digest": package.package_digest,
-        }})
+        }, "run_id": package.source_run_ref if package.scope == "run_bound" else None})
         return [CapabilityPackageActivation.model_validate(item) for item in payload["activations"]]
 
     def _slave_supports_package(self, slave_id: str, package: CapabilityPackageVersion) -> bool:

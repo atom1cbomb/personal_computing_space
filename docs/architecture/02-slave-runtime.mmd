@@ -1,0 +1,42 @@
+%% Existing implementation; a repeated node structure, illustrated with slave-a.
+%% Sources: loom_v2/slave/runtime_plugins.py, slave/app.py, slave/grip_data.py,
+%% runtime_plugins/container_http_v1/runtime.py and driver/orchestrator.py.
+%% slave-a data routing: Observer relay -> TLS :8092 -> loopback :8091.
+%% slave-autopaper also advertises direct HTTPS/WSS; slave-npc has no service data binding.
+flowchart LR
+    D["Driver"]
+    O["Observer"]
+    P["Driver Pool"]
+    Registry["容器镜像 Registry"]
+    Upstream["外部业务服务"]
+    Sandbox["Driver 上的 Docker 编排沙箱<br/>python_orchestrator/1"]
+
+    subgraph Node["Slave 节点内部 · 以 slave-a 为例"]
+        C["Slave 控制入口 :8081<br/>执行 / 激活 / 认证"]
+        TLS["TLS 反向代理 :8092"]
+        G["GRIP 数据入口<br/>127.0.0.1:8091"]
+        DB[("本地 PostgreSQL<br/>Attempt 账本 / 激活状态")]
+        E["进程执行器<br/>process:json_stdio/1"]
+        Plugin["独立 runtime plugin<br/>container-http-v1"]
+        Docker["Docker Engine"]
+        Services["能力包服务容器"]
+        Credentials["实例凭据 / 认证卷<br/>依赖描述和短期授权"]
+    end
+
+    D -->|JSON 消息经 stdin / stdout| Sandbox
+    D -->|内部 GRIP execute-attempt| C
+    O -->|HTTP 激活 / 停止 / 认证桥接| C
+    C -->|HTTP 执行授权校验| P
+    C -->|SQL 持久化和重放执行结果| DB
+    C -->|stdin / stdout 交换 JSON| E
+    C -->|HTTP 经 Unix socket| Plugin
+    O -->|HTTPS JSON / WSS 业务中转| TLS
+    TLS -->|本机 HTTP / WS| G
+    G -->|HTTP / WS 经 Unix socket| Plugin
+    Plugin -->|Docker API 经 docker.sock| Docker
+    Docker -->|镜像拉取| Registry
+    Docker -->|创建 / 启停容器| Services
+    Plugin -->|私有 HTTP JSON / WS 字节流| Services
+    C -->|写入 / 刷新实例上下文| Credentials
+    Credentials -.->|实例独立挂载| Services
+    Services -->|HTTPS / SSH / 其他包声明协议| Upstream

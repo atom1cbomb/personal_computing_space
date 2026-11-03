@@ -115,16 +115,7 @@ async def test_ark_profile_authentication_all_exports_and_key_expiry(tmp_path):
                     name = export["action_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]
                     declaration = actions[name.replace("-", "_")]
                     assert declaration["description"]
-                    if export["runtime_binding"]["interaction"] == "task":
-                        payload = {"arguments": ARGUMENTS[name], "expected_revision": ready["revision"],
-                                   "idempotency_key": "ark-" + name}
-                        submitted = await client.invoke(target, declaration["uri"], payload)
-                        assert await client.invoke(target, declaration["uri"], payload) == submitted
-                        outcome = await wait_result(app, client, submitted["run"])
-                        assert outcome["state"] == "completed", outcome
-                        result = outcome["outcome"]["value"]
-                    else:
-                        result = await client.invoke(target, declaration["uri"], ARGUMENTS[name])
+                    result = await client.invoke(target, declaration["uri"], ARGUMENTS[name])
                     assert result["action"] == name.replace("-", "_")
                     assert isinstance(result["result"], dict)
                     assert KEY not in json.dumps(result)

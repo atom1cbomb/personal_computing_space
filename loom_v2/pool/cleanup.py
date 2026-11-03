@@ -69,7 +69,7 @@ async def materialize_json(repository: Any, run_id: str, *, execution_id: str, s
         "phase": "program_content_materialized", "execution_id": execution_id,
         "step_id": step_id, "content_ref": ref.model_dump(mode="json"),
     })
-    await repository._persist(record)
+    await repository._persist(record, fields=set())
     return ref
 
 
@@ -102,7 +102,7 @@ async def register_program_resource(repository: Any, run_id: str, *, execution_i
         "phase": "program_resource_registered", "execution_id": execution_id,
         "step_id": step_id, "arguments": payload,
     })
-    await repository._persist(record)
+    await repository._persist(record, fields=set())
     return resource_ref
 
 
@@ -149,7 +149,7 @@ async def ensure_program_activation(repository: Any, run_id: str, *, execution_i
     )
     record.events.append({"phase": "program_activation_ensured", "execution_id": execution_id,
                           "step_id": step_id, "arguments": arguments, "activation_ref": ref.model_dump(mode="json")})
-    await repository._persist(record)
+    await repository._persist(record, fields=set())
     return ref
 
 
@@ -216,7 +216,7 @@ async def register_cleanup(repository: Any, run_id: str, *, execution_id: str, s
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     record.events.append(event)
-    await repository._persist(record)
+    await repository._persist(record, fields={"dynamic_nodes"})
     return event
 
 
@@ -243,6 +243,6 @@ async def finish_cleanup(repository: Any, run_id: str, *, execution_id: str,
         record.state = "failed"
         record.outcome.update(disposition="failed", terminal_error={"code": "cleanup_failed"})
     record.events.append({"phase": "cleanup_finished", "execution_id": execution_id, "errors": errors})
-    await repository._persist(record)
+    await repository._persist(record, fields={"outcome", "state"})
     await repository._settle_execution_request(run_id, execution_id=execution_id, outcome=record.outcome)
     return record

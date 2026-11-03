@@ -18,6 +18,7 @@ from loom_v2.contracts.api import (
     CapabilityPackageUploadRequest,
     ContentPutRequest,
     IdempotencyRequest,
+    RunActivationStopRequest,
 )
 from loom_v2.content_store import ContentStore
 from loom_v2.contracts.agents import AgentRegistration, DriverCommand
@@ -203,13 +204,14 @@ def create_app(
                 await app.state.repo._assert_package_workspace(
                     report.package_version_ref,
                     workspace_id,
+                    run_id=payload.run_id,
                 )
             except KeyError as exc:
                 raise HTTPException(
                     status_code=404,
                     detail="capability_package_not_found",
                 ) from exc
-            activation = await app.state.repo.record_capability_health(report)
+            activation = await app.state.repo.record_capability_health(report, run_id=payload.run_id)
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=f"missing_field:{exc.args[0]}") from exc
         except ValueError as exc:
@@ -306,7 +308,10 @@ def create_app(
 
     @app.get("/api/v1/capability-packages")
     async def capability_packages(run_id: str | None = None, include_abandoned: bool = False) -> list[dict[str, Any]]:
-        packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=include_abandoned, workspace_id=settings.workspace_id)
+        try:
+            packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=include_abandoned, workspace_id=settings.workspace_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="run_not_found") from exc
         result = []
         for package in packages:
             item = await app.state.repo.public_package_payload(package)
@@ -331,16 +336,16 @@ def create_app(
     @app.get("/api/v1/runs/{run_id}/capability-packages")
     async def run_capability_packages(run_id: str) -> list[dict[str, Any]]:
         try:
-            packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=True)
-        except KeyError as exc:
+            packages = await app.state.repo.list_capability_packages(run_id=run_id, include_abandoned=True, workspace_id=settings.workspace_id)
+        except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="run_not_found") from exc
         return [{**(await app.state.repo.public_package_payload(package)), "activations": [activation.model_dump(mode="json") for activation in await app.state.repo.list_package_activations(package, refresh=False)]} for package in packages]
 
     @app.get("/api/v1/capability-packages/{package_ref:path}")
-    async def capability_package(package_ref: str) -> dict[str, Any]:
+    async def capability_package(package_ref: str, run_id: str | None = None) -> dict[str, Any]:
         try:
-            package = await app.state.repo.get_capability_package(package_ref, run_id=None)
-            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
+            package = await app.state.repo.get_capability_package(package_ref, run_id=run_id)
+            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id, run_id=run_id)
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
         item = await app.state.repo.public_package_payload(package)
@@ -350,12 +355,31 @@ def create_app(
         ]
         return item
 
-    @app.post("/api/v1/capability-packages/{package_ref:path}/promote")
-    async def promote_capability_package(package_ref: str, payload: CapabilityPublishRequest) -> dict[str, Any]:
+    @app.post("/api/v1/runs/{run_id}/capability-packages/{package_ref:path}/stop")
+    async def stop_run_activation(run_id: str, package_ref: str, payload: RunActivationStopRequest) -> dict[str, Any]:
+        from .activation import execute_activation_targets
         try:
-            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
+            package = await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id, run_id=run_id)
+            if package.scope != "run_bound" or package.source_run_ref != run_id:
+                raise ValueError("run_package_owner_required")
+            reports = await execute_activation_targets(
+                app.state.repo, package, [payload.target_slave], desired_state="stopped",
+                workspace_id=settings.workspace_id, workers=app.state.workers, slaves=app.state.slaves,
+                slave_gateway=app.state.slave_gateway, instance_name=payload.instance_name,
+                idempotency_key=payload.idempotency_key, expected_revision=payload.expected_revision,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"health_reports": reports}
+
+    @app.post("/api/v1/capability-packages/{package_ref:path}/promote")
+    async def promote_capability_package(package_ref: str, payload: CapabilityPublishRequest, run_id: str | None = None) -> dict[str, Any]:
+        try:
+            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id, run_id=run_id)
             package = await app.state.repo.promote_capability_package(
-                package_ref, idempotency_key=payload.idempotency_key, approved_digest=payload.approved_digest,
+                package_ref, run_id=run_id, idempotency_key=payload.idempotency_key, approved_digest=payload.approved_digest,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
@@ -364,10 +388,10 @@ def create_app(
         return {**package.model_dump(mode="json"), "resource": package.version_ref}
 
     @app.post("/api/v1/capability-packages/{package_ref:path}/abandon")
-    async def abandon_capability_package(package_ref: str, payload: IdempotencyRequest | None = None) -> dict[str, Any]:
+    async def abandon_capability_package(package_ref: str, payload: IdempotencyRequest | None = None, run_id: str | None = None) -> dict[str, Any]:
         try:
-            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id)
-            package = await app.state.repo.abandon_capability_package(package_ref, idempotency_key=payload.idempotency_key if payload else None)
+            await app.state.repo._assert_package_workspace(package_ref, settings.workspace_id, run_id=run_id)
+            package = await app.state.repo.abandon_capability_package(package_ref, run_id=run_id, idempotency_key=payload.idempotency_key if payload else None)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="capability_package_not_found") from exc
         return {**package.model_dump(mode="json"), "resource": package.version_ref}

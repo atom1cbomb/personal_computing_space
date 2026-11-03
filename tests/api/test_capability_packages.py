@@ -93,7 +93,7 @@ async def test_uploaded_workspace_package_can_be_activated_without_run(resource_
         response = invoke(client, n.name("slaves", "slave-a"), n.action("activate-package"), {
             "package": package, "idempotency_key": "activate-uploaded", **target_fields,
         })
-        assert response["state"] == "ready"
+        assert response["state"] == "degraded"  # task-ready; this fixture has no direct signing keys
         assert any(r["metadata"]["package"] == package for r in resources(client, "capability/activation"))
 
 
@@ -214,7 +214,7 @@ async def test_candidate_is_run_bound_and_cannot_be_used_by_another_run():
             ).model_dump(mode="json")},
         ],
     )
-    assert any(blocker["code"] == "capability_package_scope_mismatch" for blocker in result.readiness["blockers"])
+    assert any(blocker["code"] == "capability_package_not_found" for blocker in result.readiness["blockers"])
     assert all(item.package_id != "pkg" for item in await repo.list_capability_packages(run_id=second.run_id))
 
 
@@ -279,8 +279,8 @@ async def test_same_package_coordinate_across_runs_resolves_by_digest():
     assert first.package_digest == second.package_digest
     first_ref = ResourceRef(resource_id=first.version_ref, version_or_digest=first.package_digest)
     second_ref = ResourceRef(resource_id=second.version_ref, version_or_digest=second.package_digest)
-    assert (await repo.get_capability_package(first_ref)).package_digest == first.package_digest
-    assert (await repo.get_capability_package(second_ref)).package_digest == second.package_digest
+    assert (await repo.get_capability_package(first_ref, run_id=first.source_run_ref)).package_digest == first.package_digest
+    assert (await repo.get_capability_package(second_ref, run_id=second.source_run_ref)).package_digest == second.package_digest
 
 
 @pytest.mark.asyncio
@@ -309,7 +309,7 @@ async def test_package_lookup_rejects_legacy_coordinate_aliases() -> None:
     )
     package = (await repo.get_run(run.run_id)).capability_packages[0]
 
-    assert await repo.get_capability_package(package.version_ref) == package
+    assert await repo.get_capability_package(package.version_ref, run_id=package.source_run_ref) == package
     for alias in (
         package.package_id,
         package.package_version,
@@ -317,7 +317,7 @@ async def test_package_lookup_rejects_legacy_coordinate_aliases() -> None:
         package.package_digest,
     ):
         with pytest.raises(KeyError):
-            await repo.get_capability_package(alias)
+            await repo.get_capability_package(alias, run_id=package.source_run_ref)
 
 
 @pytest.mark.asyncio
@@ -346,9 +346,9 @@ async def test_promoting_different_digest_same_reusable_coordinate_is_rejected()
     first, second = candidates
     first_ref = ResourceRef(resource_id=first.version_ref, version_or_digest=first.package_digest)
     second_ref = ResourceRef(resource_id=second.version_ref, version_or_digest=second.package_digest)
-    await repo.promote_capability_package(first_ref, approved_digest=first.package_digest)
+    await repo.promote_capability_package(first_ref, run_id=first.source_run_ref, approved_digest=first.package_digest)
     with pytest.raises(ValueError, match="capability_package_identity_conflict"):
-        await repo.promote_capability_package(second_ref, approved_digest=second.package_digest)
+        await repo.promote_capability_package(second_ref, run_id=second.source_run_ref, approved_digest=second.package_digest)
 
 
 @pytest.mark.asyncio
@@ -367,13 +367,13 @@ async def test_promotion_derives_reusable_version_without_mutating_candidate():
         listed = client.get(f"/api/v1/runs/{run.run_id}/capability-packages").json()
         assert listed[0]["resource"] == candidate.version_ref
         response = client.post(f"/api/v1/capability-packages/{listed[0]['resource']}/promote",
-                               json={"approved_digest": candidate.package_digest})
+                               params={"run_id": run.run_id}, json={"approved_digest": candidate.package_digest})
         assert response.status_code == 200, response.text
         promoted = response.json()
         assert promoted["resource"] != candidate.version_ref
         assert promoted["resource"] in [r["uri"] for r in resources(client, "capability/package")]
         assert candidate.publication_state == "candidate"
-        abandoned = client.post(f"/api/v1/capability-packages/{candidate.version_ref}/abandon")
+        abandoned = client.post(f"/api/v1/capability-packages/{candidate.version_ref}/abandon", params={"run_id": run.run_id})
         assert abandoned.status_code == 200, abandoned.text
         assert abandoned.json()["resource"] == candidate.version_ref
     reusable = await repo.get_capability_package(promoted["resource"])
@@ -399,9 +399,9 @@ async def test_candidate_ref_promotion_is_idempotent():
     await repo.fail_run(run.run_id, "test")
     candidate = (await repo.get_run(run.run_id)).capability_packages[0]
 
-    first = await repo.promote_capability_package(candidate.version_ref, approved_digest=candidate.package_digest)
-    second = await repo.promote_capability_package(candidate.version_ref, approved_digest=candidate.package_digest)
-    third = await repo.promote_capability_package(candidate.version_ref, approved_digest=candidate.package_digest)
+    first = await repo.promote_capability_package(candidate.version_ref, run_id=run.run_id, approved_digest=candidate.package_digest)
+    second = await repo.promote_capability_package(candidate.version_ref, run_id=run.run_id, approved_digest=candidate.package_digest)
+    third = await repo.promote_capability_package(candidate.version_ref, run_id=run.run_id, approved_digest=candidate.package_digest)
 
     assert second.version_ref == first.version_ref
     assert third.version_ref == first.version_ref
@@ -430,7 +430,7 @@ async def test_candidate_ref_promotion_is_idempotent_under_concurrent_retries():
     candidate = (await repo.get_run(run.run_id)).capability_packages[0]
 
     results = await asyncio.gather(*(
-        repo.promote_capability_package(candidate.version_ref, approved_digest=candidate.package_digest)
+        repo.promote_capability_package(candidate.version_ref, run_id=run.run_id, approved_digest=candidate.package_digest)
         for _ in range(3)
     ))
 

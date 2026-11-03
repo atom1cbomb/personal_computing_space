@@ -348,7 +348,7 @@ class SlaveService:
             package = self._find_cached_package(
                 activation.package_version_ref, activation.package_digest
             )
-            if package is None:
+            if package is None or package.scope == "run_bound":
                 continue
             actions.update(
                 action_name(item.action_descriptor_ref.resource_id)
@@ -536,7 +536,7 @@ class SlaveService:
         # this write and plugin completion is recovered by startup reconcile.
         values = {
             "activation_closure_version_ref": command.activation_closure_version_ref
-            or package.package_closure_version_ref,
+            or package.package_closure_version_ref or "",
             "compute_binding_ref": command.compute_binding.binding_id
             if command.compute_binding
             else "",
@@ -651,13 +651,33 @@ class SlaveService:
             raise RuntimeError("driver_side_executor_required")
         if package.is_interface:
             raise RuntimeError("capability_package_not_executable")
-        activation_key = self._activation_key(package.version_ref, command.instance_name)
-        lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
-        async with lock:
-            existing = self.activations.get(activation_key)
-            if self._uses_runtime_plugin(package):
-                return await self._provision_runtime_locked(command, package)
-            return await self._provision_executor_locked(command, package)
+        package_lock = self._activation_locks.setdefault("package:" + package.version_ref, asyncio.Lock())
+        instance_lock = self._activation_locks.setdefault(
+            f"runtime:{package.package_digest}:{command.instance_name}", asyncio.Lock())
+        async with package_lock, instance_lock:
+            # A private activation must never become shared through a cache or
+            # digest-backed container alias. Workspace migration uses a new instance.
+            for activation in self.activations.values():
+                previous = self._find_cached_package(activation.package_version_ref, activation.package_digest)
+                if previous is None:
+                    continue
+                if package.version_ref == previous.version_ref and package.package_digest != previous.package_digest:
+                    raise RuntimeError("capability_package_identity_conflict")
+                owner = package.source_run_ref if package.scope == "run_bound" else None
+                previous_owner = previous.source_run_ref if previous.scope == "run_bound" else None
+                if owner == previous_owner:
+                    continue
+                if package.version_ref == previous.version_ref:
+                    raise RuntimeError("capability_package_scope_conflict")
+                if (activation.desired_state == "running" and package.package_digest == activation.package_digest
+                        and command.instance_name == activation.instance_name):
+                    raise RuntimeError("activation_instance_scope_conflict")
+            activation_key = self._activation_key(package.version_ref, command.instance_name)
+            lock = self._activation_locks.setdefault(activation_key, asyncio.Lock())
+            async with lock:
+                if self._uses_runtime_plugin(package):
+                    return await self._provision_runtime_locked(command, package)
+                return await self._provision_executor_locked(command, package)
 
     async def auth_start(
         self, package: CapabilityPackageVersion, *, instance_name: str = "default",
@@ -789,7 +809,7 @@ class SlaveService:
             ))
         pending_values = {
             "activation_closure_version_ref": command.activation_closure_version_ref
-            or package.package_closure_version_ref,
+            or package.package_closure_version_ref or "",
             "compute_binding_ref": command.compute_binding.binding_id
             if command.compute_binding
             else "",
@@ -932,7 +952,7 @@ class SlaveService:
                 package_version_ref=ref,
                 package_digest=package.package_digest,
                 target_slave=self.slave_id,
-                activation_closure_version_ref=package.package_closure_version_ref,
+                activation_closure_version_ref=package.package_closure_version_ref or "",
                 compute_binding_ref="",
                 activation_state="not_installed",
                 evidence_refs=evidence_refs,
@@ -1219,13 +1239,91 @@ class SlaveService:
         )
         return evidence.model_dump(mode="json")
 
+    async def invoke_export(self, package, action_export, payload, *, activation, attempt_id, deadline_seconds=None):
+        """Invoke one export without creating an Attempt or storing its result."""
+        if self._uses_runtime_plugin(package):
+            if activation is None or activation.get("activation_state") != "ready":
+                raise RuntimeError("capability_activation_not_ready")
+            assert action_export is not None
+            if self.runtime_plugin_host is None:
+                raise RuntimeError("runtime_plugin_not_found")
+            try:
+                activation_payload = dict(activation)
+                # Workspace/Slave identity is role-local context rather than
+                # part of CapabilityPackageActivation's portable contract.
+                # The runtime plugin still needs it to verify managed
+                # container labels before issuing an HTTP request.
+                activation_payload.update({"workspace_id": self.workspace_id, "slave_id": self.slave_id})
+                response = await self.runtime_plugin_host.invoke(
+                    package,
+                    action_export,
+                    payload,
+                    activation=activation_payload,
+                    attempt_id=attempt_id,
+                    deadline_seconds=deadline_seconds,
+                )
+            except (RuntimePluginError, RuntimeError) as exc:
+                if (isinstance(exc, RuntimePluginError)
+                        and exc.code == "capability_service_http_error"
+                        and type(exc.details.get("http_status")) is int
+                        and 300 <= exc.details["http_status"] <= 599):
+                    response = {
+                        "value": {},
+                        "terminal_state": "failed",
+                        "terminal_error": {
+                            "code": exc.details.get("service_error_code") or exc.code,
+                            "category": exc.code,
+                            "http_status": exc.details["http_status"],
+                        },
+                        "runtime_plugin_id": "container-http-v1",
+                    }
+                else:
+                    raise RuntimeError(getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable") from exc
+            if "value" not in response:
+                raise RuntimeError("runtime_plugin_protocol_error")
+            value = response["value"]
+            result = ExecutionResult(
+                resource_ref=ResourceRef(
+                    resource_id=content_uri(digest_bytes(canonical_json_bytes(value)), "execution-result", names=self.names),
+                    identity_criterion="content_digest",
+                ),
+                value=value,
+                replay_safety=str(response.get("replay_safety") or action_export.replay_safety),
+                terminal_state=str(response.get("terminal_state") or "completed"),
+                terminal_error=response.get("terminal_error"),
+                provenance={
+                    "package_version_ref": package.version_ref,
+                    "package_digest": package.package_digest,
+                    "action_descriptor_ref": action_export.action_descriptor_ref.model_dump(mode="json"),
+                    "execution": package.execution.model_dump(mode="json"),
+                    "runtime_plugin_id": str(response.get("runtime_plugin_id") or ""),
+                    **dict(response.get("provenance") or {}),
+                },
+            )
+        else:
+            program_ref = self._body_ref(package, "program_content_ref")
+            program = await self.content_store.get(program_ref, expected_digest=program_ref.digest)
+            adapter = self.executor_registry.get_for(package.package_type, package.execution)
+            result = await adapter.invoke(payload, program=program)
+            descriptor = adapter.descriptor
+            result = replace(
+                result,
+                provenance={
+                    "package_version_ref": package.version_ref,
+                    "package_digest": package.package_digest,
+                    "program_content_ref": program_ref.model_dump(mode="json"),
+                    "execution": package.execution.model_dump(mode="json"),
+                    "executor_descriptor_ref": descriptor.descriptor_ref,
+                },
+            )
+        return result
+
     async def _validate_terminal_result(
         self,
         result: ExecutionResult,
         *,
         attempt_id: str,
         execution_epoch: int,
-        action: str = "",
         closure: TaskClosure | None,
         action_export: ActionExport | None,
     ) -> ExecutionResult:
@@ -1437,92 +1535,16 @@ class SlaveService:
             async with self.sessions() as session, session.begin():
                 session.add(SlaveAttemptRow(attempt_id=attempt_id, slave_id=self.slave_id,
                     workspace_id=self.workspace_id, action=action, payload=payload, state="running", result=None))
-        if package is not None and self._uses_runtime_plugin(package):
-            activation_key = self._activation_key(package.version_ref, instance_name)
-            activation = self.activations.get(activation_key)
-            if activation is None or activation.activation_state != "ready":
-                raise RuntimeError("capability_activation_not_ready")
-            assert action_export is not None
-            if self.runtime_plugin_host is None:
-                raise RuntimeError("runtime_plugin_not_found")
-            try:
-                activation_payload = activation.model_dump(mode="json")
-                # Workspace/Slave identity is role-local context rather than
-                # part of CapabilityPackageActivation's portable contract.
-                # The runtime plugin still needs it to verify managed
-                # container labels before issuing an HTTP request.
-                activation_payload.update({"workspace_id": self.workspace_id, "slave_id": self.slave_id})
-                response = await self.runtime_plugin_host.invoke(
-                    package,
-                    action_export,
-                    payload,
-                    activation=activation_payload,
-                    attempt_id=attempt_id,
-                    deadline_seconds=self.capability_action_timeout_seconds,
-                )
-            except (RuntimePluginError, RuntimeError) as exc:
-                if (isinstance(exc, RuntimePluginError)
-                        and exc.code == "capability_service_http_error"
-                        and type(exc.details.get("http_status")) is int
-                        and 300 <= exc.details["http_status"] <= 599):
-                    response = {
-                        "value": {},
-                        "terminal_state": "failed",
-                        "terminal_error": {
-                            "code": exc.details.get("service_error_code") or exc.code,
-                            "category": exc.code,
-                            "http_status": exc.details["http_status"],
-                        },
-                        "runtime_plugin_id": "container-http-v1",
-                    }
-                else:
-                    raise RuntimeError(getattr(exc, "code", None) or str(exc) or "runtime_plugin_unavailable") from exc
-            if "value" not in response:
-                raise RuntimeError("runtime_plugin_protocol_error")
-            value = response["value"]
-            result = ExecutionResult(
-                resource_ref=ResourceRef(
-                    resource_id=content_uri(digest_bytes(canonical_json_bytes(value)), "execution-result", names=self.names),
-                    identity_criterion="content_digest",
-                ),
-                value=value,
-                replay_safety=str(response.get("replay_safety") or action_export.replay_safety),
-                terminal_state=str(response.get("terminal_state") or "completed"),
-                terminal_error=response.get("terminal_error"),
-                provenance={
-                    "package_version_ref": package.version_ref,
-                    "package_digest": package.package_digest,
-                    "action_descriptor_ref": action_export.action_descriptor_ref.model_dump(mode="json"),
-                    "execution": package.execution.model_dump(mode="json"),
-                    "runtime_plugin_id": str(response.get("runtime_plugin_id") or ""),
-                    **dict(response.get("provenance") or {}),
-                },
-            )
-        elif package is not None:
-            program_ref = self._body_ref(package, "program_content_ref")
-            program = await self.content_store.get(program_ref, expected_digest=program_ref.digest)
-            adapter = self.executor_registry.get_for(package.package_type, package.execution)
-            result = await adapter.invoke(payload, program=program)
-            descriptor = adapter.descriptor
-            result = replace(
-                result,
-                provenance={
-                    "package_version_ref": package.version_ref,
-                    "package_digest": package.package_digest,
-                    "program_content_ref": program_ref.model_dump(mode="json"),
-                    "execution": package.execution.model_dump(mode="json"),
-                    "executor_descriptor_ref": descriptor.descriptor_ref,
-                },
-            )
-        else:
-            # The no-package branch is rejected above; keep this guard local
-            # to the execution boundary in case future callers bypass it.
-            raise RuntimeError("capability_package_required")
+        activation = self.activations.get(self._activation_key(package.version_ref, instance_name))
+        result = await self.invoke_export(
+            package, action_export, payload,
+            activation=activation.model_dump(mode="json") if activation else None,
+            attempt_id=attempt_id, deadline_seconds=self.capability_action_timeout_seconds,
+        )
         result = await self._validate_terminal_result(
             result,
             attempt_id=attempt_id,
             execution_epoch=execution_epoch,
-            action=action,
             closure=closure,
             action_export=action_export,
         )

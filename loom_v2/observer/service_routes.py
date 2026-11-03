@@ -9,7 +9,7 @@ from loom_orchestration.bindings import stream_endpoint, validate_endpoint
 from loom_orchestration.grip import Binding, GripError
 from loom_orchestration.streams import STREAM_PROTOCOL
 from loom_v2.contracts.errors import error
-from loom_v2.service_access import ServiceTokens, export_uri, interaction
+from loom_v2.service_access import ServiceTokens, activation_uri, export_uri, interaction
 
 
 class ServiceRoutes:
@@ -71,23 +71,43 @@ class ServiceRoutes:
     def issues(self, package, slave, instance):
         target = self.names.name("activations", package.package_id, package.package_version, slave, instance)
         result = []
-        for mode in sorted({interaction(e) for e in package.action_exports} - {"task"}):
+        for mode in sorted({interaction(e) for e in package.action_exports}):
             if reason := self.problem(slave, target, mode):
                 result.append({"code": reason, "interaction": mode, "actions": [
                     export_uri(self.names, package, e) for e in package.action_exports if interaction(e) == mode]})
         return result
 
     def require(self, package, slave, instance):
-        if issues := self.issues(package, slave, instance):
+        # A missing direct JSON route does not prevent task execution.
+        if issues := [i for i in self.issues(package, slave, instance) if i["interaction"] == "byte-stream"]:
             raise error("activation_preflight_failed", issues=issues)
+
+    def executions(self, package, export, activation=None, *, direct_supported=True):
+        """Action-local execution conditions, independent of Pool availability."""
+        if not package.is_executable or package.execution.kind == "container:python_orchestrator":
+            return {}
+        reason = ("activation_required" if activation is None else
+                  "desired_state_" + activation.desired_state if activation.desired_state != "running" else
+                  "activation_" + activation.activation_state if activation.activation_state != "ready" else None)
+        direct_reason = reason
+        if direct_reason is None:
+            target = activation_uri(self.names, package, activation)
+            direct_reason = self.problem(activation.target_slave, target, interaction(export))
+        result = ({"direct": {"available": direct_reason is None, "unavailable_reason": direct_reason}}
+                  if direct_supported else {})
+        if interaction(export) == "request-reply":
+            result["task"] = {"available": reason is None, "unavailable_reason": reason}
+        return result
 
     def status(self, package, activation):
         issues = self.issues(package, activation.target_slave, activation.instance_name)
         runtime = activation.activation_state
         running = activation.desired_state == "running"
-        available = running and runtime == "ready" and not issues
+        available = any(mode["available"] for export in package.action_exports
+                        for mode in self.executions(package, export, activation).values())
         reason = ("desired_state_" + activation.desired_state if not running else
-                  "activation_" + runtime if runtime != "ready" else issues[0]["code"] if issues else None)
+                  "activation_" + runtime if runtime != "ready" else
+                  issues[0]["code"] if issues and not available else None)
         return {"state": "degraded" if running and runtime == "ready" and issues else runtime,
                 "runtime_state": runtime, "available": available, "unavailable_reason": reason}
 

@@ -8,7 +8,7 @@ from loom_orchestration.contracts import CredentialProfile
 from loom_orchestration.grip import URI, MCUE, Names
 from loom_orchestration.naming import content_digest, CONTENT_PATTERN
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationInfo, model_validator
 
 from .constraints import Constraint, ConstraintRef
 from .package_contracts import INTERFACE_PACKAGE_KEY, package_contract_registry
@@ -230,7 +230,7 @@ class CapabilityPackageVersion(ContractModel):
     package_digest: str = ""
 
     @model_validator(mode="after")
-    def validate_contract(self) -> "CapabilityPackageVersion":
+    def validate_contract(self, info: ValidationInfo) -> "CapabilityPackageVersion":
         Names(self.resource_authority, self.workspace_id or "workspace-default")
         descriptor_keys = [
             (item.action_descriptor_ref.resource_id, item.action_descriptor_ref.digest)
@@ -244,11 +244,25 @@ class CapabilityPackageVersion(ContractModel):
         )
         if self.how_to_use_ref is None:
             package_payload.pop("how_to_use_ref", None)
+        if (info.context or {}).get("historical_record"):
+            # Validate the rest of a frozen legacy contract without changing
+            # its stored bytes or digest. New submissions never use this path.
+            for export in package_payload["action_exports"]:
+                if export["runtime_binding"].get("interaction") == "task":
+                    export["runtime_binding"]["interaction"] = "request-reply"
         package_contract_registry.validate(
             (self.package_type, self.execution.kind, self.execution.version),
             package_payload,
         )
         return self
+
+    @classmethod
+    def from_record(cls, value: dict) -> "CapabilityPackageVersion":
+        return cls.model_validate(value, context={"historical_record": True})
+
+    @property
+    def has_retired_interaction(self) -> bool:
+        return any(e.runtime_binding.get("interaction") == "task" for e in self.action_exports)
 
     def export_for(self, descriptor_ref: ResourceRef) -> ActionExport:
         # Descriptor refs are a distinct identity class.  Do not accept a
@@ -285,7 +299,7 @@ class CapabilityPackageVersion(ContractModel):
 
     @property
     def is_executable(self) -> bool:
-        return not self.is_interface
+        return not self.is_interface and not self.has_retired_interaction
 
     @property
     def version_ref(self) -> str:

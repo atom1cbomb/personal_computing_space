@@ -45,7 +45,7 @@ async def inventory(client, *, include_stopped=False):
                 continue
             result["activations"].append({**base, **{k: m.get(k) for k in (
                 "package", "host", "target", "instance_name", "state", "available", "authentication")},
-                "actions": [{k: a.get(k) for k in ("name", "description", "interaction", "available")}
+                "actions": [{k: a.get(k) for k in ("name", "description", "interaction", "available", "execution")}
                             for a in m.get("actions", [])]})
         elif row["mcue"] == "computing/slave":
             result["slaves"].append({**base, "available": m.get("available"), "attributes": m.get("attributes", {})})
@@ -188,34 +188,29 @@ async def wait_run(client, run, *, timeout=None, interval=1):
     return result
 
 
-async def execute_action(client, target, action_name, arguments, *, idempotency_key, ledger=None, timeout=None):
-    """Validate business input, invoke the exact instance, and resolve task output."""
+async def execute_action(client, target, action_name, arguments, *, idempotency_key, ledger=None, deadline=None):
+    """Validate and directly invoke a JSON action on the exact instance."""
     contract = await action_contract(client, target, action_name)
     action = contract["action"]
     _validate(contract["arguments_schema"], arguments)
     interaction = action.get("interaction")
-    if interaction not in {"task", "request-reply"}:
+    if interaction != "request-reply":
         raise ValueError("action_interaction_unsupported")
+    if not action.get("execution", {}).get("direct", {}).get("available", False):
+        raise ValueError("direct_execution_unavailable")
     if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128:
         raise ValueError("operation_key_required")
     receipt = None
     if ledger:
         identity, fresh, receipt = ledger.reserve(target, action["uri"], arguments, idempotency_key)
-        if not fresh and receipt is None and interaction == "request-reply":
+        if not fresh and receipt is None:
             raise ValueError("prior_direct_call_outcome_unknown")
     if receipt is None:
-        payload = arguments
-        if interaction == "task":
-            payload = {"arguments": arguments, "expected_revision": contract["resource"]["metadata"]["revision"],
-                       "idempotency_key": idempotency_key}
-        receipt = await client.invoke(target, action["uri"], payload)
+        receipt = await client.invoke(target, action["uri"], arguments, deadline=deadline)
         if ledger:
             ledger.record(identity, receipt)
     result = {"target": target, "action": action["uri"], "interaction": interaction, "receipt": receipt}
-    if interaction == "task":
-        result.update(await wait_run(client, receipt["run"], timeout=timeout))
-    else:
-        result.update(status="completed", value=receipt)
+    result.update(status="completed", value=receipt)
     return result
 
 

@@ -9,10 +9,11 @@ import shutil
 from typing import Any
 from uuid import uuid4
 from sqlalchemy import text, select, or_, func
+from sqlalchemy.orm import load_only
 from loom_v2.contracts.constraints import Constraint
 from loom_v2.contracts.refinement import is_monotonic_tightening
 from loom_v2.contracts.types import ActionExport, CapabilityHealthReport, CapabilityPackageActivation, CapabilityPackageVersion, ExecutionContract, ClosureContract, ClosureVersion, ComputeBinding, ComputeSpec, DynamicNode, IoContract, NodeIntent, ResourceRef, TaskClosure, TypedHole, NodeInputBinding, ValidationEvidence
-from loom_v2.db.models import DriverRequestRow, DriverThreadRow, IdempotencyRow, MessageReceiptRow, RunExecutionRequestRow, RunRow, RunEventRow, RuntimeAgentRow
+from loom_v2.db.models import DriverRequestRow, DriverThreadRow, IdempotencyRow, MessageReceiptRow, RunExecutionRequestRow, RunRow, RunEventRow, RunCapabilityStateRow, RuntimeAgentRow
 from loom_v2.contracts.agents import DRIVER_COMMANDS, DRIVER_RUN_SCOPED_COMMANDS, DriverCommand, DriverThreadBinding
 from loom_v2.contracts.messages import MessageReceipt, MessageReceiptState
 from loom_v2.content_store import canonical_json_bytes
@@ -51,7 +52,7 @@ class TaskRepository:
             return cached
         if self.sessions is None:
             return None
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             row = await session.get(MessageReceiptRow, key)
             if row is None:
                 return None
@@ -70,7 +71,7 @@ class TaskRepository:
                 self._record_message_receipt_event(receipt)
             return
         values = self._message_receipt_values(receipt)
-        async with self.sessions() as session:
+        async with self._execution_write_session() as session:
             row = await session.get(MessageReceiptRow, key)
             if row is None:
                 session.add(MessageReceiptRow(**values))
@@ -79,7 +80,6 @@ class TaskRepository:
                     previous_state = row.state
                 for name, value in values.items():
                     setattr(row, name, value)
-            await session.commit()
         self.message_receipts[key] = receipt
         if previous_state != receipt.state:
             self._record_message_receipt_event(receipt)
@@ -165,7 +165,7 @@ class TaskRepository:
         if self.sessions is None:
             receipts = list(self.message_receipts.values())
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 statement = select(MessageReceiptRow).where(MessageReceiptRow.workspace_id == workspace_id)
                 if conversation_ref is not None:
                     statement = statement.where(MessageReceiptRow.conversation_ref == conversation_ref)
@@ -185,7 +185,7 @@ class TaskRepository:
         if self.sessions is None:
             receipts = list(self.message_receipts.values())
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 dispatch_states = ["accepted", "queued", "retryable"]
                 rows = (
                     await session.scalars(
@@ -410,7 +410,7 @@ class TaskRepository:
                     )
                     recovered += 1
                 return recovered
-            async with self.sessions() as session:
+            async with self._execution_write_session() as session:
                 rows = (
                     await session.scalars(
                         select(MessageReceiptRow)
@@ -426,7 +426,6 @@ class TaskRepository:
                     row.claim_token = None
                     row.next_attempt_at = now
                     row.updated_at = now
-                await session.commit()
                 for row in rows:
                     receipt = self._message_receipt_from_row(row)
                     self.message_receipts[(receipt.workspace_id, receipt.request_id)] = receipt
@@ -447,7 +446,7 @@ class TaskRepository:
         if existing_thread is not None:
             raise ValueError("thread_binding_conflict")
         if self.sessions is not None:
-            async with self.sessions() as session:
+            async with self._execution_write_session() as session:
                 conflict = (
                     await session.scalars(
                         select(DriverThreadRow).where(
@@ -468,7 +467,6 @@ class TaskRepository:
                     for key, value in values.items():
                         if key not in {"workspace_id", "conversation_ref"}:
                             setattr(row, key, value)
-                await session.commit()
         self.driver_threads[(binding.workspace_id, binding.conversation_ref)] = binding
         return binding.model_dump(mode="json")
 
@@ -483,7 +481,7 @@ class TaskRepository:
             return self.driver_threads[key].model_dump(mode="json")
         if self.sessions is None:
             return None
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             row = await session.get(DriverThreadRow, key)
         if row is None:
             return None
@@ -526,6 +524,8 @@ class TaskRepository:
         self,
         command: DriverCommand,
     ) -> dict[str, Any]:
+        if command.command == "run.status":
+            return await self._driver_run_status(command)
         request_key = (command.driver_id, command.request_id)
         lock = self._driver_request_locks.setdefault(request_key, asyncio.Lock())
         async with lock:
@@ -535,6 +535,52 @@ class TaskRepository:
                     await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                         {"key": f"driver-request:{command.driver_id}:{command.request_id}"})
                 return await self._execute_driver_command(command)
+
+    async def _driver_run_status(self, command: DriverCommand) -> dict[str, Any]:
+        """Fresh, authenticated polling without Run locks or command receipts."""
+        workspace_id = str(command.arguments.get("workspace_id") or "workspace-default")
+        if self.sessions is None:
+            agent = self.agents.get((workspace_id, "driver", command.driver_id, command.instance_id))
+        else:
+            async with self._execution_read_session() as session:
+                agent = (await session.execute(select(
+                    RuntimeAgentRow.epoch, RuntimeAgentRow.lease_id_hash,
+                    RuntimeAgentRow.lease_state, RuntimeAgentRow.last_seen_at,
+                ).where(
+                    RuntimeAgentRow.workspace_id == workspace_id,
+                    RuntimeAgentRow.role == "driver",
+                    RuntimeAgentRow.agent_id == command.driver_id,
+                    RuntimeAgentRow.instance_id == command.instance_id,
+                ))).mappings().first()
+        cutoff = datetime.now(timezone.utc).timestamp() - max(1.0, self.settings.agent_lease_ttl_seconds)
+        if (agent is None or agent["lease_state"] != "active"
+                or int(agent["epoch"]) != command.driver_epoch
+                or not hmac.compare_digest(str(agent["lease_id_hash"]), self._lease_hash(command.lease_id))
+                or (self._utc_timestamp(agent["last_seen_at"]) or 0) < cutoff):
+            raise ValueError("stale_driver_epoch")
+        return await self.get_run_status(str(command.arguments["run_id"]), workspace_id=workspace_id)
+
+    async def get_run_status(self, run_id: str, *, workspace_id: str | None = None) -> dict[str, Any]:
+        """Read the current state only, independently of the full Run cache."""
+        if self.sessions is None:
+            record = self.runs.get(run_id)
+            if record is None:
+                raise KeyError(run_id)
+            state = record.state
+            owner = record.closure_contract.workspace_id if record.closure_contract else "workspace-default"
+        else:
+            async with self._execution_read_session() as session:
+                row = (await session.execute(select(
+                    RunRow.state, RunCapabilityStateRow.workspace_id,
+                ).join(RunCapabilityStateRow, RunCapabilityStateRow.run_id == RunRow.run_id)
+                    .where(RunRow.run_id == run_id))).first()
+            if row is None:
+                raise KeyError(run_id)
+            state, owner = row
+            owner = owner or "workspace-default"
+        if workspace_id is not None and owner != workspace_id:
+            raise ValueError("workspace_binding_mismatch")
+        return {"run_id": run_id, "state": state}
 
 
     async def _admit_driver_arguments(self, name: str, args: dict[str, Any], workspace_id: str) -> None:
@@ -573,7 +619,7 @@ class TaskRepository:
             if self.sessions is None:
                 all_workspaces = {key[0] for key in self.agents if key[1] == "driver"}
             else:
-                async with self.sessions() as session:
+                async with self._execution_read_session() as session:
                     all_workspaces = set(
                         (await session.scalars(select(RuntimeAgentRow.workspace_id).where(RuntimeAgentRow.role == "driver"))).all()
                     )
@@ -592,7 +638,7 @@ class TaskRepository:
                 raise ValueError("request_id_reused")
             return deepcopy(receipt["response"])
         if self.sessions is not None:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 existing = await session.get(DriverRequestRow, request_key)
                 if existing is not None:
                     if existing.command != command.command:
@@ -602,7 +648,7 @@ class TaskRepository:
         workspace_id = str(agent["workspace_id"])
         await self._admit_driver_arguments(command.command, args, workspace_id)
         run_id = command.arguments.get("run_id")
-        if run_id and command.command not in {"run.get", "execution.get", "run.readiness"}:
+        if run_id and command.command not in {"run.get", "execution.get", "run.readiness", "capability.get", "capability.list", "capability.activations"}:
             claims = await self.list_execution_requests(agent["workspace_id"], run_id=run_id)
             if claims and not any(i.state == "claimed" and (i.driver_id, i.driver_instance_id, i.driver_epoch) ==
                 (command.driver_id, command.instance_id, command.driver_epoch) for i in claims):
@@ -748,7 +794,7 @@ class TaskRepository:
         elif command.command == "capability.get":
             result = (await self.get_capability_package(args["package_ref"], run_id=args.get("run_id"))).model_dump(mode="json")
         elif command.command == "capability.activations":
-            package = await self._assert_package_workspace(ResourceRef.model_validate(args["package_ref"]), workspace_id)
+            package = await self._assert_package_workspace(ResourceRef.model_validate(args["package_ref"]), workspace_id, run_id=args.get("run_id"))
             result = {"activations": [item.model_dump(mode="json") for item in await self.list_package_activations(package)]}
         elif command.command == "capability.desire":
             activation = await self.set_capability_desired(
@@ -967,7 +1013,7 @@ class TaskRepository:
                                 "created_at": datetime.now(timezone.utc).isoformat(),
                             }
                         )
-                        await self._persist(record)
+                        await self._persist(record, fields={"attempts", "dynamic_nodes", "execution_epoch", "outcome", "state"})
                         recovered.append(record.run_id)
                         continue
             reason = {
@@ -1004,7 +1050,7 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist(record)
+            await self._persist(record, fields={"attempts", "dynamic_nodes", "execution_epoch", "outcome", "state"})
             recovered.append(record.run_id)
         return recovered
 
@@ -1033,7 +1079,7 @@ class TaskRepository:
             outcome=row.outcome,
             attempts=row.attempts or [],
             events=events,
-            capability_packages=[CapabilityPackageVersion.model_validate(item) for item in (getattr(row, "capability_packages", None) or [])],
+            capability_packages=[CapabilityPackageVersion.from_record(item) for item in (getattr(row, "capability_packages", None) or [])],
             capability_activations=[CapabilityPackageActivation.model_validate(item) for item in (getattr(row, "capability_activations", None) or [])],
             dynamic_nodes=dynamic_nodes,
         )
@@ -1111,7 +1157,7 @@ class TaskRepository:
         return normalized
 
 
-    async def _persist(self, record: RunRecord) -> None:
+    async def _persist(self, record: RunRecord, *, fields: set[str] | None = None) -> None:
         self._run_capabilities[record.run_id] = RunCapabilities(record.run_id,
             record.closure_contract.workspace_id if record.closure_contract else None,
             record.capability_packages, record.capability_activations)
@@ -1121,32 +1167,51 @@ class TaskRepository:
         if self.sessions is None:
             return
         async with self._execution_write_session() as session:
-            row = await session.get(RunRow, record.run_id)
-            values = {
-                "run_id": record.run_id,
-                "task_ref": record.task_ref,
-                "goal": record.goal,
-                "closure_contract": record.closure_contract.model_dump(mode="json") if record.closure_contract else None,
-                "allow_reassignment": record.allow_reassignment,
-                "draft": record.draft.model_dump(mode="json"),
-                "committed": record.committed.model_dump(mode="json") if record.committed else None,
-                "execution_id": record.execution_id,
-                "execution_epoch": record.execution_epoch,
-                "state": record.state,
-                "latest_event_at": self._record_order_key(record),
-                "outcome": record.outcome,
-                "attempts": record.attempts,
-                "capability_packages": [item.model_dump(mode="json") for item in record.capability_packages],
-                "capability_activations": [item.model_dump(mode="json") for item in record.capability_activations],
-                "dynamic_nodes": [item.model_dump(mode="json") for item in record.dynamic_nodes],
+            names = fields if fields is not None else {
+                "task_ref", "goal", "closure_contract", "allow_reassignment", "draft", "committed",
+                "execution_id", "execution_epoch", "state", "outcome", "attempts",
+                "capability_packages", "capability_activations", "dynamic_nodes",
             }
+            columns = names | {"latest_event_at"}
+            capability_changed = bool(names & {"capability_packages", "capability_activations"})
+            if capability_changed:
+                columns |= {"capability_packages", "capability_activations"}
+            row = await session.get(RunRow, record.run_id,
+                options=[load_only(*(getattr(RunRow, name) for name in columns))])
+            if row is None and fields is not None:
+                raise KeyError(record.run_id)
+            values = {"latest_event_at": self._record_order_key(record)}
+            for name in names:
+                value = getattr(record, name)
+                if name in {"closure_contract", "draft", "committed"}:
+                    value = value.model_dump(mode="json") if value is not None else None
+                elif name in {"capability_packages", "capability_activations", "dynamic_nodes"}:
+                    value = [item.model_dump(mode="json") for item in value]
+                values[name] = value
+            # Update this projection in the same transaction, only when capability state changes.
+            if row is None or (capability_changed and any(
+                    getattr(row, name) != values[name] for name in names & {"capability_packages", "capability_activations"})):
+                projection = await session.get(RunCapabilityStateRow, record.run_id)
+                capability_values = {
+                    "run_id": record.run_id,
+                    "workspace_id": record.closure_contract.workspace_id if record.closure_contract else "workspace-default",
+                    "capability_packages": [p for p in values.get("capability_packages", row.capability_packages if row is not None else []) if p["scope"] == "run_bound"],
+                    "capability_activations": [a for a in values.get("capability_activations", row.capability_activations if row is not None else [])
+                        if any(p.scope == "run_bound" and p.version_ref == a["package_version_ref"]
+                               and p.package_digest == a["package_digest"] for p in record.capability_packages)],
+                }
+                if projection is None:
+                    session.add(RunCapabilityStateRow(**capability_values))
+                else:
+                    for key, value in capability_values.items():
+                        setattr(projection, key, value)
             last_sequence = (await session.scalar(select(func.max(RunEventRow.sequence)).where(RunEventRow.run_id == record.run_id))) or 0
             if last_sequence > len(record.events):
                 raise ValueError("run_history_truncated")
             session.add_all([RunEventRow(run_id=record.run_id, sequence=i + 1, event=event)
                 for i, event in enumerate(record.events) if i >= last_sequence])
             if row is None:
-                row = RunRow(**values)
+                row = RunRow(run_id=record.run_id, **values)
                 session.add(row)
             else:
                 for key, value in values.items():
@@ -1167,7 +1232,7 @@ class TaskRepository:
             return self.runs[run_id]
         if self.sessions is None:
             raise KeyError(run_id)
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             row = await session.get(RunRow, run_id)
             if row is None:
                 raise KeyError(run_id)
@@ -1185,7 +1250,7 @@ class TaskRepository:
         if session is not None:
             run_ids = (await session.scalars(query)).all()
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 run_ids = (await session.scalars(query)).all()
         return [await self._load(run_id) for run_id in run_ids]
 
@@ -1201,7 +1266,7 @@ class TaskRepository:
                 "snapshot_digest": record.committed.snapshot_digest if record.committed else None,
                 "execution_id": record.execution_id, "execution_epoch": record.execution_epoch,
             }
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             row = (await session.execute(select(
                 RunRow.state, RunRow.outcome, RunRow.run_id,
                 RunRow.committed["version_id"].as_string().label("closure_version"),
@@ -1230,7 +1295,7 @@ class TaskRepository:
             RunExecutionRequestRow.closure_version == closure_version,
             RunExecutionRequestRow.snapshot_digest != "",
         ).order_by(RunExecutionRequestRow.created_at).limit(1)
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             body = (await session.execute(query)).scalar_one_or_none()
         if body is None:
             raise KeyError((run_id, closure_version))
@@ -1291,7 +1356,7 @@ class TaskRepository:
             return cached
         if self.sessions is None:
             return None
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             row = await session.get(RunExecutionRequestRow, key)
         if row is None:
             return None
@@ -1353,7 +1418,7 @@ class TaskRepository:
             if session is not None:
                 rows = (await session.scalars(statement)).all()
                 return [await self._load_execution_request(row.workspace_id, row.request_id) for row in rows]
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 rows = (await session.scalars(statement)).all()
             items = [self._execution_request_from_row(row) for row in rows]
             for item in items:
@@ -1372,6 +1437,16 @@ class TaskRepository:
 
 
     async def submit_run_plan(
+        self, *, workspace_id: str, request_id: str, plan: ClosureContract,
+        conversation_ref: str | None = None, source: str = "external",
+    ) -> ExecutionRequest:
+        # Queue admission before opening a database transaction. Keep connections
+        # available for worker commands, heartbeats and recovery under bursts.
+        async with self._submission_slots:
+            return await self._submit_run_plan(workspace_id=workspace_id, request_id=request_id,
+                plan=plan, conversation_ref=conversation_ref, source=source)
+
+    async def _submit_run_plan(
         self,
         *,
         workspace_id: str,
@@ -1399,7 +1474,7 @@ class TaskRepository:
                 "workspace_id": workspace_id,
                 "origin_conversation_ref": conversation_ref or "",
             }, deep=True)
-            record = await self.open_run(
+            record = self._new_run(
                 None,
                 task_ref,
                 normalized.goal,
@@ -1408,8 +1483,15 @@ class TaskRepository:
                 user_id=normalized.user_id,
                 workspace_id=workspace_id,
             )
-            await self.begin_refinement(record.run_id)
-            committed = await self.commit(record.run_id, record.draft_version, record.draft_digest)
+            self.runs[record.run_id] = record
+            self._execution_loaded_runs.get().add(record.run_id)
+            readiness = await self._evaluate_readiness(record.draft.snapshot, run_id=record.run_id)
+            if not readiness["ready"]:
+                raise self._readiness_error(readiness)
+            committed = record.draft.model_copy(update={"kind": "committed", "version_id": f"committed-{uuid4().hex[:12]}"})
+            record.committed = committed
+            record.state = "committed"
+            record.events.append({"phase": "committed", "version": committed.version_id})
             item = ExecutionRequest(
                 workspace_id=workspace_id,
                 request_id=request_id,
@@ -1421,7 +1503,6 @@ class TaskRepository:
                 source=source,
                 conversation_ref=conversation_ref,
             )
-            await self._persist_execution_request(item)
             record.events.append({
                 "phase": "execution_submission",
                 "request_id": request_id,
@@ -1431,6 +1512,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
             await self._persist(record)
+            await self._persist_execution_request(item)
             return item
 
 
@@ -1439,6 +1521,30 @@ class TaskRepository:
         if item is None:
             raise KeyError(request_id)
         return item
+
+    async def read_submission(self, workspace_id: str, request_id: str) -> tuple[ExecutionRequest, str, dict]:
+        """Read the request and Run from one MVCC snapshot without writer locks."""
+        if self.sessions is None:
+            item = await self.get_execution_request(workspace_id, request_id)
+            run = await self._assert_run_workspace(item.run_id, workspace_id)
+            waiting = run_record_payload(run, include_snapshots=False).get("waiting", {})
+            return item, run.state, waiting
+        waiting_event = select(RunEventRow.event).where(
+            RunEventRow.run_id == RunRow.run_id,
+            RunEventRow.event["phase"].as_string() == "activation_wait",
+        ).order_by(RunEventRow.sequence.desc()).limit(1).correlate(RunRow).scalar_subquery()
+        async with self._execution_read_session() as session:
+            row = (await session.execute(select(
+                RunExecutionRequestRow, RunRow.state, waiting_event,
+            ).join(RunRow, RunRow.run_id == RunExecutionRequestRow.run_id).where(
+                RunExecutionRequestRow.workspace_id == workspace_id,
+                RunExecutionRequestRow.request_id == request_id,
+                RunRow.closure_contract["workspace_id"].as_string() == workspace_id,
+            ).execution_options(populate_existing=True))).one_or_none()
+        if row is None:
+            raise KeyError(request_id)
+        request, state, event = row
+        return self._execution_request_from_row(request), state, (event or {}).get("waiting", {})
 
 
     async def claim_next_execution(
@@ -1500,13 +1606,12 @@ class TaskRepository:
                         "execution_id": None,
                         "execution_epoch": record.execution_epoch,
                     }
-                    await self._persist(record)
+                    await self._persist(record, fields={"outcome", "state"})
                     item.state = "settled"
                     item.outcome = deepcopy(record.outcome)
                     await self._persist_execution_request(item)
                     return {"request": item.model_dump(), "run": run_record_payload(record)}
-                started = await self.start(record.run_id, item.closure_version)
-                record = await self._load(record.run_id)
+                started = self._start_ready_run(record)
                 item.execution_id = str(started["execution_id"])
                 item.execution_epoch = int(started["execution_epoch"])
                 item.started_at = datetime.now(timezone.utc)
@@ -1525,13 +1630,13 @@ class TaskRepository:
                         "driver_instance_id": driver_instance_id,
                         "driver_epoch": driver_epoch,
                     })
-                    await self._persist(record)
-                await self._persist_execution_claim(record, item, driver_id, driver_instance_id, driver_epoch)
+                await self._persist_execution_claim(record, item, driver_id, driver_instance_id, driver_epoch,
+                    fields={"state", "execution_id", "execution_epoch", "outcome", "attempts"})
                 return {"request": item.model_dump(), "run": run_record_payload(record)}
             return None
 
 
-    async def _persist_execution_claim(self, record, item, driver_id, driver_instance_id, driver_epoch):
+    async def _persist_execution_claim(self, record, item, driver_id, driver_instance_id, driver_epoch, *, fields=frozenset()):
         """Persist ownership and its audit event in the same Run transaction."""
         recovered = item.state == "recovering"
         item.state = "claimed"
@@ -1548,7 +1653,7 @@ class TaskRepository:
             **({"recovered": True} if recovered else {}),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
-        await self._persist(record)
+        await self._persist(record, fields=set(fields))
 
 
     async def recover_execution_requests_for_driver(
@@ -1566,7 +1671,7 @@ class TaskRepository:
             candidates = [(i.run_id, i.request_id, i.driver_id, i.driver_instance_id, i.driver_epoch)
                 for i in await self.list_execution_requests(workspace_id, states={"claimed"})]
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 candidates = (await session.execute(select(RunExecutionRequestRow.run_id, RunExecutionRequestRow.request_id,
                     RunExecutionRequestRow.driver_id, RunExecutionRequestRow.driver_instance_id, RunExecutionRequestRow.driver_epoch)
                     .where(RunExecutionRequestRow.workspace_id == workspace_id, RunExecutionRequestRow.state == "claimed")
@@ -1657,7 +1762,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
             record.outcome = None
-            await self._persist(record)
+            await self._persist(record, fields={"outcome", "state"})
             workspace = record.closure_contract.workspace_id if record.closure_contract else self.settings.workspace_id
             for item in await self.list_execution_requests(workspace, run_id=run_id):
                 if item.run_id != run_id or item.state == "settled":
@@ -1696,7 +1801,7 @@ class TaskRepository:
                     continue
                 _transition(record, "activation_ready")
                 record.events.append({"phase": "activation_wait_recovered", "activation_revision": activation.activation_revision, "created_at": datetime.now(timezone.utc).isoformat()})
-                await self._persist(record)
+                await self._persist(record, fields={"state"})
                 workspace = record.closure_contract.workspace_id if record.closure_contract else self.settings.workspace_id
                 for item in await self.list_execution_requests(workspace, run_id=record.run_id, states={"awaiting_auth"}):
                     if item.run_id == record.run_id and item.state == "awaiting_auth":
@@ -1751,7 +1856,7 @@ class TaskRepository:
                 item.deadline_at = datetime.fromisoformat(started["deadline_at"])
                 item.outcome = deepcopy(record.outcome)
                 await self._persist_execution_request(item)
-            await self._persist(record)
+            await self._persist(record, fields={"outcome", "state"})
             return
         for item in items:
             if item.run_id != run_id or item.state == "settled":
@@ -1767,7 +1872,7 @@ class TaskRepository:
                 "execution_request_state": item.state,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
-            await self._persist(record)
+            await self._persist(record, fields=set())
 
 
     async def enqueue_committed_run(
@@ -1787,8 +1892,8 @@ class TaskRepository:
         external submission without creating a second Run.
         """
         async with self._execution_transaction():
-            existing = await self._load_execution_request(workspace_id, request_id)
             record = await self._assert_run_workspace(run_id, workspace_id)
+            existing = await self._load_execution_request(workspace_id, request_id)
             if record.committed is None or record.committed.version_id != closure_version:
                 raise ValueError("closure_not_committed")
             payload = {
@@ -1841,12 +1946,12 @@ class TaskRepository:
             "plan": plan.model_dump(mode="json"),
         }
         async with self._execution_transaction():
+            record = await self._assert_run_workspace(run_id, workspace_id)
             existing = await self._load_execution_request(workspace_id, request_id)
             if existing is not None:
                 if canonical_json_bytes(existing.request_payload) != canonical_json_bytes(payload):
                     raise ValueError("request_id_reused")
                 return existing
-            record = await self._assert_run_workspace(run_id, workspace_id)
             if record.state != "awaiting_decision" or not isinstance(record.outcome, dict) or record.outcome.get("decision") != "repair":
                 raise ValueError("resubmit_not_repairable")
             if record.committed is None or record.committed.version_id != base_closure_version:
@@ -1891,7 +1996,6 @@ class TaskRepository:
                 raise self._readiness_error(readiness)
             previous_version = record.committed
             previous_outcome = deepcopy(record.outcome)
-            _transition(record, "refinement_started", reason={"base_closure_version": base_closure_version})
             record.closure_contract = normalized
             record.draft = ClosureVersion(
                 version_id=f"draft-{uuid4().hex[:12]}",
@@ -1900,7 +2004,9 @@ class TaskRepository:
                 snapshot_digest=normalized.body.canonical_digest(),
                 patch_cursor=previous_version.patch_cursor + 1,
             )
-            record.committed = None
+            committed = record.draft.model_copy(update={"kind": "committed", "version_id": f"committed-{uuid4().hex[:12]}"})
+            record.committed = committed
+            record.state = "committed"
             record.outcome = None
             record.events.append({
                 "phase": "plan_resubmitted",
@@ -1910,8 +2016,8 @@ class TaskRepository:
                 "previous_outcome": previous_outcome,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
-            await self._persist(record)
-            committed = await self.commit(record.run_id, record.draft.version_id, record.draft.snapshot_digest)
+            record.events.append({"phase": "committed", "version": committed.version_id})
+            await self._persist(record, fields={"closure_contract", "committed", "draft", "outcome", "state"})
             item = ExecutionRequest(
                 workspace_id=workspace_id,
                 request_id=request_id,
@@ -2007,7 +2113,7 @@ class TaskRepository:
         package_ref = snapshot.program_systems.package_ref
         if package_ref is None:
             return [{"code": "orchestration_package_not_bound"}]
-        package = self._find_package(package_ref, run_id=run_id)
+        package = await self._readiness_package(package_ref, run_id=run_id)
         if package is None:
             foreign = self._find_package(package_ref)
             if foreign is not None:
@@ -2115,7 +2221,7 @@ class TaskRepository:
                         if type_errors:
                             blockers.append({"code": "orchestration_program_type_error", "diagnostics": type_errors})
         for node_package_ref in allowed_node_package_refs:
-            node_package = self._find_package(node_package_ref, run_id=run_id)
+            node_package = await self._readiness_package(node_package_ref, run_id=run_id)
             if node_package is None:
                 blockers.append({"code": "node_package_not_found", "package_ref": node_package_ref.resource_id})
                 continue
@@ -2145,13 +2251,21 @@ class TaskRepository:
         return blockers
 
 
+    async def _readiness_package(self, package_ref, *, run_id):
+        # The caller already owns the current Run record, including candidates
+        # created by an in-flight patch. Do not replace it with an older index.
+        package = self._find_package(package_ref, run_id=run_id)
+        if package is not None and package.scope == "run_bound":
+            return package
+        resource_id = package_ref.resource_id if isinstance(package_ref, ResourceRef) else package_ref
+        await self._load_workspace_packages(package_ref=resource_id)
+        return self._find_package(package_ref, run_id=run_id)
+
     async def _evaluate_readiness(self, snapshot: TaskClosure, *, run_id: str | None = None) -> dict[str, Any]:
-        await self._load_workspace_packages()
-        if run_id is not None:
-            record = self.runs.get(run_id)
-            if record is not None:
-                workspace_id = record.closure_contract.workspace_id if record.closure_contract is not None else "workspace-default"
-                await self.refresh_slaves(workspace_id)
+        workspace_id = (self._run_workspace(run_id) if run_id is not None else None) or self.settings.workspace_id
+        # Runtime registration is small; capability manifests are resolved only
+        # by the references in this plan, never by rebuilding the directory.
+        self._store_slave_snapshot(await self.list_agents(workspace_id, role="slave"))
         action_ref = snapshot.program.action_ref or snapshot.compute.action_ref
         action = action_name(action_ref)
         blockers: list[dict[str, Any]] = []
@@ -2191,7 +2305,7 @@ class TaskRepository:
                 continue
             if not self._slave_is_active(target):
                 blockers.append({"code": "slave_unavailable", "hole_id": hole.hole_id, "target_resource_ref": target})
-            package = self._find_package(binding.capability_package_ref, run_id=run_id) if binding.capability_package_ref else None
+            package = await self._readiness_package(binding.capability_package_ref, run_id=run_id) if binding.capability_package_ref else None
             if binding.capability_package_ref and package is None:
                 foreign = self._find_package(binding.capability_package_ref)
                 if foreign is not None:
@@ -2199,7 +2313,7 @@ class TaskRepository:
                 else:
                     blockers.append({"code": "capability_package_not_found", "hole_id": hole.hole_id})
             elif package is not None:
-                if package.is_interface:
+                if not package.is_executable:
                     blockers.append({"code": "capability_package_not_executable", "hole_id": hole.hole_id})
                     continue
                 if run_id is not None and not self._package_visible_to_run(package, run_id):
@@ -2263,7 +2377,7 @@ class TaskRepository:
         )
 
 
-    async def open_run(
+    def _new_run(
         self,
         run_id: str | None,
         task_ref: str,
@@ -2318,7 +2432,16 @@ class TaskRepository:
             allow_reassignment=allow_reassignment,
         )
         record.events.append({"phase": "run_opened", "run_id": run_id, "created_at": datetime.now(timezone.utc).isoformat()})
-        self.runs[run_id] = record
+        return record
+
+    async def open_run(
+        self, run_id: str | None, task_ref: str, goal: str, allow_reassignment: bool = False,
+        closure_contract: ClosureContract | None = None, *, user_id: str = "user-default",
+        workspace_id: str = "workspace-default",
+    ) -> RunRecord:
+        record = self._new_run(run_id, task_ref, goal, allow_reassignment, closure_contract,
+                               user_id=user_id, workspace_id=workspace_id)
+        self.runs[record.run_id] = record
         await self._persist(record)
         return record
 
@@ -2344,7 +2467,7 @@ class TaskRepository:
         if request_id:
             message["request_id"] = request_id
         record.events.append(message)
-        await self._persist(record)
+        await self._persist(record, fields=set())
         return message
 
 
@@ -2352,7 +2475,7 @@ class TaskRepository:
         record = await self._load(run_id)
         if record.state == "opened":
             _transition(record, "refinement_started")
-            await self._persist(record)
+            await self._persist(record, fields={"state"})
         elif record.state not in {"thinking"}:
             raise ValueError("illegal_state_transition")
         return record
@@ -2379,7 +2502,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        await self._persist(record, fields=set())
         return {"run_id": run_id, "version": inspected_version, **readiness}
 
 
@@ -2392,7 +2515,7 @@ class TaskRepository:
             started = continuation(record)
             started["terminal_state"] = "cancelled"
             started["outcome"] = {"disposition": "cancelled", "reason": reason}
-            await self._persist(record)
+            await self._persist(record, fields={"outcome", "state"})
             return record
         if record.state in {"completed", "closed", "failed", "cancelled"}:
             return record
@@ -2406,7 +2529,7 @@ class TaskRepository:
             "execution_id": record.execution_id,
             "execution_epoch": record.execution_epoch,
         }
-        await self._persist(record)
+        await self._persist(record, fields={"outcome", "state"})
         await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
@@ -2428,7 +2551,7 @@ class TaskRepository:
             "execution_id": record.execution_id,
             "execution_epoch": record.execution_epoch,
         }
-        await self._persist(record)
+        await self._persist(record, fields={"outcome", "state"})
         await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
@@ -2444,7 +2567,7 @@ class TaskRepository:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         record.events.append(event)
-        await self._persist(record)
+        await self._persist(record, fields=set())
         return event
 
 
@@ -2457,7 +2580,7 @@ class TaskRepository:
                           RunRow.closure_contract["workspace_id"].as_string().is_(None))]
         if conversation_ref is not None:
             predicates.append(RunRow.task_ref == conversation_ref)
-        async with self.sessions() as session:
+        async with self._execution_read_session() as session:
             if summaries:
                 from types import SimpleNamespace
                 rows = (await session.execute(select(RunRow.run_id, RunRow.task_ref, RunRow.goal,
@@ -2809,10 +2932,9 @@ class TaskRepository:
         if package_refs:
             record.events.append({"phase": "capability_package_candidate_materialized", "operation_id": operation_id, "package_refs": package_refs})
         if self.sessions is not None:
-            async with self.sessions() as session:
+            async with self._execution_write_session() as session:
                 session.add(IdempotencyRow(operation_id=operation_id, receipt={"receipt": receipt.receipt, "run_id": receipt.run_id, "kind": receipt.kind, "draft_version": receipt.draft_version, "draft_digest": receipt.draft_digest, "patch_cursor": receipt.patch_cursor, "readiness": receipt.readiness}))
-                await session.commit()
-        await self._persist(record)
+        await self._persist(record, fields={"capability_packages", "draft", "outcome", "state"})
         return receipt
 
 
@@ -2834,13 +2956,13 @@ class TaskRepository:
             }
         )
         if not readiness["ready"]:
-            await self._persist(record)
+            await self._persist(record, fields=set())
             raise self._readiness_error(readiness)
         committed = record.draft.model_copy(update={"kind": "committed", "version_id": f"committed-{uuid4().hex[:12]}"})
         record.committed = committed
         _transition(record, "committed")
         record.events.append({"phase": "committed", "version": committed.version_id})
-        await self._persist(record)
+        await self._persist(record, fields={"committed", "state"})
         return committed
 
 
@@ -2866,8 +2988,15 @@ class TaskRepository:
             }
         )
         if not readiness["ready"]:
-            await self._persist(record)
+            await self._persist(record, fields=set())
             raise self._readiness_error(readiness)
+        result = self._start_ready_run(record)
+        await self._persist(record, fields={"state", "execution_id", "execution_epoch", "outcome", "attempts"})
+        return result
+
+    def _start_ready_run(self, record: RunRecord) -> dict[str, Any]:
+        """Apply a checked start; the caller persists it with its ownership update."""
+        run_id = record.run_id
         if (
             record.committed.snapshot.program_systems.execution.kind,
             record.committed.snapshot.program_systems.execution.version,
@@ -2923,7 +3052,6 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-        await self._persist(record)
         return {"execution_id": record.execution_id, "state": record.state, "execution_epoch": record.execution_epoch}
 
 
@@ -3081,7 +3209,7 @@ class TaskRepository:
                         "created_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                await self._persist(record)
+                await self._persist(record, fields={"attempts", "outcome", "state"})
                 return record
 
         validator_terminal_error: dict[str, Any] | None = None
@@ -3200,7 +3328,7 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-        await self._persist(record)
+        await self._persist(record, fields={"attempts", "outcome", "state"})
         await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
@@ -3211,7 +3339,7 @@ class TaskRepository:
             raise ValueError("run_not_terminal")
         _transition(record, "run_closed")
         record.events.append({"phase": "run_closed", "execution_id": record.execution_id})
-        await self._persist(record)
+        await self._persist(record, fields={"state"})
         return record
 
 
@@ -3249,7 +3377,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        await self._persist(record, fields={"outcome", "state"})
         return record
 
 
@@ -3354,7 +3482,7 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist(record)
+            await self._persist(record, fields=set())
 
         existing = next((node for node in record.dynamic_nodes if node.intent_id == intent.intent_id), None)
         if existing is not None:
@@ -3392,6 +3520,8 @@ class TaskRepository:
             raise ValueError("capability_package_scope_mismatch")
         if node_package.publication_state == "abandoned":
             raise ValueError("capability_package_abandoned")
+        if not node_package.is_executable:
+            raise ValueError("capability_package_not_executable")
         try:
             node_export = node_package.export_for(intent.action_descriptor_ref)
         except ValueError as exc:
@@ -3548,7 +3678,7 @@ class TaskRepository:
                 },
             ]
         )
-        await self._persist(record)
+        await self._persist(record, fields={"dynamic_nodes"})
         return node
 
 
@@ -3627,7 +3757,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        await self._persist(record, fields={"attempts", "dynamic_nodes"})
         return deepcopy(attempt)
 
 
@@ -3792,7 +3922,7 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist(updated)
+            await self._persist(updated, fields={"attempts", "dynamic_nodes"})
             self.runs[run_id] = updated
             return deepcopy(replacement)
 
@@ -4002,7 +4132,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        await self._persist(record, fields={"attempts", "dynamic_nodes", "outcome", "state"})
         if terminal_state in {"failed", "decision_required"} and record.state != "cleaning_up":
             await self._settle_execution_request(run_id, execution_id=record.execution_id, outcome=record.outcome)
         return node
@@ -4087,7 +4217,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        await self._persist(record, fields={"attempts", "dynamic_nodes", "outcome", "state"})
         if record.state != "cleaning_up":
             await self._settle_execution_request(run_id, execution_id=record.execution_id, outcome=record.outcome)
         return node
@@ -4255,7 +4385,7 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist(record)
+            await self._persist(record, fields={"outcome", "state"})
             await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
             return record
         if requires_attestation:
@@ -4283,7 +4413,7 @@ class TaskRepository:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            await self._persist(record)
+            await self._persist(record, fields={"outcome", "state"})
             await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
             return record
         _transition(record, "run_succeeded")
@@ -4311,7 +4441,7 @@ class TaskRepository:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
-        await self._persist(record)
+        await self._persist(record, fields={"outcome", "state"})
         await self._settle_execution_request(record.run_id, execution_id=record.execution_id, outcome=record.outcome)
         return record
 
@@ -4328,7 +4458,7 @@ class TaskRepository:
         if self.sessions is None:
             events = self.runs[run_id].events[after:after + limit]
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 events = list((await session.scalars(select(RunEventRow.event).where(
                     RunEventRow.run_id == run_id, RunEventRow.sequence > after
                 ).order_by(RunEventRow.sequence).limit(limit))).all())
@@ -4338,7 +4468,7 @@ class TaskRepository:
         if self.sessions is None:
             record = await self._assert_run_workspace(run_id, workspace_id)
         else:
-            async with self.sessions() as session:
+            async with self._execution_read_session() as session:
                 row = (await session.scalars(select(RunRow).where(RunRow.run_id == run_id,
                     RunRow.closure_contract["workspace_id"].as_string() == workspace_id))).one_or_none()
                 if row is None:

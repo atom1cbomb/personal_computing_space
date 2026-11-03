@@ -6,7 +6,7 @@ DESCRIBE 结果选择 action。首次使用需要通过统一认证入口登录�
 
 | action | 用途 | 交互 |
 |---|---|---|
-| `papers_search` | 按关键词或研究描述搜索已有论文 | task，返回 Run |
+| `papers_search` | 按关键词或研究描述搜索已有论文 | request-reply |
 | `papers_get` | 按 `paper_id` 读取论文详情 | request-reply |
 | `papers_list` | 按会议和年份列出论文 | request-reply |
 | `venues_list` | 列出已有论文的会议及数量 | request-reply |
@@ -18,6 +18,5 @@ DESCRIBE 结果选择 action。首次使用需要通过统一认证入口登录�
 自动抓取论文。先调用 `venues_list`/`years_list` 确认可查询范围。`papers_get` 返回
 已有摘要、作者、DOI 和来源链接，不触发 PDF 下载或摘要生成。
 
-业务结果使用包声明的 output schema；task action 返回 Run URI，等待 Run 结束后读取
-最终 `{action, result}`。认证失效时重新认证原 activation，不要把 Cookie 或 token
+业务结果使用包声明的 output schema，结构为 `{action, result}`。认证失效时重新认证原 activation，不要把 Cookie 或 token
 放入 action 参数。

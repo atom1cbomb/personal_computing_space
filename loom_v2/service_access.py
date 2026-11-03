@@ -12,7 +12,7 @@ from loom_orchestration.naming import resource_label
 
 def interaction(export) -> str:
     binding = export.runtime_binding if hasattr(export, "runtime_binding") else export.get("runtime_binding", {})
-    return binding.get("interaction", "task")
+    return binding.get("interaction", "request-reply")
 
 
 def export_uri(names: Names, package, export) -> str:

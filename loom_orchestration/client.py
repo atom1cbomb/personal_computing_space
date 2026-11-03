@@ -29,13 +29,14 @@ class PlanRejectedError(RuntimeError):
 
 
 class LoomClient:
-    def __init__(self, base_url: str, *, token: str | None = None, client: httpx.AsyncClient | None = None, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 30.0, grip_authority: str = "loom.local", workspace_id: str = "workspace-default", allow_insecure_grip: bool = False, trusted_bindings: list[dict] | None = None, binding_preference: list[str] | None = None, credential_provider=None, descriptions: dict | None = None, schemas: dict | None = None, ssl_context=None) -> None:
+    def __init__(self, base_url: str, *, token: str | None = None, client: httpx.AsyncClient | None = None, transport: httpx.AsyncBaseTransport | None = None, timeout: float | None = 30.0, connect_timeout: float = 10.0, grip_authority: str = "loom.local", workspace_id: str = "workspace-default", allow_insecure_grip: bool = False, trusted_bindings: list[dict] | None = None, binding_preference: list[str] | None = None, credential_provider=None, descriptions: dict | None = None, schemas: dict | None = None, ssl_context=None) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self._client = client
         self.transport = transport
         self._owns_client = False
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
         self.workspace_id = workspace_id
         self.names = Names(grip_authority, workspace_id)
         self.allow_insecure_grip = allow_insecure_grip
@@ -55,9 +56,22 @@ class LoomClient:
         self._credential_lock = asyncio.Lock()
         self._driver_uri: str | None = None
 
+    def _wait_timeout(self, deadline=None):
+        timeout = self.timeout
+        if deadline:
+            remaining = timestamp(deadline) - time.time()
+            timeout = remaining if timeout is None else min(timeout, remaining)
+        if timeout is not None and timeout <= 0:
+            raise GripError("deadline_exceeded")
+        return timeout
+
+    def _http_timeout(self, deadline=None):
+        wait = self._wait_timeout(deadline)
+        return httpx.Timeout(wait, connect=min(self.connect_timeout, wait) if wait is not None else self.connect_timeout)
+
     async def __aenter__(self) -> "LoomClient":
         if self._client is None:
-            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout, transport=self.transport, verify=self.ssl_context or True, trust_env=False)
+            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self._http_timeout(), transport=self.transport, verify=self.ssl_context or True, trust_env=False)
             self._owns_client = True
         return self
 
@@ -74,7 +88,7 @@ class LoomClient:
         client = self._client
         close = False
         if client is None:
-            client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout, headers=headers, transport=self.transport, verify=self.ssl_context or True, trust_env=False)
+            client = httpx.AsyncClient(base_url=self.base_url, timeout=self._http_timeout(), headers=headers, transport=self.transport, verify=self.ssl_context or True, trust_env=False)
             close = True
         try:
             response = await client.request(method, path, headers=headers, follow_redirects=False, **kwargs)
@@ -151,11 +165,9 @@ class LoomClient:
     async def _grip_exchange(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         Request.model_validate(payload)
         # A separate request path: GRIP auth lives exclusively in the body.
-        client = self._client or httpx.AsyncClient(transport=self.transport, timeout=self.timeout, verify=self.ssl_context or True, trust_env=False)
+        client = self._client or httpx.AsyncClient(transport=self.transport, timeout=self._http_timeout(), verify=self.ssl_context or True, trust_env=False)
         try:
-            timeout = min(self.timeout, timestamp(payload["deadline"]) - time.time()) if payload.get("deadline") else self.timeout
-            if timeout <= 0:
-                raise GripError("deadline_exceeded")
+            timeout = self._http_timeout(payload.get("deadline"))
             request = client.build_request("POST", endpoint, json=payload, timeout=timeout)
             # A supplied AsyncClient may carry Observer auth or session cookies.
             # GRIP authentication is exclusively in the scoped message body.
@@ -328,9 +340,7 @@ class LoomClient:
 
     async def open_stream(self, target: str, action: str, input: dict[str, Any], *, deadline: str | None = None, binding=None):
         selected, payload, schema, credential = await self._prepare(target, action, input, mode="byte-stream", binding=binding, deadline=deadline)
-        timeout = min(self.timeout, timestamp(deadline) - time.time()) if deadline else self.timeout
-        if timeout <= 0:
-            raise GripError("deadline_exceeded")
+        timeout = self._wait_timeout(deadline)
         stream = await connect_stream(selected.endpoint, payload, timeout=timeout,
                                       expires_at=credential.expires_at, ssl=self.ssl_context)
         if not Draft202012Validator(schema).is_valid(stream.body):

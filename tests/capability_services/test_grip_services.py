@@ -24,6 +24,8 @@ from loom_v2.slave.runtime_plugins import RuntimePluginDescriptor, RuntimePlugin
 from loom_v2.testing.observer import create_embedded_app, seed_embedded_slaves
 from runtime_plugins.container_http_v1.runtime import DockerCommandResult, DockerContainerHTTPRuntimeV1, RUNTIME_DESCRIPTOR
 
+from tests.support.action_plan import submit_activation_plan
+
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = ("kubernetes_http", "volcano_http", "grafana_http", "outline_http", "suanlicloud_http", "vm_ssh_http", "suanli_vm_ssh_http")
 IMAGE = "registry.example/loom/test@sha256:" + "a" * 64
@@ -293,19 +295,22 @@ def arguments(directory, action_name):
     return value
 
 
+def configure_grip_keys(settings, tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+    key=Ed25519PrivateKey.generate()
+    (tmp_path/"signing.pem").write_bytes(key.private_bytes(Encoding.PEM,PrivateFormat.PKCS8,NoEncryption()))
+    (tmp_path/"verify.pem").write_bytes(key.public_key().public_bytes(Encoding.PEM,PublicFormat.SubjectPublicKeyInfo))
+    settings.grip_signing_key_file=str(tmp_path/"signing.pem")
+    settings.grip_verification_keys={settings.grip_signing_key_id:str(tmp_path/"verify.pem")}
+    settings.grip_allow_insecure_services=True
+
+
 @pytest.mark.parametrize("directory", PACKAGES)
 async def test_real_service_package_grip_lifecycle_and_every_export(directory, tmp_path, monkeypatch):
     gateway, handler, external = gateway_fixture(directory, tmp_path, monkeypatch)
     settings = Settings(grip_token="service-test", public_base_url="http://observer", coding_agent_backend="none", agent_lease_ttl_seconds=300)
-    if directory in {"kubernetes_http", "vm_ssh_http", "suanli_vm_ssh_http"}:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
-        key=Ed25519PrivateKey.generate()
-        (tmp_path/"signing.pem").write_bytes(key.private_bytes(Encoding.PEM,PrivateFormat.PKCS8,NoEncryption()))
-        (tmp_path/"verify.pem").write_bytes(key.public_key().public_bytes(Encoding.PEM,PublicFormat.SubjectPublicKeyInfo))
-        settings.grip_signing_key_file=str(tmp_path/"signing.pem")
-        settings.grip_verification_keys={settings.grip_signing_key_id:str(tmp_path/"verify.pem")}
-        settings.grip_allow_insecure_services=True
+    configure_grip_keys(settings, tmp_path)
     repo = ObserverRepository(settings=settings)
     app = create_embedded_app(repo, settings=settings)
     bundle = ServicePackage(ROOT / "capability_services" / directory)
@@ -418,8 +423,8 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                         assert (await client.read_json(ResourceRef.model_validate(declaration[key])))["type"] == "object"
                 for source, action in zip(bundle.manifest["action_exports"], exports, strict=True):
                     action_name = source["action_descriptor_ref"]["resource_id"].rsplit("/", 1)[-1]
-                    interaction=source["runtime_binding"].get("interaction","task")
-                    if interaction == "request-reply":
+                    interaction=source["runtime_binding"].get("interaction","request-reply")
+                    if action_name == "service-access-status":
                         result=await client.invoke(target,action["uri"],arguments(directory,action_name))
                         assert result["state"] == "ready"
                         continue
@@ -451,9 +456,8 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                                 assert b"200 OK" in await opened.stream.read(65536)
                         finally:await opened.stream.aclose()
                         continue
-                    data = {"arguments": arguments(directory, action_name), "expected_revision": activation["revision"], "idempotency_key": action_name}
-                    submitted = await client.invoke(target, action["uri"], data)
-                    assert await client.invoke(target, action["uri"], data) == submitted
+                    submitted = await submit_activation_plan(client, target, action["uri"], arguments(directory, action_name), action_name)
+                    assert await client.submission(action_name) == submitted
                     result = await wait_result(app, client, submitted["run"])
                     assert result["state"] == "completed", (action_name, result)
                     if action_name == "gpu-arena-gpu-hours":
@@ -462,25 +466,25 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                         assert row["gpu_hours"] == 2 and row["a100_80gb_hours"] == 1
                 business_paths = {e["runtime_binding"]["path"] for e in bundle.manifest["action_exports"] if e["runtime_binding"].get("interaction") != "byte-stream"}
                 calls = [p for _, p, _ in transport.calls if p in business_paths]
-                assert sorted(calls) == sorted(business_paths), "each export runs once despite repeated GRIP invocation"
+                assert sorted(calls) == sorted(business_paths), "submission lookup does not repeat business execution"
                 if "ssh" in directory:
                     long_script = "#" + "x" * (200 * 1024) + '\nprintf "large script ok"'
-                    call = await client.invoke(target, exports[0]["uri"], {"arguments": {"command": long_script, "timeout_seconds": 600}, "expected_revision": activation["revision"], "idempotency_key": "long-script"})
+                    call = await submit_activation_plan(client, target, exports[0]["uri"], {"command": long_script, "timeout_seconds": 600}, "long-script")
                     long_result = await wait_result(app, client, call["run"])
                     assert long_result["state"] == "completed", long_result
                     assert long_result["outcome"]["value"]["stdout"] == "large script ok"
                     for invalid in ({"command": "id", "timeout_seconds": 3601}, {"command": "x" * (1048576 + 1)}):
                         with pytest.raises(GripError, match="invalid_input"):
-                            await client.invoke(target, exports[0]["uri"], {"arguments": invalid, "expected_revision": activation["revision"], "idempotency_key": "above-exec-limit"})
-                    call = await client.invoke(target, exports[0]["uri"], {"arguments": {"command": "false"}, "expected_revision": activation["revision"], "idempotency_key": "failed-command"})
+                            await client.invoke(target, exports[0]["uri"], invalid)
+                    call = await submit_activation_plan(client, target, exports[0]["uri"], {"command": "false"}, "failed-command")
                     failure_result = await wait_result(app, client, call["run"])
                     assert failure_result["state"] in {"failed", "awaiting_decision"}, failure_result
                     with pytest.raises(GripError, match="invalid_input"):
-                        await client.invoke(target, exports[0]["uri"], {"arguments": {"command": "id", "timeout_seconds": -1}, "expected_revision": activation["revision"], "idempotency_key": "invalid-input"})
+                        await client.invoke(target, exports[0]["uri"], {"command": "id", "timeout_seconds": -1})
                 elif directory in {"outline_http", "suanlicloud_http", "volcano_http", "grafana_http"}:
                     for failure in ("failed", "invalid"):
                         external[failure] = True
-                        call = await client.invoke(target, exports[0]["uri"], {"arguments": {}, "expected_revision": activation["revision"], "idempotency_key": failure})
+                        call = await submit_activation_plan(client, target, exports[0]["uri"], {}, failure)
                         failure_result = await wait_result(app, client, call["run"])
                         assert failure_result["state"] in {"failed", "awaiting_decision"}, failure_result
                         external[failure] = False
@@ -492,12 +496,8 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     assert domain["resource"]["metadata"]["activations"] == [target]
                     assert metadata["target"] == volcano_uri
                     gpu_action = next(a["uri"] for a in declarations if a["name"] == "gpu_usage")
-                    direct = await client.invoke(volcano_uri, gpu_action, {
-                        "arguments": {}, "expected_revision": activation["revision"], "idempotency_key": "direct-volcano-gpu",
-                    })
-                    direct_result = await wait_result(app, client, direct["run"])
-                    assert direct_result["state"] == "completed"
-                    assert direct_result["outcome"]["value"]["allocated"] == 2
+                    direct = await client.invoke(volcano_uri, gpu_action, {})
+                    assert direct["allocated"] == 2
                 if directory == "grafana_http":
                     domain = await client.describe(grafana_uri)
                     assert domain["resource"]["mcue"] == "computing/grafana"
@@ -505,13 +505,8 @@ async def test_real_service_package_grip_lifecycle_and_every_export(directory, t
                     assert domain["resource"]["metadata"]["activations"] == [target]
                     assert metadata["target"] == grafana_uri
                     gpu_action = next(a["uri"] for a in declarations if a["name"] == "gpu_utilization")
-                    direct = await client.invoke(grafana_uri, gpu_action, {
-                        "arguments": {"hostname": "node-a"}, "expected_revision": activation["revision"],
-                        "idempotency_key": "direct-grafana-gpu",
-                    })
-                    direct_result = await wait_result(app, client, direct["run"])
-                    assert direct_result["state"] == "completed", direct_result
-                    point, = direct_result["outcome"]["value"]["samples"]
+                    direct = await client.invoke(grafana_uri, gpu_action, {"hostname": "node-a"})
+                    point, = direct["samples"]
                     assert (point["hostname"], point["gpu_index"], point["utilization_percent"]) == ("node-a", 0, 42)
                 # A second instance has its own Docker identity and can be stopped
                 # independently even though it shares the immutable package.
@@ -592,6 +587,7 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                              state_root=tmp_path / "state", transport=httpx.MockTransport(provider))
     handler = type("BrowserGrafanaHandler", (Handler,), {"gateway": gateway})
     settings = Settings(grip_token="browser-test", public_base_url="http://observer", coding_agent_backend="none", agent_lease_ttl_seconds=300)
+    configure_grip_keys(settings, tmp_path)
     repo = ObserverRepository(settings=settings)
     app = create_embedded_app(repo, settings=settings)
     bundle = ServicePackage(ROOT / "capability_services/grafana_http")
@@ -613,7 +609,7 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                     "idempotency_key": "activate-browser-grafana"})
                 assert activated["state"] == "pending_auth"
                 target = activated["resource"]
-                desc = await client.describe(target)
+                desc = await client.describe(target, refresh=True)
                 assert all(not x["available"] for x in desc["resource"]["metadata"]["actions"])
                 stored = next(iter(app.state.slaves["slave-a"].activations.values()))
                 for attempt in range(3):
@@ -644,7 +640,7 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                         for report in await worker.inspect_activation_health():
                             await repo.record_capability_health(report)
                             worker.acknowledge_health_report(report.report_id)
-                    ready = await client.describe(target)
+                    ready = await client.describe(target, refresh=True)
                     assert ready["resource"]["metadata"]["state"] == "ready"
                     assert ready["resource"]["metadata"]["revision"] == activated["revision"]
                     assert ready["resource"]["metadata"]["authentication"]["status"] == "authenticated"
@@ -654,7 +650,7 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                         for report in await worker.inspect_activation_health():
                             await repo.record_capability_health(report)
                             worker.acknowledge_health_report(report.report_id)
-                        expired = (await client.describe(target))["resource"]["metadata"]
+                        expired = (await client.describe(target, refresh=True))["resource"]["metadata"]
                         assert expired["state"] == "pending_auth"
                         assert expired["authentication"]["status"] == "auth_required"
                         if attempt == 1:
@@ -671,19 +667,15 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                 assert "gpu_metric_not_configured" in action["description"]
                 schema = await client.read_json(ResourceRef.model_validate(action["arguments_schema"]))
                 assert "activation" in schema["properties"]["gpu_metric"]["description"]
-                missing = await client.invoke(target, action["uri"], {
-                    "arguments": {"hostname": "node-a"}, "expected_revision": activated["revision"],
-                    "idempotency_key": "gpu-missing-mapping"})
+                missing = await submit_activation_plan(client, target, action["uri"], {"hostname": "node-a"}, "gpu-missing-mapping")
                 failed = await wait_result(app, client, missing["run"])
                 assert failed["state"] == "awaiting_decision", failed
                 assert failed["outcome"]["terminal_error"] == {
                     "code": "gpu_metric_not_configured", "category": "capability_service_http_error", "http_status": 400,
                 }
                 assert "browser-private-cookie" not in json.dumps(failed)
-                submitted = await client.invoke(target, action["uri"], {
-                    "arguments": {"hostname": "node-a", "datasource_uid": "prom", "gpu_metric": {
-                        "name": "DCGM_FI_DEV_GPU_UTIL", "node_label": "Hostname", "index_label": "gpu", "unit": "percent"}},
-                    "expected_revision": activated["revision"], "idempotency_key": "gpu-after-browser-login"})
+                submitted = await submit_activation_plan(client, target, action["uri"], {"hostname": "node-a", "datasource_uid": "prom", "gpu_metric": {
+                    "name": "DCGM_FI_DEV_GPU_UTIL", "node_label": "Hostname", "index_label": "gpu", "unit": "percent"}}, "gpu-after-browser-login")
                 outcome = await wait_result(app, client, submitted["run"])
                 assert outcome["state"] == "completed", outcome
                 assert outcome["outcome"]["value"]["samples"][0]["utilization_percent"] == 37
@@ -695,7 +687,7 @@ async def test_grafana_browser_auth_resumes_the_same_instance_and_keeps_cookie_o
                 for report in await worker.inspect_activation_health():
                     await repo.record_capability_health(report)
                     worker.acknowledge_health_report(report.report_id)
-                current = (await client.describe(target))["resource"]["metadata"]
+                current = (await client.describe(target, refresh=True))["resource"]["metadata"]
                 assert current["state"] == "ready"
                 assert current["revision"] == activated["revision"]
                 assert current["authentication"]["status"] == "authenticated"

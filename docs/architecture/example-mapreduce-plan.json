@@ -1,0 +1,70 @@
+{
+  "closure_id": "pool-prod-orchestration-422c2b1cb1",
+  "goal": "Production Driver Pool: three remote nodes and verified reduction",
+  "origin_conversation_ref": "",
+  "user_id": "user-default",
+  "workspace_id": "workspace-default",
+  "required_success_criteria": [],
+  "allowed_effects": [],
+  "resource_budget": {
+    "max_nodes": 3,
+    "max_live_nodes": 2,
+    "execution_timeout_seconds": 180,
+    "cleanup_timeout_seconds": 60
+  },
+  "recovery_policy": {},
+  "result_expectations": [],
+  "declared_constraints": [],
+  "body": {
+    "closure_id": "pool-prod-orchestration-422c2b1cb1",
+    "schema_version": "1",
+    "data": {},
+    "data_systems": {},
+    "program": {
+      "action_ref": "grip://loom.local/workspaces/workspace-default/actions/exports/driver-pool-production-mapreduce/1/action-descriptor/sha256/69c32ef9728160e53378ccf8c6021d6e8b93f6d1f54a441975fd550f9b78267e",
+      "io_contract_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/io-contract/sha256/170b75fe9c356601ead1d2ed6b9a33899b2f7cc3fa44a7bb4c1e2220777bc641",
+        "version_or_digest": null,
+        "access_binding": {
+          "media_type": "application/vnd.loom.io-contract+json"
+        },
+        "identity_criterion": "content_digest",
+        "provenance": []
+      }
+    },
+    "program_systems": {
+      "execution": {
+        "kind": "container:python_orchestrator",
+        "version": "1"
+      },
+      "package_ref": {
+        "resource_id": "grip://loom.local/workspaces/workspace-default/packages/driver-pool-production-mapreduce/1",
+        "version_or_digest": "4f08778925b4a29364dd7ca7d98b5276f29f7b650fa9dab287392dd0ca63805b",
+        "access_binding": {},
+        "identity_criterion": null,
+        "provenance": []
+      }
+    },
+    "node_input_bindings": [
+      {
+        "node_id": "grip://loom.local/workspaces/workspace-default/actions/exports/driver-pool-production-mapreduce/1/action-descriptor/sha256/69c32ef9728160e53378ccf8c6021d6e8b93f6d1f54a441975fd550f9b78267e",
+        "input_ref": {
+          "resource_id": "grip://loom.local/workspaces/workspace-default/content/json-document/sha256/1f3e88db33391c806dd1673be838b65b65a2fbe448a518917ed90d6e2423d1a2",
+          "version_or_digest": null,
+          "access_binding": {
+            "media_type": "application/json"
+          },
+          "identity_criterion": "content_digest",
+          "provenance": []
+        }
+      }
+    ],
+    "compute": {},
+    "compute_bindings": [],
+    "compute_application": {},
+    "compute_systems": {},
+    "terms": [],
+    "constraints": [],
+    "metadata": {}
+  }
+}

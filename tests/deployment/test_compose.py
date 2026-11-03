@@ -42,6 +42,7 @@ def test_slave_project_uses_observer_url_and_isolated_database(tmp_path: Path):
     assert document["services"]["slave"]["environment"]["LOOM_OBSERVER_URL"] == "http://10.0.0.11:8080"
     assert document["services"]["postgres"]["volumes"] == ["worker-a-postgres-data:/var/lib/postgresql/data"]
     slave = document["services"]["slave"]
+    assert slave["init"] is True
     state_dir = slave["environment"]["LOOM_RUNTIME_PLUGIN_INSTANCE_STATE_DIR"]
     assert state_dir == "/var/lib/loom/runtime-plugin-state"
     assert f"{state_dir}:{state_dir}" in slave["volumes"]

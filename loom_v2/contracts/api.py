@@ -81,6 +81,13 @@ class CapabilityPublishRequest(ContractModel):
     idempotency_key: str | None = None
 
 
+class RunActivationStopRequest(PublicRequest):
+    target_slave: str = Field(min_length=1)
+    instance_name: str = Field(default="default", pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    expected_revision: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1)
+
+
 class CapabilityHealthRequest(ContractModel):
     """Lease-authenticated health report sent by a Slave."""
 
@@ -89,6 +96,7 @@ class CapabilityHealthRequest(ContractModel):
     lease_id: str = Field(min_length=1)
     epoch: int
     workspace_id: str = Field(min_length=1)
+    run_id: str | None = None
     report: CapabilityHealthReport
 
 
@@ -155,6 +163,7 @@ __all__ = [
     "CapabilityHealthRequest",
     "CapabilityPublishRequest",
     "CapabilityPackageUploadRequest",
+    "RunActivationStopRequest",
     "ContentPutRequest",
     "DriverMessageRequest",
     "IdempotencyRequest",

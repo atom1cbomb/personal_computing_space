@@ -1,0 +1,54 @@
+%% Current non-stopped business service activations, grouped by package.
+%% Public GRIP snapshot: 2026-11-02 13:58 Asia/Shanghai.
+%% Lines show deployed adapters and their upstreams, not a fresh successful invocation.
+%% Every container group is hosted through the Slave runtime shown in 02-slave-runtime.mmd.
+%% k8s_ref/volcano_ref are directory relationships, not proof of adapter-to-adapter traffic.
+flowchart LR
+    subgraph A["slave-a · 9.0.16.66"]
+        K["kubernetes-http/v8<br/>nanjing / beijing-ict / beijing 降级"]
+        V["volcano-http/v2<br/>nanjing / beijing-ict / beijing"]
+        G["grafana-http/v6<br/>nj-v6 / ict-bj-v6 / bj-v6 降级"]
+        Cloud["suanlicloud-http/v7 · default"]
+        SSH["vm-ssh-http/v6<br/>vm-9-0-16-113"]
+        CSSH["suanli-vm-ssh-http/v7<br/>loom-v2-auth-3c474f5bb5"]
+        Pending["suanli-vm-ssh-http/v7<br/>npc-test · 待认证"]
+        AP["autopaper-http/v2<br/>autopaper · 降级"]
+        OL["suanli-overleaf-http/v1<br/>overleaf"]
+        Outline["outline-http/v4 · default"]
+        Ark["ark-http/v1 · ark-personal"]
+    end
+
+    KAPI["南京 / 北京 ICT / 北京<br/>Kubernetes API"]
+    VAPI["对应地区 Volcano Dashboard API"]
+    GAPI["对应地区 Grafana API"]
+    CloudAPI["算力云 API"]
+    VM113["autopaper-vm<br/>9.0.16.113"]
+    VMAuth["云 VM<br/>loom-v2-auth-3c474f5bb5"]
+    VMNPC["npc-test VM<br/>9.0.16.102 · slave-npc 在线"]
+    APAPI["AutoPaper 后端<br/>paper.cs.ac.cn"]
+    OLAPI["Overleaf<br/>overleaf.cs.ac.cn"]
+    OutlineAPI["Outline 文档服务"]
+    ArkAPI["火山方舟 API"]
+
+    K -->|HTTPS / Kubernetes API| KAPI
+    V -->|HTTPS| VAPI
+    G -->|HTTPS| GAPI
+    Cloud -->|HTTPS 管理 VM 生命周期| CloudAPI
+    SSH -->|SSH 命令 / 文件| VM113
+    CSSH -->|SSH 命令 / 文件| VMAuth
+    Pending -.->|认证完成后 SSH 访问| VMNPC
+    AP -->|HTTPS| APAPI
+    OL -->|HTTPS API / Git over HTTPS| OLAPI
+    Outline -->|HTTPS API| OutlineAPI
+    Ark -->|HTTPS API| ArkAPI
+
+    subgraph B["slave-autopaper · 9.0.16.113 · 当前租约离线"]
+        NK["kubernetes-http/v8 · nanjing<br/>最后上报 ready"]
+        Emb["embedding-http/v1 · autopapers<br/>最后上报 ready"]
+    end
+    Emb -->|GRIP WSS 经本机 Slave 数据入口| NK
+    NK -->|Kubernetes API / 受管 port-forward| KAPI
+    APAPI -->|本机 HTTP 127.0.0.1:18001| Emb
+
+    classDef unavailable fill:#fff1f2,stroke:#e11d48,color:#9f1239
+    class Pending,AP unavailable

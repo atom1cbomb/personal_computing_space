@@ -1,13 +1,13 @@
 # AutoPaper 论文查询能力包
 
-`autopaper-http/v2` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
+`autopaper-http/v3` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
 会议/年份浏览和会议目录。接口按 2026-10-26 读取的
 [Auto-Papers API 0.2.0 OpenAPI](https://paper.cs.ac.cn/openapi.json) 实现。
 发布与激活遵循[通用服务包流程](../README.md)。
 
 | action 名称 | 输入 | 返回的 result | 调用方式 |
 |---|---|---|---|
-| `papers_search` | `keywords` 或 `description`；可选 `venues`、`start_year`、`end_year`、`min_similarity`、`top_k`、`session_id` | `session_id`、`total`、`papers`、`messages` | task，返回 Run |
+| `papers_search` | `keywords` 或 `description`；可选 `venues`、`start_year`、`end_year`、`min_similarity`、`top_k`、`session_id` | `session_id`、`total`、`papers`、`messages` | request-reply |
 | `papers_get` | `paper_id` | 论文详情 | request-reply |
 | `papers_list` | `venue`、`year` | 论文列表 | request-reply |
 | `venues_list` | `{}` | 已入库会议和论文数量 | request-reply |
@@ -21,7 +21,7 @@ PDF 链接、已有结构化摘要和相似度等字段；缺失的可选字段�
 搜索默认 `top_k=50`、`min_similarity=0.5`，`top_k` 范围为 1–200。
 关键词或研究描述至少有一个非空；年份范围必须有序。搜索固定发送 `auto_ingest=false`，
 仅查询已有论文，避免 AutoPaper 默认的自动抓取入库。上游仍会保存搜索会话/历史，
-所以该动作使用 `autopaper.search`、`NotReplaySafe`，由 task 执行并返回 Run。
+所以该动作使用 `autopaper.search`、`NotReplaySafe`，结果不确定时须先核对，不能盲目重试。
 其余动作使用 `autopaper.read`、`SafeRead`，直接返回业务结果。
 会议目录包含尚无论文的会议；查询已有数据时先使用 `venues_list` 和 `years_list`。
 
@@ -36,7 +36,7 @@ API 与浏览器登录使用同一 origin，业务输入不能覆盖地址。
 
 宿主 Slave 在节点接入时准备 GRIP 数据入口或 Observer 中转上游，供该节点所有服务包复用。
 部署 AutoPaper 时先调用 `check-package`；仅有 task 执行通道的节点会报告
-`binding_unavailable` 并拒绝激活，不应通过 SSH 临时修补节点。
+`binding_unavailable`，仍可激活并执行任务计划；直接调用需要可用入口。
 节点配置方法见[服务入口接入步骤](../../docs/service-bindings-deployment.md)。
 
 激活时省略 `credential_profile`，初始状态为 `pending_auth`。在用户浏览器所在机器

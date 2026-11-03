@@ -262,3 +262,22 @@ async def test_new_package_publication_rejects_package_level_credentials():
     assert historical.body['credential_profile'] == 'k8s-prod'
     with pytest.raises(ValueError, match='credential_profile_requires_activation'):
         await repo.register_workspace_package('workspace-default', payload)
+
+
+async def test_retired_task_interaction_is_readable_only_as_frozen_history():
+    from loom_v2.pool.repository import PoolRepository
+    value = http_package_payload()
+    value.update(workspace_id="workspace-default", scope="workspace_reusable", publication_state="published")
+    value["action_exports"][0]["runtime_binding"]["interaction"] = "task"
+    with pytest.raises(ValueError):
+        CapabilityPackageVersion.model_validate(value)
+    archived = CapabilityPackageVersion.from_record(value)
+    frozen = archived.model_dump(mode="json")
+    assert archived.has_retired_interaction and not archived.is_executable
+    assert CapabilityPackageVersion.from_record(frozen).model_dump(mode="json") == frozen
+    with pytest.raises(ValueError):
+        CapabilityPackageVersion.model_validate(frozen)
+    repo = PoolRepository()
+    repo.workspace_packages[("workspace-default", archived.version_ref)] = archived
+    assert await repo.list_published_package_states("workspace-default") == []
+    assert (await repo.get_capability_package(archived.version_ref)).model_dump(mode="json") == frozen

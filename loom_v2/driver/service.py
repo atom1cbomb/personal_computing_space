@@ -755,11 +755,24 @@ class DriverService:
         return self.execution_loop_task
 
     async def run_execution_loop(self) -> None:
-        """Claim and execute durable Observer queue items independently of planning."""
+        """Claim only when a bounded execution slot is available."""
         self._execution_loop_stop.clear()
         self.execution_loop_active = True
+        active: dict[tuple[str, int], asyncio.Task] = {}
         try:
             while not self._execution_loop_stop.is_set():
+                active = {key: task for key, task in active.items() if not task.done()}
+                current_epoch = getattr(self.control_client, "driver_epoch", None)
+                if current_epoch is not None:
+                    for key in list(active):
+                        if key[1] != current_epoch:
+                            stale = active.pop(key)
+                            stale.cancel()
+                            await asyncio.gather(stale, return_exceptions=True)
+                            await self._cancel_run_dispatches(key[0])
+                if len(active) >= self.settings.driver_execution_concurrency:
+                    await asyncio.wait(active.values(), timeout=0.25, return_when=asyncio.FIRST_COMPLETED)
+                    continue
                 try:
                     if self.control_client is not None:
                         if getattr(self.control_client, "driver_epoch", None) is None:
@@ -781,52 +794,84 @@ class DriverService:
                         await asyncio.sleep(0.25)
                         continue
                     run = claim["run"]
-                    if str(run.get("state") or "") not in {"running", "cleaning_up"}:
+                    if run.get("state") not in {"running", "cleaning_up"}:
                         continue
-                    run_id = str(run["run_id"])
-                    owner_epoch = (claim.get("request") or {}).get("driver_epoch")
-                    if run["state"] == "cleaning_up":
-                        if self.control_client is not None:
-                            await self._refresh_remote_workers()
-                        runtime = DynamicOrchestrationRuntime(
-                            repository=self.remote_repository if self.control_client is not None else self.repository,
-                            executor=self.orchestration_executor,
-                            slaves=self.slaves, workers=self.workers,
-                            driver_id=self.control_client.driver_id if self.control_client else None,
-                            driver_epoch=int(owner_epoch or 0),
-                        )
-                        await runtime.run_cleanup(run_id)
+                    key = (str(run["run_id"]), int((claim.get("request") or {}).get("driver_epoch") or 0))
+                    if key in active:
+                        await asyncio.sleep(0.25)
                         continue
-                    deadline = (claim.get("request") or {}).get("deadline_at")
-                    remaining = self.settings.execution_timeout_seconds
-                    if deadline:
-                        end = datetime.fromisoformat(str(deadline)).replace(tzinfo=timezone.utc)
-                        remaining = max(0, (end - datetime.now(timezone.utc)).total_seconds())
-                    try:
-                        async with asyncio.timeout(remaining):
-                            if self.control_client is not None:
-                                await self._execute_and_wait_remote(run_id, "", expected_epoch=int(owner_epoch or 0))
-                            else:
-                                await self._execute_and_wait_local(run_id, "")
-                    except TimeoutError:
-                        expired_keys = [key for key in self._execution_tasks if key.startswith((f"local:{run_id}:", f"remote:{run_id}:"))]
-                        expired_tasks = [self._execution_tasks.pop(key) for key in expired_keys]
-                        for task in expired_tasks:
-                            task.cancel()
-                        await asyncio.gather(*expired_tasks, return_exceptions=True)
-                        if self.control_client is not None:
-                            await self.control_client.command("run.fail", {"run_id": run_id, "reason": {"code": "execution_deadline_exceeded"}})
-                        else:
-                            await self.repository.fail_run(run_id, {"code": "execution_deadline_exceeded"})
+                    # A renewed lease may reclaim an older local execution.
+                    # Finish its waiter before attaching the new owner.
+                    stale = [task for (run_id, epoch), task in active.items()
+                             if run_id == key[0] and epoch != key[1]]
+                    for task in stale:
+                        task.cancel()
+                    await asyncio.gather(*stale, return_exceptions=True)
+                    if stale:
+                        await self._cancel_run_dispatches(key[0])
+                    active[key] = asyncio.create_task(self._execute_claim(claim))
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    # Lease fencing and temporary worker loss are retried by
-                    # the next poll. Terminal Run/outcome transitions are
-                    # written by the existing execution path.
                     await asyncio.sleep(0.25 if str(exc) == "stale_driver_epoch" else 0.5)
         finally:
+            for task in active.values():
+                task.cancel()
+            await asyncio.gather(*active.values(), return_exceptions=True)
+            for task in self._execution_tasks.values():
+                task.cancel()
+            await asyncio.gather(*self._execution_tasks.values(), return_exceptions=True)
+            self._execution_tasks.clear()
             self.execution_loop_active = False
+
+    async def _execute_claim(self, claim: dict[str, Any]) -> None:
+        try:
+            run = claim["run"]
+            run_id = str(run["run_id"])
+            owner_epoch = (claim.get("request") or {}).get("driver_epoch")
+            if run["state"] == "cleaning_up":
+                if self.control_client is not None:
+                    await self._refresh_remote_workers()
+                runtime = DynamicOrchestrationRuntime(
+                    repository=self.remote_repository if self.control_client is not None else self.repository,
+                    executor=self.orchestration_executor,
+                    slaves=self.slaves, workers=self.workers,
+                    driver_id=self.control_client.driver_id if self.control_client else None,
+                    driver_epoch=int(owner_epoch or 0),
+                )
+                await runtime.run_cleanup(run_id)
+                return
+            deadline = (claim.get("request") or {}).get("deadline_at")
+            remaining = self.settings.execution_timeout_seconds
+            if deadline:
+                end = datetime.fromisoformat(str(deadline)).replace(tzinfo=timezone.utc)
+                remaining = max(0, (end - datetime.now(timezone.utc)).total_seconds())
+            try:
+                async with asyncio.timeout(remaining):
+                    if self.control_client is not None:
+                        await self._execute_and_wait_remote(run_id, "", expected_epoch=int(owner_epoch or 0))
+                    else:
+                        await self._execute_and_wait_local(run_id, "")
+            except TimeoutError:
+                await self._cancel_run_dispatches(run_id)
+                if self.control_client is not None:
+                    await self.control_client.command("run.fail", {"run_id": run_id, "reason": {"code": "execution_deadline_exceeded"}})
+                else:
+                    await self.repository.fail_run(run_id, {"code": "execution_deadline_exceeded"})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Existing dispatch paths persist terminal errors. Lease fencing
+            # leaves recovery to the Pool, without stopping other Run slots.
+            await asyncio.sleep(0.25 if str(exc) == "stale_driver_epoch" else 0.5)
+
+    async def _cancel_run_dispatches(self, run_id: str) -> None:
+        keys = [key for key in self._execution_tasks
+                if key.startswith((f"local:{run_id}:", f"remote:{run_id}:"))]
+        tasks = [self._execution_tasks.pop(key) for key in keys]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def stop_execution_loop(self) -> None:
         self._execution_loop_stop.set()
@@ -984,8 +1029,8 @@ class DriverService:
             self._execution_tasks[key] = task
         try:
             async def local_cancelled() -> bool:
-                current = await self.repository.get_run(run_id)
-                return current.state in {"cancelled", "cleaning_up"}
+                current = await self.repository.get_run_status(run_id)
+                return current["state"] in {"cancelled", "cleaning_up"}
 
             if await _wait_for_execution_or_cancel(task, local_cancelled):
                 completed, _result = task.result()
@@ -1025,7 +1070,7 @@ class DriverService:
             self._execution_tasks[key] = task
         try:
             async def remote_cancelled() -> bool:
-                current = await control.command("run.get", {"run_id": run_id})
+                current = await control.command("run.status", {"run_id": run_id})
                 return current.get("state") in {"cancelled", "cleaning_up"}
 
             if await _wait_for_execution_or_cancel(task, remote_cancelled):

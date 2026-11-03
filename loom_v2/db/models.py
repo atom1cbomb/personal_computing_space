@@ -27,6 +27,17 @@ class RunRow(Base):
     dynamic_nodes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
 
+class RunCapabilityStateRow(Base):
+    """Current Run-owned capability state, queried by Run without its history."""
+
+    __tablename__ = "run_capability_states"
+
+    run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    capability_packages: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    capability_activations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+
 class RunEventRow(Base):
     __tablename__ = "run_events"
     run_id: Mapped[str] = mapped_column(String(128), primary_key=True)

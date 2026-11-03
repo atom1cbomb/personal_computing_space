@@ -147,7 +147,7 @@ async def test_real_slave_stream_and_observer_relay_close_on_stop(service_setup,
             # Test the HTTP relay as a separate process boundary (no embedded shortcut).
             if relay:
                 app.state.slaves={}
-            async with LoomClient(base,token='owner',allow_insecure_grip=True,trusted_bindings=[route],
+            async with LoomClient(base,token='owner',timeout=None,allow_insecure_grip=True,trusted_bindings=[route],
                     binding_preference=[base.replace('http:','ws:')+'/grip/stream' if relay else route['endpoint']]) as c:
                 stream=await c.open_stream(target,actions[1],{'value':5})
                 await stream.write(b'bytes-through-entry')

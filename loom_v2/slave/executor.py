@@ -96,12 +96,14 @@ class ProcessJSONStdioV1Adapter:
                 proc.communicate(json.dumps(payload, ensure_ascii=False).encode() + b"\n"),
                 timeout=self._timeout(),
             )
-        except asyncio.TimeoutError as exc:
+        except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             await proc.wait()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             raise RuntimeError("capability_timeout") from exc
         if proc.returncode != 0:
             raise RuntimeError("capability_exec_error")

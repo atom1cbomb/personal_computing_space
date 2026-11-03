@@ -1,0 +1,48 @@
+%% Existing deployment, not a proposed design.
+%% Resource snapshot: 2026-11-02 13:58 Asia/Shanghai, public GRIP via SDK 0.13.0.
+%% Hosts/ports: production/deployment.toml and docs/superpowers/reports/2026-11-02-driver-pool-production.md.
+%% Red nodes are unavailable in this snapshot; dotted links retain configured paths.
+flowchart TB
+    Agent["外部 Agent + Loom SDK"]
+    Browser["浏览器 · 任务界面"]
+    Auth["用户浏览器 + loom-auth"]
+
+    subgraph Main["9.0.16.66 · pcs 主机"]
+        O["Observer :8080<br/>目录 / 包 / 激活 / 授权"]
+        P["Driver Pool :8093<br/>提交 / 冻结计划 / 队列 / Run / 历史 / Web"]
+        D["两个 Driver<br/>primary :8090 · secondary :8094"]
+        SA["slave-a :8081<br/>在线"]
+        DB[("共享 PostgreSQL<br/>资源记录 + 任务记录")]
+        M[("MinIO :19000<br/>源码 / 契约 / 输入 / 输出")]
+    end
+
+    subgraph APHost["9.0.16.113 · autopaper-vm"]
+        SAP["slave-autopaper :8082<br/>当前租约离线"]
+    end
+    subgraph NPCHost["9.0.16.102 · npc-test"]
+        SN["slave-npc :8082<br/>在线"]
+    end
+
+    Agent -->|GRIP 发现 / 资源管理 / 上传内容| O
+    Agent -->|GRIP 提交 / 查询 / 取消 / 验收| P
+    Browser -->|HTTP 任务界面| P
+    Auth -->|认证桥接| O
+    O -->|任务入口转交| P
+    P -->|资源管理命令| O
+    D -->|HTTP 注册 / 心跳 / 领取 / 结果上报| P
+    D -->|GRIP execute-attempt / 执行结果| SA
+    D -->|GRIP execute-attempt / 执行结果| SN
+    D -.->|已配置执行 binding| SAP
+    SA & SN -->|HTTP 校验 Driver 租约和执行所有权| P
+    SAP -.->|已配置执行授权校验| P
+    SA & SN -->|HTTP 注册 / 心跳 / 健康 / 依赖授权刷新| O
+    SAP -.->|已配置注册和健康上报| O
+    O -->|HTTP 激活 / 停止 / 配置 / 认证| SA & SN
+    O -.->|已配置节点管理| SAP
+    O -->|SQL 资源读写 / 任务摘要读取| DB
+    P -->|SQL 队列 / Run / Node / Attempt / 历史| DB
+    O & P & D & SA & SN -->|S3 内容读写| M
+    SAP -.->|已配置 S3 内容存储| M
+
+    classDef down fill:#fff1f2,stroke:#e11d48,color:#9f1239
+    class SAP down

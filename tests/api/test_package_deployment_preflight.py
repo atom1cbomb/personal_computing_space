@@ -11,7 +11,6 @@ import pytest
 
 from loom_orchestration import GripError, LoomClient
 from loom_v2.contracts.agents import AgentRegistration
-from loom_v2.contracts.errors import DomainError
 from loom_v2.observer.app import create_app
 from loom_v2.observer.grip import GripService
 from loom_v2.pool.repository import PoolRepository as ObserverRepository
@@ -84,7 +83,7 @@ async def deployment(tmp_path):
         await slave.close()
 
 
-async def publish(d, modes=("task", "request-reply", "byte-stream"), *, config_schema=None):
+async def publish(d, modes=("request-reply", "byte-stream"), *, config_schema=None):
     c = d.client
     schema = await c.upload_content({"type": "object", "properties": {"value": {"type": "integer"}},
                                     "required": ["value"]}, media_type="application/schema+json")
@@ -114,7 +113,7 @@ async def activate(d, package, instance="default"):
 
 async def test_dependency_preflight_activation_and_configuration_share_validation(deployment):
     d = deployment
-    package_uri = await publish(d, ("task",), config_schema={
+    package_uri = await publish(d, ("request-reply",), config_schema={
         "type": "object", "required": ["backend"], "additionalProperties": False,
         "properties": {
             "backend": {"type": "string", "description": "Backend serving this instance.", "x-loom-dependency": True},
@@ -125,7 +124,7 @@ async def test_dependency_preflight_activation_and_configuration_share_validatio
     for config, code in [({}, "activation_config_invalid"), ({"backend": "not-a-uri"}, "dependency_reference_invalid:backend")]:
         check_result = await d.client.invoke(d.target, d.client.names.action("check-package"), {
             "package": package_uri, "instance_config": config})
-        assert check_result["ready"] is False and check_result["issues"][0]["code"] == code
+        assert check_result["ready"] is False and any(i["code"] == code for i in check_result["issues"])
         with pytest.raises(GripError, match=code.split(":", 1)[0]):
             await d.client.invoke(d.target, d.client.names.action("activate-package"), {
                 "package": package_uri, "instance_config": config, "idempotency_key": "attempt"})
@@ -139,7 +138,7 @@ async def test_dependency_preflight_activation_and_configuration_share_validatio
     assert repr(d.repo.workspace_package_events) == before_events and not d.calls
     active = await d.client.invoke(d.target, d.client.names.action("activate-package"), {
         "package": package_uri, "instance_config": config, "idempotency_key": "attempt"})
-    assert active["state"] == "ready"
+    assert active["state"] == "degraded"
     assert (await check(d, package_uri))["ready"]  # omitted config reuses the active instance
     described = await d.client.describe(active["resource"])
     metadata = described["resource"]["metadata"]
@@ -163,7 +162,7 @@ async def test_missing_entry_refuses_without_side_effects_then_same_request_depl
     package = await publish(d)
     result = await check(d, package)
     assert result["ready"] is False
-    assert result["required_interactions"] == ["byte-stream", "request-reply", "task"]
+    assert result["required_interactions"] == ["byte-stream", "request-reply"]
     assert {(i["code"], i["interaction"]) for i in result["issues"]} == {
         ("binding_unavailable", "byte-stream"), ("binding_unavailable", "request-reply")}
     assert all(len(i["actions"]) == 1 for i in result["issues"])
@@ -203,11 +202,11 @@ async def test_partial_entry_and_instance_override_are_checked_per_mode(deployme
     instance = d.client.names.name("activations", "preflight-test", "v1", "slave-a", "special")
     d.settings.grip_upstream_bindings[instance] = d.routes
     assert (await check(d, package, "special"))["ready"]
-    assert not (await check(d, package))["ready"]
+    assert (await check(d, package))["ready"] == (mode == "byte-stream")
 
 
 @pytest.mark.parametrize("fault", ["missing-key", "wrong-key-id", "bad-endpoint", "bad-audience"])
-async def test_configuration_faults_are_public_and_block_repository_entry(deployment, fault):
+async def test_direct_configuration_faults_are_public_but_allow_task_activation(deployment, fault):
     d = deployment
     package_uri = await publish(d, ("request-reply",))
     d.settings.grip_upstream_bindings = {d.target: [dict(d.routes[0])]}
@@ -223,19 +222,26 @@ async def test_configuration_faults_are_public_and_block_repository_entry(deploy
     code = "service_signing_unavailable" if "key" in fault else "binding_invalid"
     assert result["issues"][0]["code"] == code and "secret" not in str(result)
     package = await d.repo.get_capability_package(package_uri)
-    with pytest.raises(DomainError) as caught:
-        await d.repo.set_capability_desired(package.version_ref, "slave-a", desired_state="running", idempotency_key="driver-desire")
-    assert caught.value.envelope.code == "activation_preflight_failed"
-    assert caught.value.envelope.details["issues"] == result["issues"]
-    assert not await d.repo.list_package_activations(package) and not d.calls
+    assert result["ready"]
+    activated = await activate(d, package_uri)
+    metadata = (await d.client.describe(activated["resource"]))["resource"]["metadata"]
+    action, = metadata["actions"]
+    assert action["execution"] == {
+        "direct": {"available": False, "unavailable_reason": code},
+        "task": {"available": True, "unavailable_reason": None},
+    }
+    assert action["available"] and metadata["available"]
+    assert d.calls == [("provision", 1)]
 
 
-async def test_task_only_package_needs_no_service_keys_or_entry(deployment):
+async def test_json_task_activation_needs_no_service_keys_or_entry(deployment):
     d = deployment
     d.settings.grip_signing_key_file = ""
-    package = await publish(d, ("task",))
-    assert await check(d, package) == {"ready": True, "required_interactions": ["task"], "issues": []}
-    assert (await activate(d, package))["state"] == "ready"
+    package = await publish(d, ("request-reply",))
+    result = await check(d, package)
+    assert result["ready"] and result["required_interactions"] == ["request-reply"]
+    assert result["issues"][0]["code"] == "service_signing_unavailable"
+    assert (await activate(d, package))["state"] == "degraded"
 
 
 async def test_route_loss_degrades_discovery_and_blocks_configure_but_allows_stop(deployment):
@@ -248,8 +254,8 @@ async def test_route_loss_degrades_discovery_and_blocks_configure_but_allows_sto
     d.settings.grip_upstream_bindings = {}
     metadata = (await d.client.describe(target, refresh=True))["resource"]["metadata"]
     assert metadata["state"] == "degraded" and metadata["runtime_state"] == "ready"
-    assert not metadata["available"] and metadata["unavailable_reason"] == "binding_unavailable"
-    assert {a["name"] for a in metadata["actions"] if a["available"]} == {"task"}
+    assert metadata["available"] and metadata["unavailable_reason"] is None
+    assert {a["name"] for a in metadata["actions"] if a["available"]} == {"request-reply"}
     with pytest.raises(GripError, match="unsupported_binding"):
         await d.client.invoke(target, d.client.names.action("configure"),
                               {"expected_revision": 1, "idempotency_key": "configure", "instance_config": {"new": True}})
@@ -278,7 +284,7 @@ async def test_check_reports_node_availability_and_runtime_support(deployment, f
     from datetime import datetime, timedelta, timezone
 
     d = deployment
-    package = await publish(d, ("task",))
+    package = await publish(d, ("request-reply",))
     agent = next(a for a in d.repo.agents.values() if a["role"] == "slave")
     if fault == "offline":
         agent["last_seen_at"] = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -286,6 +292,6 @@ async def test_check_reports_node_availability_and_runtime_support(deployment, f
         agent["capabilities"] = {}
     result = await check(d, package)
     assert not result["ready"]
-    assert result["issues"] == [{"code": "slave_unavailable" if fault == "offline" else "package_runtime_unsupported",
-                                 "interaction": None, "actions": []}]
+    assert {"code": "slave_unavailable" if fault == "offline" else "package_runtime_unsupported",
+            "interaction": None, "actions": []} in result["issues"]
     assert not d.calls

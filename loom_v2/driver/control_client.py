@@ -23,7 +23,7 @@ class PoolControlClient:
 
     ALLOWED_COMMANDS = DRIVER_COMMANDS
     READ_ONLY_COMMANDS = frozenset({
-        "run.get", "run.recovery.list", "execution.get",
+        "run.get", "run.status", "run.recovery.list", "execution.get",
         "capability.list", "capability.get", "capability.activations",
     })
 

@@ -181,6 +181,9 @@ def create_app(
                         "workspace_id": current_lease.workspace_id,
                         "report": report.model_dump(mode="json"),
                     }
+                    package = app.state.service._find_cached_package(report.package_version_ref, report.package_digest)
+                    if package is not None and package.scope == "run_bound":
+                        payload["run_id"] = package.source_run_ref
                     response = await observer_request(
                         "/internal/v1/capability-health",
                         payload,

@@ -377,9 +377,10 @@ async def test_parse_package_promotion_and_abandon_are_explicit_user_decisions()
     promote_candidate, abandon_candidate = candidates
     reusable = await repo.promote_capability_package(
         promote_candidate.version_ref,
+        run_id=promote_candidate.source_run_ref,
         approved_digest=promote_candidate.package_digest,
     )
-    abandoned = await repo.abandon_capability_package(abandon_candidate.version_ref)
+    abandoned = await repo.abandon_capability_package(abandon_candidate.version_ref, run_id=abandon_candidate.source_run_ref)
     visible_promoted = await repo.list_capability_packages(run_id="run-bandgap-promote")
     visible_abandoned = await repo.list_capability_packages(run_id="run-bandgap-abandon")
 
@@ -390,7 +391,7 @@ async def test_parse_package_promotion_and_abandon_are_explicit_user_decisions()
     assert any(package.package_id == reusable.package_id for package in visible_promoted)
     assert abandon_candidate.scope == "run_bound"
     assert abandoned.publication_state == "abandoned"
-    assert visible_abandoned == []
+    assert visible_abandoned == [reusable]  # Workspace publication is visible to either Run.
 
 
 @pytest.mark.asyncio

@@ -147,7 +147,7 @@ PROCESS_JSON_STDIO_V1_SCHEMA = _contract_schema(
         },
         "additionalProperties": False,
     },
-    {"type": "object", "maxProperties": 0},
+    {"type": "object", "properties": {"interaction": {"const": "request-reply"}}, "additionalProperties": False},
     max_exports=1,
 )
 
@@ -273,7 +273,7 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
         "type": "object",
         "required": ["path"],
         "properties": {
-            "interaction": {"enum": ["task", "request-reply", "byte-stream"]},
+            "interaction": {"enum": ["request-reply", "byte-stream"]},
             "path": {
                 "type": "string",
                 "pattern": _ORIGIN_PATH_PATTERN,

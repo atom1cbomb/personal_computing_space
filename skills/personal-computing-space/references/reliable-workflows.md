@@ -36,7 +36,7 @@ contract = await action_contract(client, activation_uri, action_name)
 ledger = CallLedger("evidence/calls.sqlite", max_calls=10,
                     max_text_characters=1500, max_text_length=600)
 result = await execute_action(client, activation_uri, action_name, arguments,
-                              idempotency_key=operation_key, ledger=ledger, timeout=120)
+                              idempotency_key=operation_key, ledger=ledger)
 ```
 
 Set the ledger limits from the actual task; the numbers above are examples.
@@ -45,17 +45,18 @@ Character limits count every string in the business `texts` input across calls.
 The helper rejects schema or budget violations before dispatch. It is a client
 guard, not an authorization boundary against code bypassing the helper.
 
-`execute_action` selects the exact current action, validates business arguments,
-handles the task/direct wrapper, and polls task Runs until the server reports a
-terminal state. `status=completed` is only execution success: check the user's
-acceptance conditions too. `value` is the unmodified business response,
-including any provider `result`/`data` envelopes; inspect its schema and keys
-rather than assuming a uniform result path. Task results also retain `receipt`,
-full `run`, `resource_ref` and `digest_verified`. Direct results have a receipt
-but no invented Run. The optional helper `timeout` is only a local polling
-watchdog and does not cancel or replace the Run's server-owned execution or
-cleanup budget; the default follows the Run until it reaches a terminal state.
-Keep its identity and report its actual state.
+`execute_action` selects the exact current action, checks `execution.direct`,
+validates business arguments and invokes it directly. `deadline` is an optional
+request deadline. It never submits or polls a Run. `status=completed` is only
+execution success: check the user's acceptance conditions too. `value` is the
+unmodified business response, including provider `result`/`data` envelopes.
+The ledger key avoids repeating a locally recorded call; it does not supply
+server idempotency. A reserved call without a receipt is uncertain and requires
+reconciliation. Transport failures never trigger task submission.
+
+For task execution, use the [single-node plan](single-action-plan.md), then
+`wait_run` to read and verify persisted output. Its optional `timeout` only bounds
+local polling and does not cancel the Run's execution or cleanup budget.
 
 Use `ledger.summary()` to account for all dispatched calls and text characters.
 Prior overspending or synthetic results are not erased by a later successful

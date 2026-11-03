@@ -27,7 +27,7 @@ async def publish_creator(repo, mapping):
         "execution": {"kind": "container:http", "version": "1"},
         "body": {"image_ref": "registry.example/service@sha256:" + "a" * 64, "container_port": 8080, "health_path": "/healthz"},
         "action_exports": [action_export(descriptor.model_dump(mode="json"), contract.model_dump(mode="json"),
-                                         runtime_binding={"path": "/create", "interaction": "task"})],
+                                         runtime_binding={"path": "/create", "interaction": "request-reply"})],
     })
     return package, effect
 

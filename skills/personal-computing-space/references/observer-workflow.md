@@ -31,11 +31,10 @@ URI, exported action URI, arguments and stable idempotency key. Its returned
 `run` URI identifies a Run resource with lifecycle actions including `read` and `cancel`. If you need
 to publish a new Python computation first, use [function-packages.md](function-packages.md).
 
-Long-lived services use `activate-package`; invoke their ready activation with
-the selected export's declared interaction and offered schemas. Task exports use
-`{arguments, expected_revision, idempotency_key}` and return a Run; direct exports
-take business input and return business output. GRIP `mode=request-reply` applies
-to both and does not distinguish them. Stream exports use `open_stream`.
+Long-lived services use `activate-package`. Direct JSON calls take business input
+and return business output. For a Run on an existing instance, use the
+[single-node plan](single-action-plan.md) with its pinned revision. Stream
+exports use `open_stream`. Check the action's `execution` metadata for availability.
 Select its credentials with top-level `credential_profile`, alongside
 `instance_config`, using a name supplied by the Slave operator. Different named
 instances can use different profiles. The selection is not in the package or
@@ -156,8 +155,8 @@ repair. An execution result awaiting attestation is not accepted success.
 Cancel on the user's request with `await client.cancel(run_uri, reason="user_cancel")`.
 Its optional `request_id` maps to `idempotency_key` and checks that a known
 submission belongs to this Run; it is not a new cancellation identifier.
-Omitting it works for complete-plan, `run-package` and activation-task Runs.
-`run-package` and activation task keys are scoped to those actions; do not pass
+Omitting it works for complete-plan and `run-package` Runs.
+`run-package` keys are scoped to those actions; do not pass
 them as a Driver submission key. Cleanup may continue after cancellation, so
 poll through `cleaning_up` and inspect `outcome.cleanup`.
 

@@ -9,7 +9,7 @@ from loom_orchestration.mcue import ResourceMetadata
 
 
 DRIVER_COMMANDS = frozenset({
-    "run.get", "run.close", "run.cancel", "run.fail", "run.resolve",
+    "run.get", "run.status", "run.close", "run.cancel", "run.fail", "run.resolve",
     "run.recovery.list", "run.recovery.mark", "run.result",
     "execution.enqueue", "execution.claim_next", "execution.get", "execution.recover",
     "agent_signal.record",
@@ -23,7 +23,7 @@ DRIVER_COMMANDS = frozenset({
 # Commands whose optional run_id is admitted before executing their handler.
 # Recovery and capability listing enforce their own collection scope.
 DRIVER_RUN_SCOPED_COMMANDS = frozenset({
-    "run.get", "run.close",
+    "run.get", "run.status", "run.close",
     "run.cancel", "run.fail", "run.resolve", "run.result",
     "execution.enqueue", "execution.claim_next", "execution.get", "execution.recover",
     "agent_signal.record", "capability.health", "capability.desire",
