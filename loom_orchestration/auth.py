@@ -178,7 +178,9 @@ class Login:
             raise RuntimeError("authentication_expired")
 
     async def _state_from_observer(self, client, revision):
-        metadata = (await client.describe(self.target))["resource"]["metadata"]
+        # Authentication and activation revisions can change during login;
+        # polling must not wait for the ordinary description cache to expire.
+        metadata = (await client.describe(self.target, refresh=True))["resource"]["metadata"]
         if metadata["revision"] != revision or metadata["desired_state"] != "running":
             raise RuntimeError("activation_changed")
         authentication = metadata.get("authentication", {})

@@ -185,8 +185,8 @@ async def test_real_headless_browser_reuses_session_or_returns_for_manual_login(
     observer.auth["verification_uri"] = "https://service.example/login"
     describe = observer.describe
 
-    async def description(target):
-        result = await describe(target)
+    async def description(target, *, refresh=False):
+        result = await describe(target, refresh=refresh)
         result["resource"]["metadata"]["authentication"]["verification_uri"] = observer.auth["verification_uri"]
         return result
 

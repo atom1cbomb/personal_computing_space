@@ -1,5 +1,6 @@
 import asyncio
 from copy import deepcopy
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import httpx
 import pytest
 
 from loom_orchestration.auth import AuthProfileStore, Handler, Login, https_origin
+from loom_orchestration.client import LoomClient
 from loom_orchestration.grip import Names
 
 
@@ -36,7 +38,7 @@ class Observer:
     async def __aexit__(self, *args):
         pass
 
-    async def describe(self, target):
+    async def describe(self, target, *, refresh=False):
         return {"resource": {"uri": target, "metadata": {
             "state": "ready" if self.ready else "pending_auth", "desired_state": "running", "revision": self.revision,
             "authentication": {"method": self.method, "status": "authenticated" if self.ready else "auth_required"}}},
@@ -46,6 +48,44 @@ class Observer:
         self.calls.append((target, action, inputs))
         self.ready = False
         return {"resource": target, "revision": self.revision, "authentication": deepcopy(self.auth)}
+
+
+@pytest.mark.parametrize("change,error", [
+    ({"state": "ready", "authentication": {"method": "redirect", "status": "authenticated"}}, None),
+    ({"revision": 2}, "activation_changed"),
+    ({"authentication": {"method": "redirect", "status": "auth_failed"}}, "authentication_failed"),
+])
+async def test_auth_poll_observes_server_changes_before_description_cache_expires(change, error):
+    target = Observer.names.name("activations", "service", "v1", "slave", "test")
+    metadata = {"state": "pending_auth", "desired_state": "running", "revision": 1,
+                "authentication": {"method": "redirect", "status": "auth_required"}}
+    requests = []
+
+    def handle(request):
+        data = json.loads(request.content)
+        assert data["method"] == "DESCRIBE" and data["target"] == target
+        requests.append(data)
+        description = {
+            "resource": {"uri": target, "mcue": "capability/activation", "metadata": metadata},
+            "offers": [],
+            "expires_at": datetime.fromtimestamp(time.time() + 30, timezone.utc).isoformat(),
+        }
+        return httpx.Response(200, json={"version": "grip.v1", "request_id": data["request_id"],
+                                        "kind": "reply", "body": description})
+
+    async with LoomClient(Observer.base_url, token="test-owner", transport=httpx.MockTransport(handle)) as client:
+        await client.describe(target)
+        metadata.update(change)
+        assert (await client.describe(target))["resource"]["metadata"]["state"] == "pending_auth"
+        assert len(requests) == 1  # The ordinary SDK cache is still valid.
+        login = Login(target, lambda: client)
+        if error:
+            with pytest.raises(RuntimeError, match="^" + error + "$"):
+                await login._state_from_observer(client, 1)
+        else:
+            ready, _ = await login._state_from_observer(client, 1)
+            assert ready
+        assert len(requests) == 2
 
 
 @pytest.mark.parametrize("method", ["redirect", "device-code", "browser-cookie"])
@@ -131,8 +171,8 @@ async def test_authenticated_provider_with_missing_binding_reports_node_setup_fa
     observer.ready = True
     describe = observer.describe
 
-    async def degraded(target):
-        result = await describe(target)
+    async def degraded(target, *, refresh=False):
+        result = await describe(target, refresh=refresh)
         result["resource"]["metadata"].update(state="degraded", runtime_state="ready",
             service_access={"issues": [{"code": "binding_unavailable", "interaction": "request-reply", "actions": []}]})
         return result

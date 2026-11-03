@@ -104,8 +104,8 @@ async def exercise_sso(tmp_path, monkeypatch, method, persistent_cookie, reuse=T
         observer.auth.update(cookie_name="service_session", verification_uri=f"https://{service}.example/login")
         describe = observer.describe
 
-        async def describe_with_challenge(target):
-            result = await describe(target)
+        async def describe_with_challenge(target, *, refresh=False):
+            result = await describe(target, refresh=refresh)
             if not observer.ready:
                 result["resource"]["metadata"]["authentication"]["verification_uri"] = observer.auth["verification_uri"]
             return result
