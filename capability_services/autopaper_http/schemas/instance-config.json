@@ -1,4 +1,6 @@
 {
+  "title": "AutoPaper service connection settings",
+  "description": "Configure the AutoPaper origin and optional bound resource. Automatic paper ingestion is selected per papers_search request, not in the instance configuration.",
   "type": "object",
   "properties": {
     "api_origin": {

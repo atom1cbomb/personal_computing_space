@@ -369,6 +369,10 @@ def autopaper_definitions():
                 min_similarity={"type": "number", "minimum": 0, "maximum": 1},
                 top_k={"type": "integer", "minimum": 1, "maximum": 200},
                 session_id={**identity, "type": ["string", "null"]},
+                auto_ingest={
+                    "type": "boolean",
+                    "description": "Whether AutoPaper may fetch and ingest online papers when local results are insufficient. Omission preserves the upstream default, currently true.",
+                },
             ),
             "result": obj(["session_id", "total", "papers"], session_id=string(), total=count,
                           papers=array(search_paper),

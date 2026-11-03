@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "autopaper-http",
-  "package_version": "v3",
+  "package_version": "v4",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -26,7 +26,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-search",
-        "version_or_digest": "490b3c6d9c6d30535fd3644cb6d41f3a1dd307c557febd4baad0b3bca01c1169",
+        "version_or_digest": "0ed670869f3e57a3bfeec89f6663f67baee84dfeeaa572026277ea02c1855b35",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -39,14 +39,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-search/sha256/bcc0de06c47dac54309a933bb4c9f54216c2ccc832b4e4f8d778b19d94530397",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-search/sha256/8b4efabef11133a2cd9f57f06e55e37394b9eb8add32e60a0cbc219efcd0b2a0",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-get",
-        "version_or_digest": "3e470de156a7b770002ba3923ec8a5d11040eafcb2282ac62d46fdfe5e7a2cca",
+        "version_or_digest": "a0180f32aa45d48e8218f4450b0c99c7ee581f9f3dee57e4a42fbc5be91ede69",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -66,7 +66,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/papers-list",
-        "version_or_digest": "5913dd144521abb635ab4aa63581857f58f62bca00ca3cc4041944be8daca896",
+        "version_or_digest": "3b6af4a70291525f5e236c8ca527d7ec44174ce030056e75d4a33f3335df9372",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -86,7 +86,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/venues-list",
-        "version_or_digest": "60a82acd3153461459e3629617ee47de73d3acc291583e1a0476e3913bff46f0",
+        "version_or_digest": "406ac3a1c7e8cad478340963b5154d769eb9a4ea64dd03c3b5576c4a45ecd701",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -106,7 +106,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/years-list",
-        "version_or_digest": "0c210517f99070e5c014f8978c52fbc779c13891e899f3a68ff4e2a318f23aeb",
+        "version_or_digest": "a98a221a00a8593d75f373e1182d248ff9b0bc31aee9f4c9b57419b74f85d125",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -126,7 +126,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/autopaper/venues-catalog",
-        "version_or_digest": "279b54784c0ed30012b67be35dadabd42ec7879a8fc60f9759921ca5c4b473ea",
+        "version_or_digest": "a6037d12c9422a31a0a5df04ae83253ca87b8e1b349b97ac53f53ad7462c9f39",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",

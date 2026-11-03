@@ -278,7 +278,7 @@ class AutoPaperGateway:
             start, end = payload.get("start_year"), payload.get("end_year")
             if start is not None and end is not None and start > end:
                 raise GatewayError("year_range_invalid", 400)
-            arguments = {"top_k": 50, "min_similarity": 0.5, **arguments, "auto_ingest": False}
+            arguments = {"top_k": 50, "min_similarity": 0.5, **arguments}
         elif action == "papers-get":
             upstream = upstream.format(paper_id=arguments.pop("paper_id"))
         with self._lock:

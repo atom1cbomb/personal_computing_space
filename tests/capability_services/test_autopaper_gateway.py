@@ -86,24 +86,37 @@ def test_routes_preserve_provider_results_and_encode_filters(gateway, path, payl
     assert value["result"] == provider(request).json()
     assert "private-session" not in json.dumps(value)
     if method == "POST":
-        assert json.loads(request.content) == {**payload, "auto_ingest": False}
+        assert json.loads(request.content) == payload
     else:
         assert dict(request.url.params) == {k: str(v) for k, v in payload.items() if k != "paper_id"}
 
 
-def test_search_defaults_do_not_trigger_ingestion(gateway):
+def test_search_preserves_upstream_ingestion_default(gateway):
     def search(request):
         assert json.loads(request.content) == {"description": "graph learning", "top_k": 50,
-                                               "min_similarity": .5, "auto_ingest": False}
+                                               "min_similarity": .5}
         return provider(request)
     gateway.client.close()
     gateway.client = httpx.Client(transport=httpx.MockTransport(search))
     gateway.handle("/v1/papers/search", {"description": "graph learning"})
 
 
+@pytest.mark.parametrize("auto_ingest", [True, False])
+def test_search_forwards_explicit_ingestion_choice(gateway, auto_ingest):
+    def search(request):
+        assert json.loads(request.content)["auto_ingest"] is auto_ingest
+        return provider(request)
+    gateway.client.close()
+    gateway.client = httpx.Client(transport=httpx.MockTransport(search))
+    result = gateway.handle("/v1/papers/search", {"keywords": ["agent"], "auto_ingest": auto_ingest})
+    assert result["result"]["papers"][0]["id"] == PAPER["id"]
+
+
 @pytest.mark.parametrize("path,payload", [
     ("/v1/papers/search", {}), ("/v1/papers/search", {"keywords": [" "]}),
-    ("/v1/papers/search", {"description": "x", "auto_ingest": True}),
+    ("/v1/papers/search", {"description": "x", "auto_ingest": "true"}),
+    ("/v1/papers/search", {"description": "x", "auto_ingest": 1}),
+    ("/v1/papers/search", {"description": "x", "auto_ingest": None}),
     ("/v1/papers/search", {"description": "x", "top_k": True}),
     ("/v1/papers/search", {"description": "x", "top_k": 201}),
     ("/v1/papers/search", {"description": "x", "min_similarity": float("nan")}),

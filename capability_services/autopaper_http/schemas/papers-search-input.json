@@ -55,6 +55,10 @@
         "null"
       ],
       "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "auto_ingest": {
+      "type": "boolean",
+      "description": "Whether AutoPaper may fetch and ingest online papers when local results are insufficient. Omission preserves the upstream default, currently true."
     }
   },
   "additionalProperties": false

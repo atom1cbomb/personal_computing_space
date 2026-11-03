@@ -40,7 +40,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         if self.command == "POST":
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            if url.path != "/api/search" or body.get("auto_ingest") is not False or body.get("keywords") != ["RAG"]:
+            if url.path != "/api/search" or body.get("auto_ingest", True) is not True or body.get("keywords") != ["RAG"]:
                 return self.reply(422, {"detail": "unexpected search request"})
         if url.path in {"/api/papers/list", "/api/papers/years"}:
             if parse_qs(url.query).get("venue") != ["ACL & EMNLP"]:

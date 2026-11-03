@@ -1,13 +1,13 @@
 # AutoPaper 论文查询能力包
 
-`autopaper-http/v3` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
+`autopaper-http/v4` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
 会议/年份浏览和会议目录。接口按 2026-10-26 读取的
 [Auto-Papers API 0.2.0 OpenAPI](https://paper.cs.ac.cn/openapi.json) 实现。
 发布与激活遵循[通用服务包流程](../README.md)。
 
 | action 名称 | 输入 | 返回的 result | 调用方式 |
 |---|---|---|---|
-| `papers_search` | `keywords` 或 `description`；可选 `venues`、`start_year`、`end_year`、`min_similarity`、`top_k`、`session_id` | `session_id`、`total`、`papers`、`messages` | request-reply |
+| `papers_search` | `keywords` 或 `description`；可选 `venues`、`start_year`、`end_year`、`min_similarity`、`top_k`、`session_id`、`auto_ingest` | `session_id`、`total`、`papers`、`messages` | request-reply |
 | `papers_get` | `paper_id` | 论文详情 | request-reply |
 | `papers_list` | `venue`、`year` | 论文列表 | request-reply |
 | `venues_list` | `{}` | 已入库会议和论文数量 | request-reply |
@@ -19,11 +19,14 @@ PDF 链接、已有结构化摘要和相似度等字段；缺失的可选字段�
 `papers_get` 返回已有摘要和链接，不触发 PDF 下载或摘要生成。
 
 搜索默认 `top_k=50`、`min_similarity=0.5`，`top_k` 范围为 1–200。
-关键词或研究描述至少有一个非空；年份范围必须有序。搜索固定发送 `auto_ingest=false`，
-仅查询已有论文，避免 AutoPaper 默认的自动抓取入库。上游仍会保存搜索会话/历史，
-所以该动作使用 `autopaper.search`、`NotReplaySafe`，结果不确定时须先核对，不能盲目重试。
+关键词或研究描述至少有一个非空；年份范围必须有序。`auto_ingest` 为可选布尔值；
+省略时保留 AutoPaper 原生默认值（目前为 `true`），库内结果不足时可从网上抓取并入库；
+显式传 `false` 仅查询已有论文。上游会保存搜索会话/历史，也可能新增论文，
+所以该动作使用 `autopaper.search`、`NotReplaySafe`；结果不确定时须先核对，不能盲目重试。
 其余动作使用 `autopaper.read`、`SafeRead`，直接返回业务结果。
-会议目录包含尚无论文的会议；查询已有数据时先使用 `venues_list` 和 `years_list`。
+会议目录包含尚无论文的会议；查询已有数据时可先使用 `venues_list` 和 `years_list`，
+但其中未列出的会议或年份仍可通过 `papers_search` 搜索。v1–v3 曾在网关强制关闭自动抓取，
+v4 起移除该覆盖并开放 `auto_ingest` 参数。
 
 上游按会议和年份列出论文的接口没有分页参数，能力包保留完整结果；响应超过 32 MiB
 时明确失败，不返回截断列表。业务请求超时为 120 秒，认证探测为 10 秒，失败不自动重试。

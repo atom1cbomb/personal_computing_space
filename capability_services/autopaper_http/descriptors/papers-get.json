@@ -7,7 +7,7 @@
     "research.papers.read"
   ],
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/instance-config/sha256/0d0d224460a31257c388237450e64985125f00a16daffde424cd9f0b8a2d6de5",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/instance-config/sha256/2755ea748d6234ee033a66e3c91292f72349372c36e6673adeba66aee191cd7a",
     "identity_criterion": "content_digest"
   }
 }
