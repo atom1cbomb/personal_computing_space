@@ -28,17 +28,17 @@
 
 | 能力包（使用说明） | 当前源码版本 | 提供的能力 |
 | --- | --- | --- |
-| [火山方舟](capability_services/ark_http/HOW_TO_USE.md) | `ark-http/v2` | 使用 API Key 调用多模态模型、图片生成、视频任务、向量化和语音合成 |
-| [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v9` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
-| [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v2` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
-| [Volcano](capability_services/volcano_http/HOW_TO_USE.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
-| [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v6` | 查询仪表盘、Prometheus 指标及 GPU Arena；GPU 利用率动作需要显式或实例默认的指标映射 |
-| [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v4` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份；搜索可通过 `auto_ingest` 选择自动抓取入库 |
-| [Overleaf](capability_services/suanli_overleaf_http/HOW_TO_USE.md) | `suanli-overleaf-http/v1` | 查询项目、下载源码、检查版本、同步修改和导入新项目；在外部 agent 本地编辑与编译 |
-| [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v8` | 查询区域、节点、镜像和实例，创建及管理 VM |
-| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/HOW_TO_USE.md) | `suanli-vm-ssh-http/v7` | 为单台 VM 提供浏览器认证、持久自动续期、SSH 命令执行和文件传输 |
-| [普通 VM SSH](capability_services/vm_ssh_http/HOW_TO_USE.md) | `vm-ssh-http/v6` | 使用挂载的 SSH 密钥访问普通 SSH VM，执行命令并上传下载文件 |
-| [Outline](capability_services/outline_http/HOW_TO_USE.md) | `outline-http/v4` | 查询、检索、读取正文、创建和更新文档等受限操作 |
+| [火山方舟](capability_services/ark_http/HOW_TO_USE.md) | `ark-http/v3` | 使用 API Key 调用多模态模型、图片生成、视频任务、向量化和语音合成 |
+| [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v10` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
+| [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v3` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
+| [Volcano](capability_services/volcano_http/HOW_TO_USE.md) | `volcano-http/v3` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
+| [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v7` | 查询仪表盘、Prometheus 指标及 GPU Arena；GPU 利用率动作需要显式或实例默认的指标映射 |
+| [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v5` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份；搜索可通过 `auto_ingest` 选择自动抓取入库 |
+| [Overleaf](capability_services/suanli_overleaf_http/HOW_TO_USE.md) | `suanli-overleaf-http/v2` | 查询项目、下载源码、检查版本、同步修改和导入新项目；在外部 agent 本地编辑与编译 |
+| [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v9` | 查询区域、节点、镜像和实例，创建及管理 VM |
+| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/HOW_TO_USE.md) | `suanli-vm-ssh-http/v8` | 为单台 VM 提供浏览器认证、持久自动续期、SSH 命令执行和文件传输 |
+| [普通 VM SSH](capability_services/vm_ssh_http/HOW_TO_USE.md) | `vm-ssh-http/v7` | 使用挂载的 SSH 密钥访问普通 SSH VM，执行命令并上传下载文件 |
+| [Outline](capability_services/outline_http/HOW_TO_USE.md) | `outline-http/v5` | 查询、检索、读取正文、创建和更新文档等受限操作 |
 
 表中版本对应仓库内的包模板；已部署实例的版本和可用动作以 GRIP DESCRIBE 为准。
 AutoPaper 搜索省略 `auto_ingest` 时沿用上游默认行为，显式传 `false` 可限定查询已有论文；搜索会保存历史，也可能新增论文，结果不确定时需先核对再决定是否重试。

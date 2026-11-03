@@ -22,7 +22,8 @@
           "port": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 65535
+            "maximum": 65535,
+            "description": "Service TCP port number (identifier), 1–65535; not a duration or resource quantity. Required; no default."
           },
           "selector": {
             "type": "object",

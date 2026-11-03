@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generate content-addressed IoContracts for the HTTP service packages.
 
-The JSON files under each capability service are the reviewable contract
-source.  This command only derives schema/contract files and replaces the
-``io_contract_ref`` placeholders in the example manifest. Descriptor templates get their source digest; publication
+The definitions below own the generated business schemas; SSH business schemas
+and instance configuration schemas are authored in their JSON files. This command
+derives contract files and updates the example manifest's content references.
+Descriptor templates get their source digest; publication
 resolves dependency references and obtains final descriptor refs from Observer.
 Image digests are always supplied by the publisher.
 """
@@ -31,12 +32,15 @@ def obj(required: list[str] | None = None, **properties: Any) -> dict[str, Any]:
     return value
 
 
-def string(*, const: str | None = None, enum: list[str] | None = None) -> dict[str, Any]:
+def string(*, const: str | None = None, enum: list[str] | None = None,
+           description: str | None = None) -> dict[str, Any]:
     value: dict[str, Any] = {"type": "string"}
     if const is not None:
         value["const"] = const
     if enum is not None:
         value["enum"] = enum
+    if description is not None:
+        value["description"] = description
     return value
 
 
@@ -47,25 +51,31 @@ def array(item: dict[str, Any]) -> dict[str, Any]:
 def k8s_definitions() -> dict[str, dict[str, Any]]:
     service_input = obj(["service_ref"], service_ref={"type": "string", "pattern": "^grip://"})
     service_input["additionalProperties"] = False
+    native_resource = {**obj(), "description": (
+        "Native Kubernetes object. Resource quantities retain Kubernetes units: CPU cores "
+        "(1 or 1000m = one core); memory/storage bytes (1Gi = 1073741824 B, 1G = 1000000000 B). "
+        "GPU extended resources are counts of the named resource. Time fields ending in Seconds "
+        "are seconds; parallelism, completions and backoffLimit are counts."
+    )}
     return {
         "services-ensure": {"input": service_input, "output": obj(["status", "service_ref", "namespace", "name", "uid", "state"], status=string(const="ensured"), service_ref=string(), namespace=string(), name=string(), uid=string(), state=string())},
-        "service-access-status": {"input": service_input, "output": obj(["service_ref", "state", "last_error", "checked_at"], service_ref=string(), state=string(), last_error={"type":["string","null"]}, checked_at={"type":["string","null"]})},
+        "service-access-status": {"input": service_input, "output": obj(["service_ref", "state", "last_error", "checked_at"], service_ref=string(), state=string(), last_error={"type":["string","null"]}, checked_at={"type":["string","null"], "description": "Last check as a timezone-qualified RFC3339 timestamp; null before the first check."})},
         "open-service-stream": {"input": service_input, "output": obj()},
         "resources-list": {
             "input": obj(resource=string(enum=["pods", "pvc", "jobs", "vcjobs"])),
-            "output": obj(["status", "resource"], status=string(const="ok"), resource=obj()),
+            "output": obj(["status", "resource"], status=string(const="ok"), resource=native_resource),
         },
         "resources-get": {
             "input": obj(["resource", "name"], resource=string(enum=["pods", "pvc", "jobs", "vcjobs"]), name=string()),
-            "output": obj(["status", "resource"], status=string(const="ok"), resource=obj()),
+            "output": obj(["status", "resource"], status=string(const="ok"), resource=native_resource),
         },
         "jobs-submit": {
-            "input": obj(["manifest"], manifest=obj()),
+            "input": obj(["manifest"], manifest=native_resource),
             "output": obj(["status", "name"], status=string(const="submitted"), name=string()),
         },
         "jobs-status": {
             "input": obj(["name"], name=string()),
-            "output": obj(["status", "job"], status=string(const="ok"), job=obj()),
+            "output": obj(["status", "job"], status=string(const="ok"), job=native_resource),
         },
         "jobs-logs": {
             "input": obj(["pod_name"], pod_name=string()),
@@ -107,6 +117,16 @@ def outline_definitions() -> dict[str, dict[str, Any]]:
                           url=string()))
     result["documents-documents"]["output"]["properties"]["result"] = obj(
         ["data"], data=array(obj(id=string(), title=string(), url=string(), children=array(obj()))))
+    for action in ("collections-list", "documents-list", "documents-search-titles", "documents-search"):
+        result[action]["input"] = {**result[action]["input"], "description": (
+            "Native Outline parameters. When using upstream pagination, limit is the maximum "
+            "item count and offset is the zero-based count of skipped items, not a page number. "
+            "Supported ranges/defaults are determined by the deployed Outline API."
+        )}
+        result[action]["output"]["properties"]["result"]["description"] = (
+            "Native Outline response; pagination.limit counts items and pagination.offset "
+            "counts skipped items starting at zero. No pagination unit conversion."
+        )
     return result
 
 
@@ -121,6 +141,11 @@ def suanli_definitions() -> dict[str, dict[str, Any]]:
         Ip={"type": ["string", "null"]},
         Ips=array(string()),
     )
+    instance_identity["description"] = (
+        "Provider VM object. Cpu is a vCPU count; Mem and DiskSize are bytes (B), "
+        "as is Disks[].SizeBytes when present. Vmid is an opaque numeric VM identifier; "
+        "Disks[].BusIndex is a zero-based disk index within its bus."
+    )
     instance_status = obj(
         ["InstanceId", "State"],
         InstanceId=string(),
@@ -130,23 +155,35 @@ def suanli_definitions() -> dict[str, dict[str, Any]]:
     provider_results = {
         "regions-list": (empty, ["Regions"], {"Regions": array(obj())}),
         "zones-list": (obj(["RegionId"], RegionId=string()), ["Zones"], {"Zones": array(obj())}),
-        "nodes-list": (obj(["RegionId", "Filters"], RegionId=string(), Filters=filters), ["Nodes"], {"Nodes": array(obj())}),
+        "nodes-list": (obj(["RegionId", "Filters"], RegionId=string(), Filters=filters), ["Nodes"], {"Nodes": array({**obj(), "description": (
+            "Provider node object. MaxCpu counts CPU cores; Cpu is used CPU as a 0–1 ratio "
+            "of MaxCpu. Mem, MaxMem, Disk and MaxDisk are bytes (B); Uptime is seconds."
+        )})}),
         "instances-list": (
-            obj(ProjectId=string(), InstanceIds=instance_ids, Filters=filters, PageNumber={"type": "integer"}, PageSize={"type": "integer"}),
+            obj(ProjectId=string(), InstanceIds=instance_ids, Filters=filters,
+                PageNumber={"type": "integer", "description": "Page number, starting at 1; not an item offset."},
+                PageSize={"type": "integer", "description": "Maximum number of instances per page (count)."}),
             ["Instances"],
-            {"Instances": array(instance_identity), "PageNumber": {"type": "integer"}, "PageSize": {"type": "integer"}, "TotalCount": {"type": "integer"}},
+            {"Instances": array(instance_identity),
+             "PageNumber": {"type": "integer", "description": "Current page number, starting at 1."},
+             "PageSize": {"type": "integer", "description": "Instances per page (count)."},
+             "TotalCount": {"type": "integer", "description": "Total matching instances (count)."}},
         ),
         "instances-status": (
             obj(["InstanceIds", "Filters", "IncludeAllInstances"], InstanceIds=instance_ids, Filters=filters, IncludeAllInstances={"type": "boolean"}),
             ["InstanceStatuses"],
             {"InstanceStatuses": array(instance_status)},
         ),
-        "images-list": (obj(ZoneId=string()), ["Images"], {"Images": array(obj())}),
+        "images-list": (obj(ZoneId=string()), ["Images"], {"Images": array({**obj(), "description": "Provider image object. Bytes is the image length in bytes (B); Status is a dimensionless provider status code."})}),
         "instances-run": (
             obj(
                 ["ProjectId", "RegionId", "ZoneId", "Count", "Cpu", "Mem", "DiskSize", "ImageId", "Name", "TagSpecifications", "ClientToken"],
-                ProjectId=string(), RegionId=string(), ZoneId=string(), Count={"type": "integer"}, Cpu={"type": "integer"},
-                Mem={"type": "integer"}, DiskSize={"type": "integer"}, ImageId=string(), Name=string(),
+                ProjectId=string(), RegionId=string(), ZoneId=string(),
+                Count={"type": "integer", "description": "Number of VM instances to create (count), for example 1."},
+                Cpu={"type": "integer", "description": "vCPU count per VM, for example 2 for two vCPUs; not millicores or a utilization ratio."},
+                Mem={"type": "integer", "description": "Memory per VM in bytes (B). Example: 4 GiB = 4294967296 B; pass 4294967296. Forwarded unchanged to the provider."},
+                DiskSize={"type": "integer", "description": "Root disk capacity per VM in bytes (B). Example: 20 GiB = 21474836480 B; pass 21474836480. Forwarded unchanged to the provider."},
+                ImageId=string(), Name=string(),
                 TagSpecifications=array(obj()), ClientToken=string(),
             ),
             ["Instances"],
@@ -185,17 +222,28 @@ def volcano_definitions() -> dict[str, dict[str, Any]]:
             "type": "string", "minLength": 3, "maxLength": 253,
         }),
     }
-    metrics = {key: count for key in ("allocated", "running_allocated", "unscheduled_requested")}
+    metrics = {key: {**count, "description": description + (
+        " Counts units of resource_name (default nvidia.com/gpu), not utilization percent "
+        "or necessarily physical GPU cards; query MIG resource types separately."
+    )} for key, description in {
+        "allocated": "Effective requests of scheduled, non-terminal Pods.",
+        "running_allocated": "Effective requests of scheduled Pods in Running phase.",
+        "unscheduled_requested": "Effective requests of non-terminal Pods without a node.",
+    }.items()}
     gpu_pod = obj(["namespace", "name", "node_name", "phase", "gpu_requests", "scheduled"],
                   namespace=string(), name=string(), node_name={"type": ["string", "null"]},
-                  phase=string(), gpu_requests=count, scheduled={"type": "boolean"})
-    namespace_totals = obj(["namespace", "gpu_pods", *metrics], namespace=string(), gpu_pods=count, **metrics)
+                  phase=string(), gpu_requests={**count, "description": "Effective Pod request as a count of resource_name units; not utilization percent or memory bytes."}, scheduled={"type": "boolean"})
+    namespace_totals = obj(["namespace", "gpu_pods", *metrics], namespace=string(),
+                           gpu_pods={**count, "description": "Non-terminal Pods requesting resource_name in this namespace (Pod count)."}, **metrics)
     gpu_output = obj(
         ["status", "complete", "metric", "collected_at", "namespace", "resource_name", "pod_count",
          "terminal_pods", *metrics, "by_namespace", "gpu_pods"],
         status=string(const="ok"), complete={"const": True},
-        metric=string(const="scheduled_pod_requests"), collected_at=string(), namespace=string(),
-        resource_name=string(), pod_count=count, terminal_pods=count, **metrics,
+        metric=string(const="scheduled_pod_requests"),
+        collected_at=string(description="Collection time as a timezone-qualified RFC3339 timestamp."), namespace=string(),
+        resource_name=string(),
+        pod_count={**count, "description": "All collected Pods (count), including terminal Pods."},
+        terminal_pods={**count, "description": "Succeeded/Failed Pods excluded from request totals (count)."}, **metrics,
         by_namespace=array(namespace_totals), gpu_pods=array(gpu_pod),
     )
     result = {}
@@ -204,15 +252,21 @@ def volcano_definitions() -> dict[str, dict[str, Any]]:
             "input": input_schema,
             "output": gpu_output if action == "gpu-usage" else obj(
                 ["status", "items", "total_count", "complete"], status=string(const="ok"),
-                items=array(obj()), total_count=count, complete={"const": True}),
+                items=array({**obj(), "description": "Upstream object; Kubernetes resource quantities preserve CPU cores (1000m = 1 core), memory/storage bytes (1Gi = 1073741824 B) and named extended-resource counts."}),
+                total_count={**count, "description": "Returned resources (count), after collecting all pages."}, complete={"const": True}),
         }
     return result
 
 
 def grafana_definitions() -> dict[str, dict[str, Any]]:
-    text = {"type": "string", "minLength": 1, "maxLength": 32768}
+    text = {"type": "string", "minLength": 1, "maxLength": 32768,
+            "description": "PromQL query text; runtime limit is 32768 UTF-8 bytes, so non-ASCII queries may contain fewer characters."}
     identity = {"type": "string", "minLength": 1, "maxLength": 128}
-    at = {"type": ["string", "number"]}
+    at = {"type": ["string", "number"], "description": (
+        "Absolute time as Unix seconds since 1970-01-01T00:00:00Z (number or numeric string; "
+        "fractional seconds allowed), or a timezone-qualified RFC3339 string, e.g. "
+        "2026-11-03T08:00:00+08:00. Numeric values are seconds, not milliseconds."
+    )}
     boolean = {"type": "boolean"}
     strings = array(string())
     gpu_metric = obj(["name", "node_label", "index_label", "unit"],
@@ -236,52 +290,66 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
         ["status", "complete", "datasource_uid", "queried_at", "query", "parameters",
          "result_type", "result", "warnings", "infos"],
         status=string(const="ok"), complete=boolean, datasource_uid=identity,
-        queried_at=string(), query=text, parameters=obj(),
+        queried_at=string(description="Gateway query time as a timezone-qualified RFC3339 timestamp."), query=text,
+        parameters={**obj(), "description": "Effective query parameters: time/start/end are Unix seconds and step is seconds."},
         result_type=string(enum=["vector", "matrix", "scalar", "string"]),
-        result={"type": "array", "items": {}}, warnings=strings, infos=strings,
+        result={"type": "array", "items": {}, "description": (
+            "Native Prometheus result. Sample timestamps are Unix seconds; numeric sample values "
+            "retain the queried expression's unit, including numeric strings. Determine value units "
+            "from the metric/expression and dashboard field configuration; no implicit conversion."
+        )}, warnings=strings, infos=strings,
     )
     sample = obj(
         ["hostname", "gpu_index", "gpu_uuid", "utilization_percent", "sampled_at", "labels"],
-        hostname=string(), gpu_index={"type": "integer", "minimum": 0},
+        hostname=string(), gpu_index={"type": "integer", "minimum": 0, "description": "GPU device index from the verified metric label (nonnegative identifier, not a GPU count)."},
         gpu_uuid={"type": ["string", "null"]},
-        utilization_percent={"type": "number", "minimum": 0, "maximum": 100},
-        sampled_at=string(), labels=obj(),
+        utilization_percent={"type": "number", "minimum": 0, "maximum": 100, "description": "GPU busy utilization in percent, 0–100; 50 means 50%. A ratio input is multiplied by 100."},
+        sampled_at=string(description="Sample time as a timezone-qualified RFC3339 timestamp."), labels=obj(),
     )
     arena_filters = {name: {"type": "array", "minItems": 1, "maxItems": 64,
                             "items": {"type": "string", "minLength": 1, "maxLength": 1024}}
                      for name in ("node", "model", "gpu_uuid")}
-    arena_window = {"start": at, "end": at, "step": {"type": "integer", "minimum": 1}, **arena_filters}
+    step = {"type": "integer", "minimum": 1, "description": "Range-query sampling interval in seconds (s), at least 1; for example 60 samples once per minute. At most 11000 samples per series."}
+    arena_window = {
+        "start": {**at, "description": at["description"] + " Defaults to seven days before end."},
+        "end": {**at, "description": at["description"] + " Defaults to now; window must be positive and at most 90 days."},
+        "step": {**step, "description": step["description"] + " Defaults to max(30, ceil(window_seconds / 1000))."},
+        **arena_filters,
+    }
     arena_identity = {"dashboard_uid": string(const="gpu-arena"),
-                      "dashboard_version": {"type": "integer"}, "dashboard_url": string()}
+                      "dashboard_version": {"type": "integer", "description": "Upstream dashboard revision number (identifier, no physical unit)."},
+                      "dashboard_url": string(description="Grafana browser URL; its from/to query parameters are Unix milliseconds, while action start/end inputs are Unix seconds.")}
     arena_common = {"status": string(enum=["ok", "no_data"]), "complete": boolean,
-                    "time_range": obj(), **arena_identity}
+                    "time_range": {**obj(), "description": "Effective start/end are Unix seconds, step is seconds, and filters contain literal label values."}, **arena_identity}
     return {
         "gpu-arena-describe": {
             "input": obj(),
             "output": obj(["status", *arena_identity, "title", "description", "max_range_days", "default_range", "variables", "panels", "notes"],
                           status=string(const="ok"), **arena_identity, title=string(), description=string(),
-                          max_range_days={"const": 90}, default_range=obj(), variables=array(obj()),
+                          max_range_days={"const": 90, "description": "Maximum selectable query window in days; one day is 86400 seconds."},
+                          default_range={**obj(), "description": "Grafana relative time expressions, for example from=now-7d and to=now; d means days."}, variables=array(obj()),
                           panels=array(obj(["id", "title", "description", "field_config", "targets"],
-                                           id={"type": "integer"}, title=string(), description=string(),
-                                           field_config=obj(), targets=array(obj()))), notes=strings),
+                                           id={"type": "integer", "description": "Dashboard panel ID (identifier, not a count)."}, title=string(), description=string(),
+                                           field_config={**obj(), "description": "Native Grafana display configuration, including defaults.unit and overrides. Inspect it together with the target expression to interpret sample values."}, targets=array(obj()))), notes=strings),
         },
         "gpu-arena-query": {
-            "input": obj(["panel_id", "ref_id"], panel_id={"type": "integer", "minimum": 1},
+            "input": obj(["panel_id", "ref_id"], panel_id={"type": "integer", "minimum": 1, "description": "Positive panel ID returned by gpu_arena_describe (identifier, not a count)."},
                          ref_id=identity, mode=string(enum=["instant", "range"]), **arena_window),
             "output": obj([*arena_common, "panel_id", "panel_title", "data"], **arena_common,
-                          panel_id={"type": "integer"}, panel_title=string(), data=query_output),
+                          panel_id={"type": "integer", "description": "Queried dashboard panel ID (identifier)."}, panel_title=string(), data=query_output),
         },
         "gpu-arena-gpu-hours": {
             "input": obj(**arena_window),
             "output": obj([*arena_common, "group_by", "accounting_step_seconds", "reference_vram_gib", "normalization", "rows", "warnings", "evidence"],
                           **arena_common, group_by=string(const="namespace"),
-                          accounting_step_seconds={"type": "integer", "minimum": 1}, reference_vram_gib={"const": 80},
+                          accounting_step_seconds={"type": "integer", "minimum": 1, "description": "Allocation accounting interval in seconds, independent of the output sampling step."},
+                          reference_vram_gib={"const": 80, "description": "Reference VRAM capacity in GiB; 1 GiB = 1073741824 B. Normalization uses 80 GiB."},
                           normalization=string(), rows=array(obj(
                               ["namespace", "rank", "gpu_hours", "a100_80gb_hours", "unrated_gpu_hours"],
-                              namespace=string(), rank={"type": ["integer", "null"], "minimum": 1},
-                              gpu_hours={"type": "number", "minimum": 0},
-                              a100_80gb_hours={"type": ["number", "null"], "minimum": 0},
-                              unrated_gpu_hours={"type": "number", "minimum": 0})),
+                              namespace=string(), rank={"type": ["integer", "null"], "minimum": 1, "description": "Rank starting at 1; null when missing capacity prevents normalization."},
+                              gpu_hours={"type": "number", "minimum": 0, "description": "Allocated GPU-hours: one GPU allocated for one hour is 1 GPU-hour; not utilization or elapsed seconds."},
+                              a100_80gb_hours={"type": ["number", "null"], "minimum": 0, "description": "VRAM-weighted GPU-hours: allocated GPU-hours multiplied by installed_vram_gib / 80. Despite the field name, capacity uses GiB, not decimal GB. Null if capacity is missing; not compute-performance equivalence."},
+                              unrated_gpu_hours={"type": "number", "minimum": 0, "description": "Allocated GPU-hours with unknown VRAM capacity, excluded from normalized ranking."})),
                           warnings=strings, evidence=array(query_output)),
         },
         "datasources-list": {
@@ -294,19 +362,20 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
             "input": obj(search={"type": "string", "maxLength": 256}),
             "output": obj(["status", "items", "total_count", "complete"], status=string(const="ok"),
                           items=array(obj(["uid", "title"], uid=identity, title=string())),
-                          total_count={"type": "integer", "minimum": 0}, complete={"const": True}),
+                          total_count={"type": "integer", "minimum": 0, "description": "Matching dashboards (count), after collecting all pages."}, complete={"const": True}),
         },
         "dashboard-get": {
             "input": obj(["uid"], uid=identity),
             "output": obj(["status", "dashboard"], status=string(const="ok"), dashboard=obj()),
         },
         "metrics-query": {
-            "input": obj(["query"], query=text, datasource_uid=identity, time=at),
+            "input": obj(["query"], query=text, datasource_uid=identity,
+                         time={**at, "description": at["description"] + " Defaults to now."}),
             "output": query_output,
         },
         "metrics-query-range": {
             "input": obj(["query", "start", "end", "step"], query=text, start=at, end=at,
-                         step={"type": "integer", "minimum": 1}, datasource_uid=identity),
+                         step=step, datasource_uid=identity),
             "output": query_output,
         },
         "gpu-utilization": {
@@ -317,23 +386,25 @@ def grafana_definitions() -> dict[str, dict[str, Any]]:
                 "(HTTP 400); no_data means a successful query returned no samples."
             ), **obj(["hostname"], hostname={"type": "string", "minLength": 1, "maxLength": 253,
                          "description": "Exact node-label value from Prometheus samples; not inferred from a VM display name."},
-                         gpu_index={"type": "integer", "minimum": 0}, time=at,
+                         gpu_index={"type": "integer", "minimum": 0, "description": "GPU device index from verified metric labels (nonnegative identifier, not a GPU count)."},
+                         time={**at, "description": at["description"] + " Defaults to now."},
                          datasource_uid=identity, gpu_metric=gpu_metric)},
             "output": obj(["status", "complete", "hostname", "unit", "metric", "datasource_uid",
                            "queried_at", "query_time", "samples", "warnings", "infos"],
                           status=string(enum=["ok", "no_data"]), complete=boolean, hostname=string(),
                           unit=string(const="percent"), metric=string(), datasource_uid=identity,
-                          queried_at=string(), query_time=string(), samples=array(sample), warnings=strings, infos=strings),
+                          queried_at=string(description="Gateway query time as a timezone-qualified RFC3339 timestamp."),
+                          query_time=string(description="Requested sample time as a timezone-qualified RFC3339 timestamp."), samples=array(sample), warnings=strings, infos=strings),
         },
     }
 
 
 def embedding_definitions():
-    vector = array({"type": "number"})
-    dimension = {"type": "integer", "minimum": 1}
+    vector = array({"type": "number", "description": "Finite, dimensionless embedding component; not a probability or percentage."})
+    dimension = {"type": "integer", "minimum": 1, "description": "Number of numeric components per embedding vector (count), for example 1024."}
     return {
         "embed": {"input": obj(["texts"], texts={"type": "array", "items": string(), "minItems": 1, "maxItems": 256},
-                                normalize={"type": "boolean"}, instruction={"type": ["string", "null"]}),
+                                normalize={"type": "boolean", "description": "Request L2 unit-length normalization; defaults to true. Components remain dimensionless."}, instruction={"type": ["string", "null"]}),
                   "output": obj(["embeddings", "dimension"], embeddings=array(vector), dimension=dimension)},
         "info": {"input": obj(), "output": obj(["model", "dimension", "device"], model=string(), dimension=dimension, device=string())},
     }
@@ -347,14 +418,14 @@ def autopaper_definitions():
     paper = obj(
         ["id", "title"], id=string(), title=string(), authors=array(string()),
         abstract=nullable_text, keywords=array(string()), doi=nullable_text,
-        venue=nullable_text, year={"type": ["integer", "null"]}, url=nullable_text,
+        venue=nullable_text, year={"type": ["integer", "null"], "description": "Publication calendar year, for example 2026; null if unknown."}, url=nullable_text,
         pdf_url=nullable_text, source=string(), publisher=nullable_text,
         summary={"type": ["object", "null"], "properties": {
             "problem": string(), "method": string(), "impact": string()}},
         link=nullable_text, has_pdf={"type": "boolean"},
     )
     search_paper = {**paper, "properties": {**paper["properties"],
-        "match_type": string(), "similarity": {"type": ["number", "null"]}}}
+        "match_type": string(), "similarity": {"type": ["number", "null"], "description": "Dimensionless similarity score from the upstream search, not a percentage; null if unavailable."}}}
     detail = {**paper, "properties": {**paper["properties"],
         "visibility": string(), "owner_id": nullable_text}}
     count = {"type": "integer", "minimum": 0}
@@ -364,32 +435,33 @@ def autopaper_definitions():
                 keywords={"type": "array", "items": text, "maxItems": 100},
                 description={"type": "string", "maxLength": 16000},
                 venues={"type": "array", "items": text, "maxItems": 100},
-                start_year={"type": ["integer", "null"], "minimum": 1000, "maximum": 9999},
-                end_year={"type": ["integer", "null"], "minimum": 1000, "maximum": 9999},
-                min_similarity={"type": "number", "minimum": 0, "maximum": 1},
-                top_k={"type": "integer", "minimum": 1, "maximum": 200},
+                start_year={"type": ["integer", "null"], "minimum": 1000, "maximum": 9999, "description": "Lower publication calendar year, for example 2020; null means no lower year bound."},
+                end_year={"type": ["integer", "null"], "minimum": 1000, "maximum": 9999, "description": "Upper publication calendar year, for example 2026; null means no upper year bound."},
+                min_similarity={"type": "number", "minimum": 0, "maximum": 1, "description": "Dimensionless similarity threshold from 0 to 1, not percent; defaults to 0.5."},
+                top_k={"type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum papers to return (count), 1–200; defaults to 50."},
                 session_id={**identity, "type": ["string", "null"]},
                 auto_ingest={
                     "type": "boolean",
                     "description": "Whether AutoPaper may fetch and ingest online papers when local results are insufficient. Omission preserves the upstream default, currently true.",
                 },
             ),
-            "result": obj(["session_id", "total", "papers"], session_id=string(), total=count,
+            "result": obj(["session_id", "total", "papers"], session_id=string(),
+                          total={**count, "description": "Search result papers (count)."},
                           papers=array(search_paper),
                           messages=array(obj(["text"], level=string(), text=string()))),
         },
         "papers-get": {"input": obj(["paper_id"], paper_id=identity), "result": detail},
         "papers-list": {
             "input": obj(["venue", "year"], venue=text,
-                         year={"type": "integer", "minimum": 1000, "maximum": 9999}),
+                         year={"type": "integer", "minimum": 1000, "maximum": 9999, "description": "Publication calendar year, for example 2026."}),
             "result": array(detail),
         },
-        "venues-list": {"input": obj(), "result": array(obj(["venue", "count"], venue=string(), count=count))},
+        "venues-list": {"input": obj(), "result": array(obj(["venue", "count"], venue=string(), count={**count, "description": "Stored papers for this venue (count)."}))},
         "years-list": {"input": obj(["venue"], venue=text),
-                       "result": array(obj(["year", "count"], year={"type": "integer"}, count=count))},
+                       "result": array(obj(["year", "count"], year={"type": "integer", "description": "Publication calendar year, for example 2026."}, count={**count, "description": "Stored papers for this venue and year (count)."}))},
         "venues-catalog": {
             "input": obj(),
-            "result": obj(["total", "venues"], total=count, venues=array(obj(
+            "result": obj(["total", "venues"], total={**count, "description": "Catalog venues (count)."}, venues=array(obj(
                 ["abbrev", "full_names"], abbrev=string(), full_names=array(string()),
                 ccf_category=nullable_text, ccf_type=nullable_text, aliases_source=string()))),
         },
@@ -406,19 +478,22 @@ def overleaf_definitions():
     identity = {"type": "string", "pattern": "^[0-9a-f]{24}$"}
     revision = {"type": "string", "pattern": "^[0-9a-f]{40}$"}
     sha256 = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-    source = {"type": "string", "minLength": 1, "maxLength": 1024}
+    source = {"type": "string", "minLength": 1, "maxLength": 1024,
+              "description": "Project-relative source path, limited to 1024 UTF-8 bytes; non-ASCII paths may contain fewer characters."}
     archive = {
-        "archive_size": {"type": "integer", "minimum": 1, "maximum": 52428800},
+        "archive_size": {"type": "integer", "minimum": 1, "maximum": 52428800, "description": "Exact ZIP archive length in bytes (B), 1–52428800 B (50 MiB). Example: a 1 MiB ZIP uses 1048576. Send this many archive bytes after stream-open."},
         "archive_sha256": sha256,
         "idempotency_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"},
     }
     project = obj(["project_id", "name", "url"], project_id=identity, name=string(), url=string(), access_level=string())
     definitions = {
         "projects-list": {
-            "input": obj(query={"type": "string", "maxLength": 256}, offset={"type": "integer", "minimum": 0},
-                         limit={"type": "integer", "minimum": 1, "maximum": 200}),
-            "output": obj(["projects", "total", "next_offset"], projects=array(project), total={"type": "integer", "minimum": 0},
-                          next_offset={"type": ["integer", "null"], "minimum": 0}),
+            "input": obj(query={"type": "string", "maxLength": 256},
+                         offset={"type": "integer", "minimum": 0, "description": "Number of matching projects to skip (zero-based item offset), defaults to 0; not a page number."},
+                         limit={"type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum projects per page (count), 1–200; defaults to 100."}),
+            "output": obj(["projects", "total", "next_offset"], projects=array(project),
+                          total={"type": "integer", "minimum": 0, "description": "All matching projects (count), before pagination."},
+                          next_offset={"type": ["integer", "null"], "minimum": 0, "description": "Next zero-based project offset (count of skipped projects); null at the end."}),
         },
         "projects-status": {
             "input": obj(["project_id", "base_revision"], project_id=identity, base_revision=revision),
@@ -438,6 +513,11 @@ def overleaf_definitions():
         if name in ("projects-download", "projects-upload", "projects-import"):
             definition["output"] = obj(["protocol", "direction"], protocol=string(const="overleaf-archive.v1"),
                                        direction=string(const="download" if name == "projects-download" else "upload"))
+            definition["output"]["description"] = (
+                "Stream-open acknowledgement only. In subsequent control frames archive_size is "
+                "the ZIP length in bytes (B), and manifest files[path].size is the uncompressed "
+                "file length in bytes (B). See HOW_TO_USE.md for framing and limits."
+            )
         else:
             result = {**definition["output"], "type": ["object", "null"]}
             definition["output"] = obj(["status", "result", "error_code"], status=string(enum=["ok", "error"]),
@@ -463,17 +543,24 @@ def ark_definitions() -> dict[str, dict[str, Any]]:
     def strict(required=None, **properties):
         return {**obj(required, **properties), "additionalProperties": False}
 
-    common = dict(model=model, stream={"const": False}, temperature=number, top_p=number,
+    seed = {**integer, "description": "Dimensionless random seed (integer), not a count or duration; allowed values and sentinel values depend on the model."}
+    common = dict(model=model, stream={"const": False},
+                  temperature={**number, "description": "Dimensionless sampling temperature, not degrees; supported range and default depend on the model."},
+                  top_p={**number, "description": "Cumulative sampling probability as a dimensionless 0–1 value, not percent; for example 0.9 means 90% probability mass. Model-specific restrictions apply."},
                   tools=array(obj()), tool_choice={"type": ["string", "object"]},
                   thinking=obj(), parallel_tool_calls=boolean, service_tier=string())
     inputs = {
         "chat-completions": strict(
             ["model", "messages"], **common,
             messages={**objects, "description": "Native Chat messages; content may contain text, image_url, video_url, input_audio and tool calls, as supported by the model."},
-            max_tokens=integer, max_completion_tokens=integer, reasoning_effort=string(),
+            max_tokens={**integer, "description": "Maximum generated tokens (token count, not characters or bytes); model-specific limits apply."},
+            max_completion_tokens={**integer, "description": "Maximum completion tokens (token count, including reasoning where applicable); model-specific limits apply."}, reasoning_effort=string(),
             response_format=obj(), stop={"type": ["string", "array", "null"], "items": string()},
-            seed=integer, frequency_penalty=number, presence_penalty=number,
-            logprobs=boolean, top_logprobs=integer, logit_bias=obj(), user=string(),
+            seed=seed,
+            frequency_penalty={**number, "description": "Dimensionless frequency-based repetition penalty coefficient; range/support depend on the model."},
+            presence_penalty={**number, "description": "Dimensionless presence-based repetition penalty coefficient; range/support depend on the model."},
+            logprobs=boolean, top_logprobs={**integer, "description": "Number of most likely token alternatives to include with log probabilities (count); model-specific limits apply."},
+            logit_bias={**obj(), "description": "Map from token IDs to dimensionless logit bias values; not probabilities or percentages. Provider limits apply."}, user=string(),
             modalities=strings, audio=obj(), prompt_cache_key=string(),
         ),
         "responses-create": strict(
@@ -481,8 +568,11 @@ def ark_definitions() -> dict[str, dict[str, Any]]:
             input={"type": ["string", "array"], "items": obj(),
                    "description": "Native Responses input. Content supports input_text, input_image, input_video, input_file and input_audio, according to the selected model."},
             instructions=string(), previous_response_id=identity, reasoning=obj(), text=obj(),
-            store=boolean, include=strings, max_output_tokens=integer, max_tool_calls=integer,
-            metadata=obj(), caching=obj(), context_management=obj(), expire_at=integer,
+            store=boolean, include=strings,
+            max_output_tokens={**integer, "description": "Maximum output tokens (token count, including reasoning where applicable); not characters or bytes."},
+            max_tool_calls={**integer, "description": "Maximum tool invocations for this response (call count)."},
+            metadata=obj(), caching=obj(), context_management=obj(),
+            expire_at={**integer, "description": "Absolute response-storage expiry as a UTC Unix timestamp in seconds since 1970-01-01T00:00:00Z; not milliseconds or a relative duration."},
             truncation=string(), prompt_cache_key=string(),
         ),
         "responses-get": strict(["response_id"], response_id=identity, include=strings),
@@ -491,37 +581,43 @@ def ark_definitions() -> dict[str, dict[str, Any]]:
             ["model"], model=model, prompt=text,
             image={"type": ["string", "array"], "items": text,
                    "description": "Reference image URL/data URL, or a list of reference images for editing and image-to-image generation."},
-            size=string(), response_format=string(enum=["url", "b64_json"]),
+            size=string(description="Output image dimensions in pixels, e.g. 2048x2048, or a model-supported resolution preset such as 2K. K denotes a resolution class, not kilobytes; allowed sizes depend on the model."), response_format=string(enum=["url", "b64_json"]),
             output_format=string(), watermark=boolean, stream={"const": False},
             sequential_image_generation=string(), sequential_image_generation_options=obj(),
-            optimize_prompt_options=obj(), tools=array(obj()), seed=integer,
+            optimize_prompt_options=obj(), tools=array(obj()), seed=seed,
             background=string(), layer_decomposition=boolean,
         ),
         "embeddings-multimodal": strict(
             ["model", "input"], model=model,
             input={**objects, "description": "Native text, image_url and video_url parts. Parts form one multimodal embedding input, not a text batch."},
-            dimensions=integer, encoding_format=string(), instructions=string(),
+            dimensions={**integer, "description": "Number of components per embedding vector (count), e.g. 1024; supported dimensions depend on the model."}, encoding_format=string(), instructions=string(),
             multi_embedding=obj(), sparse_embedding=obj(),
         ),
         "videos-create": strict(
             ["model", "content"], model=model,
             content={**objects, "description": "Native Seedance text/image_url/video_url/audio_url parts, including reference roles and draft_task when supported."},
-            resolution=string(), ratio=string(), duration=integer, frames=integer,
-            seed=integer, camera_fixed=boolean, watermark=boolean, generate_audio=boolean,
+            resolution=string(description="Model-supported output resolution preset, e.g. 720p (pixel resolution class); not a byte size."),
+            ratio=string(description="Dimensionless output width:height aspect ratio, e.g. 16:9; supported values depend on the model."),
+            duration={**integer, "description": "Generated video duration in seconds (s), e.g. 5 for five seconds; -1 requests automatic duration only for models that support it. Model-specific limits apply."},
+            frames={**integer, "description": "Total generated video frames (frame count), not frames per second. Provider rules determine supported counts and precedence over duration."},
+            seed=seed, camera_fixed=boolean, watermark=boolean, generate_audio=boolean,
             return_last_frame=boolean, draft=boolean, callback_url=string(),
-            service_tier=string(), execution_expires_after=integer, tools=array(obj()),
+            service_tier=string(),
+            execution_expires_after={**integer, "description": "Task expiry interval in seconds (s) from provider created_at, covering queued and running time; not an absolute timestamp or video duration. Provider range/default apply."}, tools=array(obj()),
         ),
         "videos-get": strict(["task_id"], task_id=identity),
         "videos-delete": strict(["task_id"], task_id=identity),
         "videos-list": strict(
-            page_num={"type": "integer", "minimum": 1, "maximum": 500},
-            page_size={"type": "integer", "minimum": 1, "maximum": 500},
+            page_num={"type": "integer", "minimum": 1, "maximum": 500, "description": "Page number, starting at 1; not an item offset. Range 1–500."},
+            page_size={"type": "integer", "minimum": 1, "maximum": 500, "description": "Tasks per page (count), 1–500."},
             filter=strict(status=status, model=model, task_ids=array(identity), service_tier=string()),
         ),
         "audio-speech": strict(
             ["req_params"], user=obj(),
             req_params=obj(["text", "speaker", "audio_params"], text=text, speaker=text,
-                           audio_params=obj(["format"], format=text, sample_rate=integer)),
+                           audio_params={**obj(["format"], format=text,
+                               sample_rate={**integer, "description": "Output audio sample rate in hertz (Hz, samples per second), e.g. 24000 for 24 kHz; supported rates/defaults depend on the audio format."}),
+                               "description": "Provider audio settings. sample_rate is Hz; additional bit_rate is bits per second (bps), not bytes per second. Other options retain provider-specific scales."}),
         ),
     }
     inputs["images-generate"]["description"] = (
@@ -534,17 +630,27 @@ def ark_definitions() -> dict[str, dict[str, Any]]:
         "responses-delete": obj(),
         "images-generate": obj(["data"], data={"type": "array", "minItems": 1,
                                               "items": obj(url=string(), b64_json=string(), error=obj())},
-                               created=integer, model=string(), usage=obj()),
-        "embeddings-multimodal": obj(["data"], data=obj(), model=string(), usage=obj()),
+                               created={**integer, "description": "Creation time as a UTC Unix timestamp in seconds; not milliseconds."}, model=string(), usage=obj()),
+        "embeddings-multimodal": obj(["data"], data={**obj(), "description": "Native embedding result; vector components are dimensionless, not percentages or probabilities. Dimension is a component count."}, model=string(), usage=obj()),
         "videos-create": obj(["id"], id=text),
         "videos-get": obj(["id", "status"], id=text, status=status,
                           content=obj(video_url=string(), last_frame_url=string()),
                           error={"type": ["object", "null"]}),
-        "videos-list": obj(["items"], items=array(obj(["id", "status"], id=text, status=status)), total=integer),
+        "videos-list": obj(["items"], items=array(obj(["id", "status"], id=text, status=status)),
+                           total={**integer, "description": "Matching provider video tasks (count)."}),
         "videos-delete": obj(),
         "audio-speech": obj(["audio_base64", "audio_format", "usage"],
                             audio_base64=text, audio_format=text, usage=obj()),
     }
+    for action in ("videos-get", "videos-list"):
+        outputs[action]["description"] = (
+            "Native video task fields retain provider units: created_at/updated_at are Unix seconds, "
+            "duration is seconds, frames is a frame count, framespersecond is frames per second (fps), "
+            "and execution_expires_after is a relative interval in seconds."
+        )
+    for output in outputs.values():
+        if "usage" in output.get("properties", {}):
+            output["properties"]["usage"]["description"] = "Provider usage counters; fields ending in tokens are token counts, not characters or bytes. Other fields retain their provider-defined units."
     return {
         action: {"input": schema,
                  "output": obj(["action", "result"], action=string(const=action.replace("-", "_")),

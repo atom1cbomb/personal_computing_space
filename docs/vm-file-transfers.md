@@ -1,6 +1,6 @@
 # VM 文件上传与下载
 
-`vm-ssh-http/v6` 和 `suanli-vm-ssh-http/v7` 提供 `files.upload`、`files.download`。
+`vm-ssh-http/v7` 和 `suanli-vm-ssh-http/v8` 提供 `files.upload`、`files.download`。
 两者都是 GRIP `byte-stream` 动作，复用所选 activation 的 SSH 目标、用户、密钥、
 known_hosts 和认证续期逻辑，不接受调用方指定其他主机或凭据。原 `exec` 动作保留。
 
@@ -63,6 +63,10 @@ stream-open 回执仅为 `{"protocol":"vm-file.v1","direction":"upload"或"downl
 表示通道接纳；之后的结果帧才说明文件操作是否成功。
 
 上传输入为 `{path, size, sha256, overwrite?, timeout_seconds?}`，sha256 为小写十六进制。
+
+所有输入和控制帧的 `size` 都是字节数 B，范围 0–9007199254740991；
+例如 1 MiB 文件传 `size=1048576`。`timeout_seconds` 是秒，范围 1–3600，默认 300，
+可带小数；CLI `--timeout 600` 表示 600 秒（10 分钟）。
 
 1. 服务端先检查目标并创建临时文件，返回 `{status:"ready", path, size, sha256}` 控制帧。
 2. 客户端发送恰好 `size` 字节，再发送 `{type:"commit", size, sha256}` 控制帧。

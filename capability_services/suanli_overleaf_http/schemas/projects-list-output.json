@@ -42,14 +42,16 @@
         },
         "total": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "All matching projects (count), before pagination."
         },
         "next_offset": {
           "type": [
             "integer",
             "null"
           ],
-          "minimum": 0
+          "minimum": 0,
+          "description": "Next zero-based project offset (count of skipped projects); null at the end."
         }
       },
       "required": [

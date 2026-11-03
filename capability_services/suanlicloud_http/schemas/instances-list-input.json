@@ -18,10 +18,12 @@
       }
     },
     "PageNumber": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Page number, starting at 1; not an item offset."
     },
     "PageSize": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Maximum number of instances per page (count)."
     }
   }
 }

@@ -14,7 +14,8 @@
     "request_timeout_seconds": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "maximum": 3600
+      "maximum": 3600,
+      "description": "Upstream request timeout in seconds (s), greater than 0 and at most 3600; defaults to 120. Fractional seconds are allowed."
     }
   },
   "required": [

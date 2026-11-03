@@ -10,7 +10,8 @@
       "maxItems": 256
     },
     "normalize": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Request L2 unit-length normalization; defaults to true. Components remain dimensionless."
     },
     "instruction": {
       "type": [

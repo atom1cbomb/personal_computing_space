@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/papers-search-input/sha256/57e6590a11642b3f330bcab6b24755214390c5d57bd62213e218990e445e3816",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/papers-search-input/sha256/d3abbf15640aa02aa49f08000490b328e017448ee3b5febe83a54784fa8d9b84",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/papers-search-output/sha256/c8ed3a57aa5aa0024b39d15acadb24b45bea78e5575589e8f901b74acba8afd8",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/papers-search-output/sha256/8de22fffae377958666e2a412c2b0d4e55542d5d7371369faebfc791a802ba87",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

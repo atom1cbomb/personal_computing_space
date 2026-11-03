@@ -10,7 +10,8 @@
     "archive_size": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 52428800
+      "maximum": 52428800,
+      "description": "Exact ZIP archive length in bytes (B), 1–52428800 B (50 MiB). Example: a 1 MiB ZIP uses 1048576. Send this many archive bytes after stream-open."
     },
     "archive_sha256": {
       "type": "string",

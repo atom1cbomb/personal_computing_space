@@ -26,7 +26,8 @@
       "description": "Reference image URL/data URL, or a list of reference images for editing and image-to-image generation."
     },
     "size": {
-      "type": "string"
+      "type": "string",
+      "description": "Output image dimensions in pixels, e.g. 2048x2048, or a model-supported resolution preset such as 2K. K denotes a resolution class, not kilobytes; allowed sizes depend on the model."
     },
     "response_format": {
       "type": "string",
@@ -63,7 +64,8 @@
       }
     },
     "seed": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Dimensionless random seed (integer), not a count or duration; allowed values and sentinel values depend on the model."
     },
     "background": {
       "type": "string"

@@ -5,7 +5,7 @@
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/schemas/projects-download-output/sha256/8885572da4fe7fa833225e6965866160e790c86a1092bbcded2460f59f4a03f4",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/schemas/projects-download-output/sha256/88c26f134fb98c0a61854010f92fcd48622a971f20ced649bea0e4e26706e0ae",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

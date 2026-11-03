@@ -24,7 +24,7 @@ async def test_service_authoring_uploads_declared_configuration_dependency_schem
     async with LoomClient("http://observer", token="test", allow_insecure_grip=True,
                           transport=httpx.ASGITransport(app=create_app(repo, settings=settings))) as client:
         package_uri = await ServicePackage(root).publish(client, image_ref="example/embedding@sha256:" + "c" * 64)
-        assert package_uri == client.names.name("packages", "embedding-http", "v2")
+        assert package_uri == client.names.name("packages", "embedding-http", "v3")
         help_text = await client.invoke(package_uri, client.names.action("how-to-use"), {})
         assert help_text["dependency_fields"] == [{
             "path": "instance_config.service_ref", "many": False, "required": True,

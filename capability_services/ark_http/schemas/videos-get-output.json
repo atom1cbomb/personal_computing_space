@@ -45,7 +45,8 @@
       "required": [
         "id",
         "status"
-      ]
+      ],
+      "description": "Native video task fields retain provider units: created_at/updated_at are Unix seconds, duration is seconds, frames is a frame count, framespersecond is frames per second (fps), and execution_expires_after is a relative interval in seconds."
     }
   },
   "required": [

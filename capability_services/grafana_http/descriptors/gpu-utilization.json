@@ -7,7 +7,7 @@
     "compute.grafana.read"
   ],
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/25e8f2bab4f500e6c5107a962a8a36539278c14d3bc89acef002871dad0ad93b",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/instance-config/sha256/2a032a2531bc7c94f96f486dbccf9435843643c17cdad4985593be2483a59b51",
     "identity_criterion": "content_digest"
   }
 }

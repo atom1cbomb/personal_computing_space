@@ -26,6 +26,34 @@ Model ID 或 Endpoint ID。模型的模态、参数、额度和套餐权限由�
 业务输入和输出遵循各 action 的 Schema，业务结果为 `{action, result}`。
 以下 JSON 均为业务参数。
 
+## 参数和结果的单位
+
+| 字段 | 单位和含义 |
+|---|---|
+| `max_tokens`、`max_completion_tokens`、`max_output_tokens` | token 个数，不是字符数或字节数；是否含推理 token 及可用上限由模型决定 |
+| `temperature`、`frequency_penalty`、`presence_penalty`、`logit_bias` | 无量纲采样/惩罚系数；temperature 不表示摄氏度，允许范围按模型文档 |
+| `top_p` | 0–1 的累计概率，`0.9` 表示 90% 的概率质量，不填 `90` |
+| `top_logprobs`、`max_tool_calls` | token 候选数量 / 工具调用次数；`seed` 是无量纲随机种子 |
+| `responses_create.expire_at` | 存储过期的绝对 UTC Unix **秒**时间戳，不是毫秒或相对时长 |
+| `images_generate.size` | 像素宽高，例如 `"2048x2048"`，或模型支持的 `"2K"` 等分辨率档位；K 不表示 KB |
+| `images_generate` 结果的 `created` | 创建时刻的 UTC Unix 秒时间戳 |
+| `embeddings_multimodal.dimensions` | 向量分量个数；分量本身是无量纲数值，不是百分比 |
+| `videos_create.duration` / `frames` | 秒 / 总帧数；例如 `duration=5` 表示 5 秒；`frames` 不是 fps；`duration=-1` 仅用于支持自动时长的模型 |
+| 视频 `resolution` / `ratio` | `"720p"` 等像素分辨率档位 / `"16:9"` 等无量纲宽高比 |
+| `videos_create.execution_expires_after` | 从任务 `created_at` 开始计算的过期时长，单位秒，包含排队和运行时间；不同于生成视频时长 |
+| 视频任务原生结果 | `created_at`、`updated_at` 为 Unix 秒；`duration` 为秒，`frames` 为帧数，`framespersecond` 为帧/秒 |
+| `videos_list.page_num` / `page_size` / `total` | 从 `1` 开始的页码 / 每页任务条数 / 匹配任务总条数 |
+| `audio_speech.req_params.audio_params.sample_rate` | Hz，即每秒采样数；`24000` 为 24 kHz；额外传入 `bit_rate` 时其单位是 bps（比特/秒） |
+
+本包保留供应商字段含义，不自动换算单位或为全部模型指定统一默认值/范围；模型支持的
+参数、特殊值及限制以当前模型文档为准。输入输出 schema 的字段说明随包一起发布。
+原生 `usage` 中的 token 字段按 token 计数，其余供应商字段按各自定义解释。
+单位依据：[Chat](https://docs.volcengine.com/docs/ark/chat-api?lang=en)、
+[Responses](https://docs.volcengine.com/docs/ark/create-model-responses-api?lang=en)、
+[图片生成](https://console.volcengine.com/ark/region%3Acn-beijing/docs/image-generation-api)、
+[视频生成](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)及
+[语音参数](https://docs.volcengine.com/docs/doubao-voice/task-sub-mission?lang=zh)。
+
 ## 多模态理解
 
 `responses_create` 示例（替换 `model` 和媒体地址）：

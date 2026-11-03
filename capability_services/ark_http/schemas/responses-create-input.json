@@ -12,10 +12,12 @@
       "const": false
     },
     "temperature": {
-      "type": "number"
+      "type": "number",
+      "description": "Dimensionless sampling temperature, not degrees; supported range and default depend on the model."
     },
     "top_p": {
-      "type": "number"
+      "type": "number",
+      "description": "Cumulative sampling probability as a dimensionless 0–1 value, not percent; for example 0.9 means 90% probability mass. Model-specific restrictions apply."
     },
     "tools": {
       "type": "array",
@@ -78,10 +80,12 @@
       }
     },
     "max_output_tokens": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Maximum output tokens (token count, including reasoning where applicable); not characters or bytes."
     },
     "max_tool_calls": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Maximum tool invocations for this response (call count)."
     },
     "metadata": {
       "type": "object",
@@ -96,7 +100,8 @@
       "properties": {}
     },
     "expire_at": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Absolute response-storage expiry as a UTC Unix timestamp in seconds since 1970-01-01T00:00:00Z; not milliseconds or a relative duration."
     },
     "truncation": {
       "type": "string"

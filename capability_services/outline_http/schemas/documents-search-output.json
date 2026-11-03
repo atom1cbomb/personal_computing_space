@@ -7,7 +7,8 @@
     },
     "result": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "description": "Native Outline response; pagination.limit counts items and pagination.offset counts skipped items starting at zero. No pagination unit conversion."
     }
   },
   "required": [

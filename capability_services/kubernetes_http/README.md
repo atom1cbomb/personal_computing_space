@@ -15,7 +15,7 @@ docker inspect --format '{{index .RepoDigests 0}}' registry.example/loom/kuberne
 
 Pass the resulting immutable image ref to the shared publisher. Descriptor sources,
 schemas and IoContracts are included in this directory; the publisher resolves
-and uploads them. Package v8 exports nine business actions. Authentication is
+and uploads them. Package v10 exports nine business actions. Authentication is
 activation lifecycle metadata, invoked publicly through GRIP `auth-start`.
 The public `vcjobs` resource selector resolves to `jobs.batch.volcano.sh`;
 `jobs` continues to select native Kubernetes Jobs.
@@ -74,7 +74,7 @@ attestation.
 
 ## 统一登录与重新认证
 
-`kubernetes-http/v9` 声明认证 `interaction.mode=device-code`，使用
+`kubernetes-http/v10` 声明认证 `interaction.mode=device-code`，使用
 [统一 SDK 登录入口](../../docs/authentication.md)。客户端自动发起认证并展示设备码，
 后台仍由 kubeconfig 的 kubelogin 插件授权和刷新凭据。成功结果每 30 秒重新探测。
 

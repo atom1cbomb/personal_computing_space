@@ -1,6 +1,6 @@
 # AutoPaper 论文查询能力包
 
-`autopaper-http/v4` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
+`autopaper-http/v5` 连接 [AutoPaper](https://paper.cs.ac.cn)，提供论文搜索、详情、
 会议/年份浏览和会议目录。接口按 2026-10-26 读取的
 [Auto-Papers API 0.2.0 OpenAPI](https://paper.cs.ac.cn/openapi.json) 实现。
 发布与激活遵循[通用服务包流程](../README.md)。

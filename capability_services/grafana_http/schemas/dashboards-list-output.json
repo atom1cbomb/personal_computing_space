@@ -27,7 +27,8 @@
     },
     "total_count": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Matching dashboards (count), after collecting all pages."
     },
     "complete": {
       "const": true

@@ -4,7 +4,7 @@
   "name": "open-service-stream",
   "description": "Open one TCP byte stream to a configured owned Service; failures never replay bytes.",
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/instance-config/sha256/8dfdc232265ff7f00514546961ee961dc69c3050e8abd0a9843ca1ad65e12e5a",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/instance-config/sha256/91f83950113d0dcfab02b3d024e0a6fc14c1d8bd44ac9b713d2c3583e78ffb2a",
     "identity_criterion": "content_digest"
   }
 }

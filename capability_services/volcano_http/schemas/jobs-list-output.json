@@ -9,12 +9,14 @@
       "type": "array",
       "items": {
         "type": "object",
-        "properties": {}
+        "properties": {},
+        "description": "Upstream object; Kubernetes resource quantities preserve CPU cores (1000m = 1 core), memory/storage bytes (1Gi = 1073741824 B) and named extended-resource counts."
       }
     },
     "total_count": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Returned resources (count), after collecting all pages."
     },
     "complete": {
       "const": true

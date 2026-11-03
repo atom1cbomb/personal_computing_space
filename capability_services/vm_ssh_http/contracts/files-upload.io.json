@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/files-upload-input/sha256/7e4c9dc95948c175364837ba5789b55aab28c24a9cdef57e9d4b3b9c5ada3cfe",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/files-upload-input/sha256/76f21235fb313687266fe531479ffb3e12fc435ebba43a654f27e25993ccc915",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/files-upload-output/sha256/9e251c5049dd3f1de3261401ddd2907f6dc3d235620447642eade03ebbf5aa3c",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/vm-ssh-http/schemas/files-upload-output/sha256/c9bfb3aed67192aae56af8f341969d1e2712fa3f87f54aa92ffffe113b460ae8",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

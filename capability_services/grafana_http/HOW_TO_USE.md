@@ -17,6 +17,27 @@ datasource 或监控数据。
 | `gpu_arena_query` | 查询指定 Arena panel target |
 | `gpu_arena_gpu_hours` | 读取 namespace GPU-hour 排名 |
 
+## 时间、比例和结果单位
+
+| 字段 | 单位和示例 |
+|---|---|
+| `query` 文本长度 | 运行时最多 32768 个 UTF-8 字节；非 ASCII 文本的字符数可能更少 |
+| 查询输入 `time`、`start`、`end` | Unix **秒**（可带小数，也可用数字字符串），或带时区的 RFC3339 字符串，例如 `2026-11-03T08:00:00+08:00`；不能传 Unix 毫秒 |
+| `metrics_query_range.step` | 采样间隔，整数秒，至少 `1`；`60` 表示每分钟一次；每条序列最多 11000 个样本 |
+| Arena 的 `start` / `end` / `step` | 单位同上；默认结束为现在、开始为结束前 7 天，窗口最多 90 天；默认 step 为 `max(30, ceil(窗口秒数 / 1000))` |
+| 输出 `time_range` 和 Prometheus sample 时间戳 | `start`、`end`、样本时间戳为 Unix 秒，`step` 为秒；`queried_at`、`query_time`、`sampled_at` 为带时区的 RFC3339 字符串 |
+| `dashboard_url` 内的 `from` / `to` | Grafana 浏览器链接使用 Unix **毫秒**，与 action 的 Unix 秒输入区分 |
+| `gpu_metric.unit` / `utilization_percent` | 源指标为 `percent`（0–100）或 `ratio`（0–1）；输出统一为百分比，`50` 表示 50% |
+| `gpu_index`、`panel_id`、dashboard version | 设备索引、面板 ID 和版本标识；不表示设备数量或物理量 |
+| `gpu_hours` / `unrated_gpu_hours` | GPU 分配小时数 / 缺少显存容量而无法归一化的 GPU 分配小时数；一张 GPU 分配一小时为 1 GPU-hour |
+| `a100_80gb_hours` | 按安装显存计算的等效分配小时数：`GPU-hours × installed_vram_gib / 80`；字段名中的 `gb` 实际使用 GiB，缺容量时返回 null |
+| `reference_vram_gib` / `accounting_step_seconds` | 归一化基准显存 GiB / 记账采样间隔秒；1 GiB = 1073741824 B，记账间隔独立于查询 step |
+
+通用 `metrics_query`、`metrics_query_range` 和 Arena 原始 sample 数值保留查询表达式的
+单位，数值也可能以字符串返回。结合 metric 定义、表达式及 `gpu_arena_describe` 的
+`panels[].field_config` 确定单位；百分比、字节、GiB、摄氏度和瓦特不能互换，也不能仅凭
+dashboard 显示单位就假定原始数值已完成转换。
+
 ## `gpu_utilization` 的前置条件
 
 `hostname` 始终必填。`gpu_metric` 只有在 activation 已配置经过验证的默认映射时才可省略；
@@ -60,8 +81,8 @@ Run 的 `terminal_error` 中保留服务错误 `code`、`http_status` 和错误�
 
 GPU Arena 查询默认使用最近 7 天，最大时间窗口 90 天；空结果是 `no_data`，不是零。
 查询会保留 warnings、samples 和 completeness。`node`、`model`、`gpu_uuid` 是字面值
-过滤器，不能传原始正则。GPU-hour 是 VRAM 加权分配时长，不等同于 GPU 利用率、FLOPS
-或已验证的个人身份使用量。
+过滤器，不能传原始正则。`gpu_hours` 是原始分配小时数，`a100_80gb_hours` 是 VRAM
+加权分配小时数；它们均不等同于 GPU 利用率、FLOPS 或已验证的个人身份使用量。
 
 调用时遵循当前 DESCRIBE 返回的 action/schema；不要根据 dashboard URL 自行拼接 Grafana
 API 路径或替换 activation 的 `api_origin`。

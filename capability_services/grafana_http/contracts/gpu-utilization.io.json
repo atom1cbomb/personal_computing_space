@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-utilization-input/sha256/2b7fb824fc76a94826ad2b57920b878068245ced96fce1fac28713b0ec86437e",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-utilization-input/sha256/caa97a723953a112bf1982d41a356a00cd746c6fb381c9762faa73cb3420fe86",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-utilization-output/sha256/68d36e3bfa3895f0d2ecba5cc17047b7648dcf1640d0d1ede2046e324422fccd",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-utilization-output/sha256/84966140a6407828aee9f73edefcd9bc36969f7be2273a0a114d16926b7a1e6f",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

@@ -27,10 +27,12 @@
       "maxLength": 128
     },
     "queried_at": {
-      "type": "string"
+      "type": "string",
+      "description": "Gateway query time as a timezone-qualified RFC3339 timestamp."
     },
     "query_time": {
-      "type": "string"
+      "type": "string",
+      "description": "Requested sample time as a timezone-qualified RFC3339 timestamp."
     },
     "samples": {
       "type": "array",
@@ -42,7 +44,8 @@
           },
           "gpu_index": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "GPU device index from the verified metric label (nonnegative identifier, not a GPU count)."
           },
           "gpu_uuid": {
             "type": [
@@ -53,10 +56,12 @@
           "utilization_percent": {
             "type": "number",
             "minimum": 0,
-            "maximum": 100
+            "maximum": 100,
+            "description": "GPU busy utilization in percent, 0–100; 50 means 50%. A ratio input is multiplied by 100."
           },
           "sampled_at": {
-            "type": "string"
+            "type": "string",
+            "description": "Sample time as a timezone-qualified RFC3339 timestamp."
           },
           "labels": {
             "type": "object",

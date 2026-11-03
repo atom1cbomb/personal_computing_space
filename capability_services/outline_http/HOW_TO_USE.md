@@ -16,6 +16,12 @@
 | `documents_create` / `documents_update` | 创建或更新文档 |
 | `documents_archive` / `documents_restore` | 归档或恢复文档 |
 
+列表/搜索 action 使用上游支持的分页参数时，`limit` 是最多返回的条数，`offset` 是
+从 0 开始跳过的条数，不是页码；返回的 `result.pagination.limit`、`offset` 使用相同
+含义。默认值和允许范围由部署的 Outline API 决定，网关不换算。
+例如 `{"limit":25,"offset":50}` 表示跳过前 50 条、最多返回 25 条；参见
+[Outline 分页说明](https://www.getoutline.com/developers#section/Pagination)。
+
 使用 action 的精确输入输出 schema；`documents_info` 的正文在 `result.data.text`。
 该包不提供任意 Outline method、附件管理、永久删除或 API key 管理。认证失败时重新
 验证同一个 activation。

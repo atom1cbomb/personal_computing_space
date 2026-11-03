@@ -12,10 +12,12 @@
       "const": false
     },
     "temperature": {
-      "type": "number"
+      "type": "number",
+      "description": "Dimensionless sampling temperature, not degrees; supported range and default depend on the model."
     },
     "top_p": {
-      "type": "number"
+      "type": "number",
+      "description": "Cumulative sampling probability as a dimensionless 0–1 value, not percent; for example 0.9 means 90% probability mass. Model-specific restrictions apply."
     },
     "tools": {
       "type": "array",
@@ -50,10 +52,12 @@
       "description": "Native Chat messages; content may contain text, image_url, video_url, input_audio and tool calls, as supported by the model."
     },
     "max_tokens": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Maximum generated tokens (token count, not characters or bytes); model-specific limits apply."
     },
     "max_completion_tokens": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Maximum completion tokens (token count, including reasoning where applicable); model-specific limits apply."
     },
     "reasoning_effort": {
       "type": "string"
@@ -73,23 +77,28 @@
       }
     },
     "seed": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Dimensionless random seed (integer), not a count or duration; allowed values and sentinel values depend on the model."
     },
     "frequency_penalty": {
-      "type": "number"
+      "type": "number",
+      "description": "Dimensionless frequency-based repetition penalty coefficient; range/support depend on the model."
     },
     "presence_penalty": {
-      "type": "number"
+      "type": "number",
+      "description": "Dimensionless presence-based repetition penalty coefficient; range/support depend on the model."
     },
     "logprobs": {
       "type": "boolean"
     },
     "top_logprobs": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Number of most likely token alternatives to include with log probabilities (count); model-specific limits apply."
     },
     "logit_bias": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "description": "Map from token IDs to dimensionless logit bias values; not probabilities or percentages. Provider limits apply."
     },
     "user": {
       "type": "string"

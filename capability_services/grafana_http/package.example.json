@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "grafana-http",
-  "package_version": "v6",
+  "package_version": "v7",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -26,7 +26,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/datasources-list",
-        "version_or_digest": "16801ae07e145064631bd65305c01657e0425081e3c09c11616c704bd6b76fd1",
+        "version_or_digest": "31b0429d00c36d291034e12817e1fde6e4a4423eaccf34593760213429064a47",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -45,11 +45,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/dashboards-list",
-        "version_or_digest": "0bc071bd0a8d5c2e6917a51844afc166e359df91cbf77df6f0e2d28f4d71b604",
+        "version_or_digest": "0d20dce372309e046dc0e925f607af276d0790c9a326f1803360063f470c4465",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/dashboards-list/sha256/cf0cce4c4015a5e360776c5928498923c790a08083a59f3dfa066c618e916a24",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/dashboards-list/sha256/46d9ac50d045f425a5dd75d4e704494c8a1def5c2c0db795c8948c298eeff3dc",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -64,7 +64,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/dashboard-get",
-        "version_or_digest": "2b1355aeaf2b78a448e06180c36979c9766486dc10e9f763b739990309f8f66d",
+        "version_or_digest": "fb7a0f8b855933fb27f03d016fb75d1236b39e80dfbcf0ca899bfbf14f8615aa",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
@@ -83,11 +83,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/metrics-query",
-        "version_or_digest": "61440cb760573e2663c9686a71190cb82672acfeb35b7eb5b25db8886ed70870",
+        "version_or_digest": "ba2f7e10e77b8a18ed1b3355cf0536701b35c0acfd5ffbde05408df8461905e6",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/metrics-query/sha256/81e52cbe831e7e1cbfc925b727daa8cf89c98ab4197fc8aabe6f8dc5b9c2006a",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/metrics-query/sha256/2903578dc4b9566be6749678723133521b8d511c24007eae1d92440751886cc0",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -102,11 +102,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/metrics-query-range",
-        "version_or_digest": "7c6050c65955679c95130ed59ea23e1f8a0cdbc9a8ca63a68aaa777248901134",
+        "version_or_digest": "08f975807b52ac703166f85eadf7ae70c14873ea5ff69cce13f1ab49e327252b",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/metrics-query-range/sha256/f094458ffb103fd2547654db0b30c43123392e8ce80947d8515e869f57b11555",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/metrics-query-range/sha256/65d4c5b483369156c23c4c42b97b19edbb46dcc4072546425d5c6dfc420a2dea",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -121,11 +121,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-utilization",
-        "version_or_digest": "0dbb848757f79a23c49a59ceb130fe070090421a17ada0df9d5e2f9dc2a0248f",
+        "version_or_digest": "762fd9426bdb3ef34188aa772bb80ba5efa0cb44a08013a702045f1b7b48a258",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-utilization/sha256/d0c92818d279c55ecc35231a15e82a412e69eb316a68b480010d498965343b3c",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-utilization/sha256/38fe73ff09fdf1fe82e6938d7f6641e7d40761869c16c80b4ccd45246a4d9eb4",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -140,11 +140,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-describe",
-        "version_or_digest": "bde9ca8b06c306b529c6a50394b2d284ebf35d394f356000ec920fe3bccc1cd0",
+        "version_or_digest": "956da1fbaee8fd6d9e0524af2aa0f3fe8afb0b56ecdd956b9cfafc9da72830bc",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-describe/sha256/1de484f8f83887f95bed85b1b1c84021d7c3c15c1e1e35e33a6a396d518e5787",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-describe/sha256/b3b766a8157286002fc1133e0575601247169b0420874bc240608c7dcb423e57",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -159,11 +159,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-query",
-        "version_or_digest": "c3643200f80b6ab7e90441d07a5e455ad76f2b8ea5b47c692c0a1ac768ba1178",
+        "version_or_digest": "699078f33dcb729fc0f34c4e22f8d6bcf779568b91463f4d89d3b2362cd01234",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-query/sha256/99c30d47bfc4d3e76784546469214c456ddefd9eb966d2ec269d81b3abb718fb",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-query/sha256/52a93f776e80ff93bc44b202dcfbcd3052e710fe48087535ba0a9dda7d008a56",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -178,11 +178,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/grafana/gpu-arena-gpu-hours",
-        "version_or_digest": "cd3404001c9cfe8f344134c668b404133708ace43f0183ff0613e952caf1adbb",
+        "version_or_digest": "3f31fbb2c6945754cb21fb0f3a9fa5ea7a61a1e8d4091d9ed72bd7da0da6e757",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-gpu-hours/sha256/e198cf16d94ff6923d92a172e4d5f74131284a1a37516a1a44c8d50232323c25",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/contracts/gpu-arena-gpu-hours/sha256/a20b3af131ecbac6c7643f0327d35f5db313acfae0d65e778721c77a3ef69b8d",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",

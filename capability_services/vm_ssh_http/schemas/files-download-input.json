@@ -10,7 +10,8 @@
     "timeout_seconds": {
       "type": "number",
       "minimum": 1,
-      "maximum": 3600
+      "maximum": 3600,
+      "description": "Operation timeout in seconds (s), 1–3600; defaults to 300. Fractional seconds are allowed; for example 600 means ten minutes."
     }
   },
   "required": [

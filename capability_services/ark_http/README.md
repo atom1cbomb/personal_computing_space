@@ -1,6 +1,6 @@
 # 火山方舟 HTTP capability package
 
-`ark-http/v2` 为 Loom 的 `service + container:http/1` 提供火山方舟多模态接入。
+`ark-http/v3` 为 Loom 的 `service + container:http/1` 提供火山方舟多模态接入。
 用户提供 API Key，operator 将其放入所选 credential profile 的 `api_key` 文件；
 网关按实例读取该文件。包包含 11 个业务 action、认证 hooks、输入输出 schema 和 IoContract。
 外部 Agent 的使用方式见 [HOW_TO_USE](HOW_TO_USE.md)，部署流程遵循

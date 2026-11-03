@@ -15,6 +15,22 @@ ready，再调用公开 action。
 | `service-access-status` | 查询受监督的 Service 访问状态 |
 | `open-service-stream` | 为已配置且拥有的 Service 打开 byte stream |
 
+## manifest 和结果单位
+
+`jobs_submit.manifest` 与查询返回的资源对象沿用
+[Kubernetes quantity 规则](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)，
+网关原样传递：
+
+| 字段 | 单位和示例 |
+|---|---|
+| CPU request/limit | CPU 核；`1` 或 `"1000m"` 表示 1 核，`"500m"` 表示 0.5 核 |
+| 内存、存储 request/limit/capacity | 字节及 quantity 后缀；`"1Gi"` 为 1073741824 B，`"1G"` 为 1000000000 B；`"512Mi"` 为 536870912 B |
+| `nvidia.com/gpu` 等 extended resource | 指定资源的整数数量；MIG 类型按其资源名计数，不与整卡混加 |
+| `activeDeadlineSeconds`、`ttlSecondsAfterFinished` | 秒；`300` 表示 5 分钟 |
+| `parallelism`、`completions`、`backoffLimit` | 并发数、完成数和重试次数，均为计数 |
+| activation `service_targets.*.port` | TCP 端口号，范围 1–65535，例如 `8080`；与目标 Service 端口一致 |
+| `service-access-status.checked_at` | 带时区的 RFC3339 时间字符串；尚未检查时为 null |
+
 `vcjobs` 选择 Volcano Job，`jobs` 选择原生 Kubernetes Job。调用前读取每个 action 的
 输入 schema；包不提供任意 kubectl、任意 URL 或任意 Docker network 入口。Service
 stream 只能访问 activation `configure` 中登记且通过身份校验的 Service，断流不会重放

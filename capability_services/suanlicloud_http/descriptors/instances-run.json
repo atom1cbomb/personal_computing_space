@@ -2,7 +2,7 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-run",
   "name": "instances_run",
-  "description": "Create VM instances from the requested image and compute configuration. Poll instances-list for running state and a guest IP address, then activate and authenticate the SSH access package before running commands.",
+  "description": "Create VM instances from the requested image and compute configuration. Poll instances-list for running state and a guest IP address, then activate and authenticate the SSH access package before running commands. Count is the number of VMs, Cpu is vCPUs per VM, and Mem/DiskSize are bytes (B): 4 GiB memory is 4294967296 and 20 GiB disk is 21474836480.",
   "resource_effects": [
     {
       "effect": "create",

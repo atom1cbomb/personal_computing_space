@@ -17,7 +17,8 @@
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "description": "Last check as a timezone-qualified RFC3339 timestamp; null before the first check."
     }
   },
   "required": [

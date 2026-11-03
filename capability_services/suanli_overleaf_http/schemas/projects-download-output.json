@@ -14,5 +14,6 @@
     "protocol",
     "direction"
   ],
+  "description": "Stream-open acknowledgement only. In subsequent control frames archive_size is the ZIP length in bytes (B), and manifest files[path].size is the uncompressed file length in bytes (B). See HOW_TO_USE.md for framing and limits.",
   "additionalProperties": false
 }

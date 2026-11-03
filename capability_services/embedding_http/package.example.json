@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "embedding-http",
-  "package_version": "v2",
+  "package_version": "v3",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -16,11 +16,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/model/embed",
-        "version_or_digest": "a8957ca0b5a0888d45015b4ef42a4ec87e14af8c54e757f1fbadfa267c4a153f",
+        "version_or_digest": "158155f1d88e220d18c6087a1be933e4f275b4ffd5bbeab29865f32557615607",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/contracts/embed/sha256/62c1dbf904df6b141c8e8edf86021bddcf38d356656e12ec6c61f2378d454cff",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/contracts/embed/sha256/6e85685c8c12f31bd8bb3f260e9161ee3c418635b9936096b011c4df8c0aa5b5",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -36,11 +36,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/model/info",
-        "version_or_digest": "4fbb8bc49af325b4fa91d2c241bb5aea45f58c402da9858d3d2d0ad6f43aa9bf",
+        "version_or_digest": "7d4aa4504d79cff17994697faefec1df970fdfceaefa9feee188258452059581",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/contracts/info/sha256/eb9fdb20d5bd79b23e61b9fb703d0b6114dfc1e97e5d74e4f4ca87a29db7550d",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/embedding-http/contracts/info/sha256/37f04985b57b54bb4d36735f249ee17667633c7a0fbb0d60c487fb0564b88b9e",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",

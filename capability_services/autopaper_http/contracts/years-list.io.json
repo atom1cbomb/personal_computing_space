@@ -5,7 +5,7 @@
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/years-list-output/sha256/8a098cb91c46ada7f710fbe0533dfa355fd1d7ff8ab6a6cfc32161b9f6fc214e",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/years-list-output/sha256/3f43f443e7d48b95d4f326745d2194f7e4cebb8749d5590c444cd2a305b7ac5d",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

@@ -16,17 +16,17 @@
 
 | 目录 | 使用说明 | 构建/部署文档 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---|---:|---:|---|
-| ark_http | [HOW_TO_USE](ark_http/HOW_TO_USE.md) | [README](ark_http/README.md) | ark-http/v2 | 11 | 用户 API Key profile；Agent Plan／普通 API 模式，多模态理解、图片生成、视频任务、向量化及 Agent Plan HTTP TTS |
-| suanli_overleaf_http | [HOW_TO_USE](suanli_overleaf_http/HOW_TO_USE.md) | [README](suanli_overleaf_http/README.md) | suanli-overleaf-http/v1 | 5 | 连接 overleaf.cs.ac.cn；Git token profile + 统一网页登录，项目列表、下载、状态、上传和新项目导入 |
-| autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v4 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索可选自动抓取入库，提供论文详情及会议/年份查询 |
-| kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v9 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
-| embedding_http | [HOW_TO_USE](embedding_http/HOW_TO_USE.md) | [README](embedding_http/README.md) | embedding-http/v2 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
-| volcano_http | [HOW_TO_USE](volcano_http/HOW_TO_USE.md) | [README](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
-| grafana_http | [HOW_TO_USE](grafana_http/HOW_TO_USE.md) | [README](grafana_http/README.md) | grafana-http/v6 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
-| outline_http | [HOW_TO_USE](outline_http/HOW_TO_USE.md) | [README](outline_http/README.md) | outline-http/v4 | 12 | 实例选择 profile，其中含 `outline_key` |
-| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v8 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
-| vm_ssh_http | [HOW_TO_USE](vm_ssh_http/HOW_TO_USE.md) | [README](vm_ssh_http/README.md) | vm-ssh-http/v6 | 3 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
-| suanli_vm_ssh_http | [HOW_TO_USE](suanli_vm_ssh_http/HOW_TO_USE.md) | [README](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v7 | 3 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
+| ark_http | [HOW_TO_USE](ark_http/HOW_TO_USE.md) | [README](ark_http/README.md) | ark-http/v3 | 11 | 用户 API Key profile；Agent Plan／普通 API 模式，多模态理解、图片生成、视频任务、向量化及 Agent Plan HTTP TTS |
+| suanli_overleaf_http | [HOW_TO_USE](suanli_overleaf_http/HOW_TO_USE.md) | [README](suanli_overleaf_http/README.md) | suanli-overleaf-http/v2 | 5 | 连接 overleaf.cs.ac.cn；Git token profile + 统一网页登录，项目列表、下载、状态、上传和新项目导入 |
+| autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v5 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索可选自动抓取入库，提供论文详情及会议/年份查询 |
+| kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v10 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
+| embedding_http | [HOW_TO_USE](embedding_http/HOW_TO_USE.md) | [README](embedding_http/README.md) | embedding-http/v3 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
+| volcano_http | [HOW_TO_USE](volcano_http/HOW_TO_USE.md) | [README](volcano_http/README.md) | volcano-http/v3 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
+| grafana_http | [HOW_TO_USE](grafana_http/HOW_TO_USE.md) | [README](grafana_http/README.md) | grafana-http/v7 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
+| outline_http | [HOW_TO_USE](outline_http/HOW_TO_USE.md) | [README](outline_http/README.md) | outline-http/v5 | 12 | 实例选择 profile，其中含 `outline_key` |
+| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v9 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| vm_ssh_http | [HOW_TO_USE](vm_ssh_http/HOW_TO_USE.md) | [README](vm_ssh_http/README.md) | vm-ssh-http/v7 | 3 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
+| suanli_vm_ssh_http | [HOW_TO_USE](suanli_vm_ssh_http/HOW_TO_USE.md) | [README](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v8 | 3 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
 
 表中版本与导出数量对应各包的 `package.example.json`；已部署实例以 GRIP DESCRIBE 为准。
 
@@ -110,7 +110,7 @@ description = await client.describe(activation["resource"])
 会在容器 ready 但存在入口问题时显示 degraded，任务执行仍可能可用。
 
 `activate-package` 自动创建或复用激活实例资源，`activation["resource"]` 就是其 GRIP URI。
-例如，按当前模板在默认命名空间激活的算力云实例可为 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v8/slave-a/default`；实际调用使用返回的 URI。
+例如，按当前模板在默认命名空间激活的算力云实例可为 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v9/slave-a/default`；实际调用使用返回的 URI。
 仅手工启动 Docker 容器不会向 Observer 注册实例；应通过 Slave 的激活动作使用服务包。
 
 `credential_profile` 是激活实例的字段，与 `instance_config` 并列；填 Slave operator 已配置的
@@ -129,6 +129,26 @@ Schema 引用也都是 GRIP 资源，可用 `client.read_json(ResourceRef.model_
 `offers` 给出当前可调用的业务和管理动作及 binding；`pending_auth`、`failed`、`stopped` 时，
 业务动作仍在 `metadata.actions` 中，标记 `available=false` 和 `unavailable_reason`，但没有业务 offer。
 凭据、实例配置和内部容器地址不出现在描述中。
+
+### 参数和结果的单位
+
+读取 action 的输入、输出 schema 时，同时读取字段的 `description`。容量、时间、比例、
+媒体尺寸以及计数/索引均按所选 action 的字段说明填写；网关保留上游单位，不统一把所有
+容量换成 GB，也不根据数值大小猜测秒或毫秒。
+
+| 类型 | 单位与示例 |
+|---|---|
+| 容量/传输长度 | `B` 是字节；`1 MB = 1000000 B`，`1 GB = 1000000000 B`；`1 MiB = 1048576 B`，`1 GiB = 1073741824 B`。字段要求 B 时，4 GiB 应传 `4294967296` |
+| 时长/采样间隔 | `s` 是秒，`ms` 是毫秒，`1 s = 1000 ms`；超时、媒体时长和任务有效期是不同字段 |
+| 绝对时间 | Unix 时间戳须注明秒或毫秒；RFC3339 字符串须包含时区，例如 `2026-11-03T08:00:00+08:00` |
+| 比例 | `percent` 是 0–100，`ratio` 是 0–1；`50%` 对应 `50` 或 `0.5`，取决于字段声明 |
+| 计算资源 | VM `Cpu` 是 vCPU 数；Kubernetes CPU 可写 `500m` 表示 0.5 核；GPU 数量按指定资源类型计数 |
+| 媒体 | 图片宽高用像素；视频时长用秒、帧数用帧；采样率 Hz 表示每秒采样数，码率 bps 表示每秒比特数 |
+| 数量、索引及无量纲值 | token 数不等于字符数；页码与 item offset 分开解释；设备/面板 ID、随机种子、相似度和模型系数注明各自含义 |
+
+具体字段说明见各包的 `HOW_TO_USE.md` 和 schema。Kubernetes manifest 内的资源 quantity、
+Prometheus 查询结果和其他原生上游对象保留各字段的上游单位；指标单位需结合查询表达式、
+metric 定义及 dashboard 配置判断。
 
 SSH 包的 `instance_config` 必须提供 `host`、`port`、`user`。
 若绑定已登记 VM，额外提供 `target: vm_uri`。同一个包的不同实例使用不同的配置和持久状态。
@@ -204,6 +224,12 @@ Slave action 默认预算 3660 秒；插件 invoke 按该预算等待并预留 3
 能力包业务术语统一为 `action`：manifest 使用 `action_exports`、`action_descriptor_ref`，
 描述符使用 `action.v1`，执行引用使用 `action_ref`，网关响应使用 `{action, result}`。
 旧 manifest/描述符和旧镜像需重新生成、构建并以新版本发布；不保留旧业务字段别名。
+
+新增或修改数值字段时，在输入、输出及配置 schema 的 `description` 中说明含义、单位、
+适用范围、已知默认值和示例；无量纲系数、计数及标识符也须说明。原生嵌套对象在其所在
+字段注明上游单位规则。不要为 `io.v1` 添加未支持的 `unit` 等关键字。
+生成的 schema 修改 `scripts/generate_service_contracts.py` 中的定义；SSH 业务及
+instance-config schema 直接修改 JSON。同步包的 `HOW_TO_USE.md`，然后重新生成全部内容引用。
 
 修改契约后运行：
 

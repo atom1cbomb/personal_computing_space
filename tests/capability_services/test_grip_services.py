@@ -287,7 +287,7 @@ def arguments(directory, action_name):
     if action_name == "jobs-submit":
         value = {"manifest": {"apiVersion": "batch.volcano.sh/v1alpha1", "kind": "Job", "metadata": {"name": "fixture-job", "namespace": "test"}, "spec": {}}}
     if action_name == "instances-run":
-        value = {"ProjectId": "project-test", "RegionId": "region-test", "ZoneId": "zone-test", "Count": 1, "Cpu": 2, "Mem": 4, "DiskSize": 20, "ImageId": "image-test", "Name": "fixture-vm", "TagSpecifications": [], "ClientToken": "fixture-create"}
+        value = {"ProjectId": "project-test", "RegionId": "region-test", "ZoneId": "zone-test", "Count": 1, "Cpu": 2, "Mem": 4 * 1024**3, "DiskSize": 20 * 1024**3, "ImageId": "image-test", "Name": "fixture-vm", "TagSpecifications": [], "ClientToken": "fixture-create"}
     if action_name == "gpu-arena-query":
         value = {"panel_id": 1, "ref_id": "A", "start": 10, "end": 20, "step": 10}
     if action_name == "gpu-arena-gpu-hours":

@@ -11,11 +11,13 @@
         "type": "object",
         "properties": {
           "year": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Publication calendar year, for example 2026."
           },
           "count": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Stored papers for this venue and year (count)."
           }
         },
         "required": [

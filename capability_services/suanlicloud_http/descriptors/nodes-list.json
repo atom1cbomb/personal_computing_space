@@ -2,5 +2,5 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/nodes-list",
   "name": "nodes_list",
-  "description": "Nodes list through the suanlicloud-http activation."
+  "description": "Nodes list through the suanlicloud-http activation. MaxCpu counts cores; Cpu is a 0–1 utilization ratio. Mem/MaxMem/Disk/MaxDisk are bytes (B); Uptime is seconds."
 }

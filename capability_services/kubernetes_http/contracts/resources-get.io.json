@@ -5,7 +5,7 @@
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/resources-get-output/sha256/ef6230c2310a81de6982f8b236d529b2956572b1c814db56cd38b4473517aaeb",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/resources-get-output/sha256/bc2c06b5e8ce7fe767615d9c0a4c31c994251adf65c2ac34676a55e191ac54c3",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/videos-list-input/sha256/9aa2781356f7a279f6b9e26165ca8588e598cba4ea16372c521ae9960848e426",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/videos-list-input/sha256/222de531a5e8bf31750f22530f04f0152134c56bc2915f4b778090085abc1f3b",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/videos-list-output/sha256/a2c0d5d5ed4d87117e6d6d21b346c8cd68a8a9cbe4b898786251c7a61377379b",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/videos-list-output/sha256/5cf54d4c3477f633532b59b8d1d9b8dce5c0c23c624bc3cf1cdc45818cfd4295",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

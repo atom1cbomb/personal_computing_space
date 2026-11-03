@@ -13,17 +13,20 @@
     },
     "time_range": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "description": "Effective start/end are Unix seconds, step is seconds, and filters contain literal label values."
     },
     "dashboard_uid": {
       "type": "string",
       "const": "gpu-arena"
     },
     "dashboard_version": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Upstream dashboard revision number (identifier, no physical unit)."
     },
     "dashboard_url": {
-      "type": "string"
+      "type": "string",
+      "description": "Grafana browser URL; its from/to query parameters are Unix milliseconds, while action start/end inputs are Unix seconds."
     },
     "group_by": {
       "type": "string",
@@ -31,10 +34,12 @@
     },
     "accounting_step_seconds": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Allocation accounting interval in seconds, independent of the output sampling step."
     },
     "reference_vram_gib": {
-      "const": 80
+      "const": 80,
+      "description": "Reference VRAM capacity in GiB; 1 GiB = 1073741824 B. Normalization uses 80 GiB."
     },
     "normalization": {
       "type": "string"
@@ -52,22 +57,26 @@
               "integer",
               "null"
             ],
-            "minimum": 1
+            "minimum": 1,
+            "description": "Rank starting at 1; null when missing capacity prevents normalization."
           },
           "gpu_hours": {
             "type": "number",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Allocated GPU-hours: one GPU allocated for one hour is 1 GPU-hour; not utilization or elapsed seconds."
           },
           "a100_80gb_hours": {
             "type": [
               "number",
               "null"
             ],
-            "minimum": 0
+            "minimum": 0,
+            "description": "VRAM-weighted GPU-hours: allocated GPU-hours multiplied by installed_vram_gib / 80. Despite the field name, capacity uses GiB, not decimal GB. Null if capacity is missing; not compute-performance equivalence."
           },
           "unrated_gpu_hours": {
             "type": "number",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Allocated GPU-hours with unknown VRAM capacity, excluded from normalized ranking."
           }
         },
         "required": [
@@ -103,16 +112,19 @@
             "maxLength": 128
           },
           "queried_at": {
-            "type": "string"
+            "type": "string",
+            "description": "Gateway query time as a timezone-qualified RFC3339 timestamp."
           },
           "query": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 32768
+            "maxLength": 32768,
+            "description": "PromQL query text; runtime limit is 32768 UTF-8 bytes, so non-ASCII queries may contain fewer characters."
           },
           "parameters": {
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "description": "Effective query parameters: time/start/end are Unix seconds and step is seconds."
           },
           "result_type": {
             "type": "string",
@@ -125,7 +137,8 @@
           },
           "result": {
             "type": "array",
-            "items": {}
+            "items": {},
+            "description": "Native Prometheus result. Sample timestamps are Unix seconds; numeric sample values retain the queried expression's unit, including numeric strings. Determine value units from the metric/expression and dashboard field configuration; no implicit conversion."
           },
           "warnings": {
             "type": "array",

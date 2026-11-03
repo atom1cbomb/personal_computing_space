@@ -10,7 +10,8 @@
       "properties": {
         "total": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Catalog venues (count)."
         },
         "venues": {
           "type": "array",

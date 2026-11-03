@@ -13,20 +13,24 @@
     },
     "time_range": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "description": "Effective start/end are Unix seconds, step is seconds, and filters contain literal label values."
     },
     "dashboard_uid": {
       "type": "string",
       "const": "gpu-arena"
     },
     "dashboard_version": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Upstream dashboard revision number (identifier, no physical unit)."
     },
     "dashboard_url": {
-      "type": "string"
+      "type": "string",
+      "description": "Grafana browser URL; its from/to query parameters are Unix milliseconds, while action start/end inputs are Unix seconds."
     },
     "panel_id": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Queried dashboard panel ID (identifier)."
     },
     "panel_title": {
       "type": "string"
@@ -47,16 +51,19 @@
           "maxLength": 128
         },
         "queried_at": {
-          "type": "string"
+          "type": "string",
+          "description": "Gateway query time as a timezone-qualified RFC3339 timestamp."
         },
         "query": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 32768
+          "maxLength": 32768,
+          "description": "PromQL query text; runtime limit is 32768 UTF-8 bytes, so non-ASCII queries may contain fewer characters."
         },
         "parameters": {
           "type": "object",
-          "properties": {}
+          "properties": {},
+          "description": "Effective query parameters: time/start/end are Unix seconds and step is seconds."
         },
         "result_type": {
           "type": "string",
@@ -69,7 +76,8 @@
         },
         "result": {
           "type": "array",
-          "items": {}
+          "items": {},
+          "description": "Native Prometheus result. Sample timestamps are Unix seconds; numeric sample values retain the queried expression's unit, including numeric strings. Determine value units from the metric/expression and dashboard field configuration; no implicit conversion."
         },
         "warnings": {
           "type": "array",

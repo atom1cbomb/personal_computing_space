@@ -14,5 +14,6 @@
     "protocol",
     "direction"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "description": "Stream-open acknowledgement only. Subsequent vm-file.v1 control frames use size as a byte count (B), including ready/commit/uploaded/downloading/downloaded frames. See HOW_TO_USE.md for framing."
 }

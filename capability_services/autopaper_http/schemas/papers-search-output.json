@@ -13,7 +13,8 @@
         },
         "total": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Search result papers (count)."
         },
         "papers": {
           "type": "array",
@@ -60,7 +61,8 @@
                 "type": [
                   "integer",
                   "null"
-                ]
+                ],
+                "description": "Publication calendar year, for example 2026; null if unknown."
               },
               "url": {
                 "type": [
@@ -116,7 +118,8 @@
                 "type": [
                   "number",
                   "null"
-                ]
+                ],
+                "description": "Dimensionless similarity score from the upstream search, not a percentage; null if unavailable."
               }
             },
             "required": [

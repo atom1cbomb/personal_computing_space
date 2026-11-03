@@ -1,4 +1,5 @@
 {
   "type": "object",
-  "properties": {}
+  "properties": {},
+  "description": "Native Outline parameters. When using upstream pagination, limit is the maximum item count and offset is the zero-based count of skipped items, not a page number. Supported ranges/defaults are determined by the deployed Outline API."
 }

@@ -1,6 +1,6 @@
 # Volcano Dashboard capability package
 
-`volcano-http/v2` reads a Volcano Dashboard's own JSON API. Each activation
+`volcano-http/v3` reads a Volcano Dashboard's own JSON API. Each activation
 selects a Dashboard origin, preserving its HTTPS port. It is separate from
 `kubernetes-http`, which uses a kubeconfig to operate Kubernetes and submit jobs.
 The public entry point is Observer GRIP; HTTP paths below are private bindings.
@@ -18,7 +18,7 @@ Namespace defaults to `all`, translated to the Dashboard's `All` filter. List
 results contain `items`, `total_count`, and `complete=true`; the gateway follows
 upstream pagination and rejects an incomplete result. Every export is SafeRead.
 
-Current Dashboard read APIs return JSON without a browser session, so this v2
+Current Dashboard read APIs return JSON without a browser session, so this v3
 package requires no login or credential profile. A future 401, 403, login redirect,
 or HTML login response is an explicit error. The documented browser-login port
 workaround is not needed to call these currently public JSON endpoints.

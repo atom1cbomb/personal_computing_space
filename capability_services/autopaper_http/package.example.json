@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "autopaper-http",
-  "package_version": "v4",
+  "package_version": "v5",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -39,7 +39,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-search/sha256/8b4efabef11133a2cd9f57f06e55e37394b9eb8add32e60a0cbc219efcd0b2a0",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-search/sha256/4aa8eb4f1de00dd902679cd984a9a1e29e91946a12ece19b5e6d938c98aa5f06",
         "identity_criterion": "content_digest"
       }
     },
@@ -59,7 +59,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-get/sha256/b72acaf65ac005aef2ac6169169ebc28f7a9aeef8dcd5674b813e7ec901e72f9",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-get/sha256/d52eeeda638b06abf40ffea3fd967080a5172496ebf4c6c0bad87adf0f959a0a",
         "identity_criterion": "content_digest"
       }
     },
@@ -79,7 +79,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-list/sha256/4d3cb7f2a3592cd42c2bb285dab420b630eb10521130e5306744e7851cbba5b8",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/papers-list/sha256/2d8739e3d6a0da837404001d499ab4e8d63ab52ad7c14cf252849e8ecd782adb",
         "identity_criterion": "content_digest"
       }
     },
@@ -99,7 +99,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/venues-list/sha256/66c234c0f039971b3c98667883ca613c00f8e325d3ae5255e175a426ed574c7f",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/venues-list/sha256/2516b15bfa9bb4e8cea7336cb4db173821fd097c29a93127a584cad1977a028c",
         "identity_criterion": "content_digest"
       }
     },
@@ -119,7 +119,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/years-list/sha256/f31e4470855932354ec82971d8f2e0eb11c2eaef85f74e423a0d676c9be14564",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/years-list/sha256/1c603bfe8684c0ea530862b2f906c8ac869d739d28d54e14b95a69f236d6e488",
         "identity_criterion": "content_digest"
       }
     },
@@ -139,7 +139,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/venues-catalog/sha256/c9c4fd2af24e0179a918cb598668e494b1186f94f09bc5ac2f24b3227da84563",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/contracts/venues-catalog/sha256/1a9f5c73af72b9c83118c5fb29d8962634463d5d73da90e7f3b812a7c0cc08a6",
         "identity_criterion": "content_digest"
       }
     }

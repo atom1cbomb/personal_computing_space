@@ -7,7 +7,7 @@
     "model.ark.videos.create"
   ],
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/47e9b1998fe219f5b442088f65f8e9bef6785f27aa0c59b0f129adce63a3f383",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/instance-config/sha256/a74d2000cc169a64a3c61a9134fed72398d43b67ae96050f6caf6d09e0c8aa3d",
     "identity_criterion": "content_digest"
   }
 }

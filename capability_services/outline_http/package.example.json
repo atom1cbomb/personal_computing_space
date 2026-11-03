@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "outline-http",
-  "package_version": "v4",
+  "package_version": "v5",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -27,7 +27,7 @@
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/collections-list/sha256/fca08256bd68d0ce6d762991ee8979ad6fa4d2e984abe5e0991b77b4ae786b13",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/collections-list/sha256/eba04136cada9f18975eaa1340594c166556d8d86d58e2cacb1da30e6f62ccbc",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -84,7 +84,7 @@
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-list/sha256/e6b25b96f077e7766b29f98f036e14de01bf5dffb18692883c33fb64c75d44f2",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-list/sha256/f1645b05bf870be16da03d678baf51ce51a25a49b8d8346bf9e0e02c1a6ad1c9",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -141,7 +141,7 @@
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-search-titles/sha256/437eb77ffe76f54a36a388f77e2d4fed39a6532792ff96cb3ff15b185a5915b3",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-search-titles/sha256/db7b9f93a0e570844a2bd5347662672eb48c08194c4fd5ce842a1776384832d9",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -160,7 +160,7 @@
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-search/sha256/60e542aca0de6e937c3683da7e20567a0b50a57a391c175bdb40256417e269ab",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/outline-http/contracts/documents-search/sha256/2f70b4ee778a2c4223dae5a268b30e1afa1788bc3d5b5079af205b57797297e2",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",

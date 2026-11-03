@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanli-overleaf-http",
-  "package_version": "v1",
+  "package_version": "v2",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -39,7 +39,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-list/sha256/c06f96c4d1102b9b0ba69b83c0963ef5fa6d20917ab54a402877268ac6dff8fd",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-list/sha256/a9cc74c62712d8fe98ede4fd1b63077c89c07f3fb06ab43f25494db1ba2a1fae",
         "identity_criterion": "content_digest"
       }
     },
@@ -59,7 +59,7 @@
         "interaction": "byte-stream"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-download/sha256/e29427bebf2cbd842fa3b43cc4e461ed68f0f01a48253de9e87fcbb28669d1a9",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-download/sha256/9f0c58941353fb1c0742a63045b9ea959dcf098eb7db0d742ca7e4af460291e0",
         "identity_criterion": "content_digest"
       }
     },
@@ -99,7 +99,7 @@
         "interaction": "byte-stream"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-upload/sha256/b7314349925a45e36812999e454978cab8b8a1d44988c156a1f66a6bcfac3742",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-upload/sha256/e8466f6a52b61d0d0d3802c2aaf74879bd779abce30e3c4835000276f840017f",
         "identity_criterion": "content_digest"
       }
     },
@@ -119,7 +119,7 @@
         "interaction": "byte-stream"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-import/sha256/f1861d9e494128623b0795a81159ed635e456d663e5e86a4a24eed6b515f35b0",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanli-overleaf-http/contracts/projects-import/sha256/a81bc51329a44de42a3ca8d0a3a0adc135de21f9999c9715734d672f8fea6795",
         "identity_criterion": "content_digest"
       }
     }

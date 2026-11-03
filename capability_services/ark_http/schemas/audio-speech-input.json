@@ -27,12 +27,14 @@
               "pattern": "\\S"
             },
             "sample_rate": {
-              "type": "integer"
+              "type": "integer",
+              "description": "Output audio sample rate in hertz (Hz, samples per second), e.g. 24000 for 24 kHz; supported rates/defaults depend on the audio format."
             }
           },
           "required": [
             "format"
-          ]
+          ],
+          "description": "Provider audio settings. sample_rate is Hz; additional bit_rate is bits per second (bps), not bytes per second. Other options retain provider-specific scales."
         }
       },
       "required": [

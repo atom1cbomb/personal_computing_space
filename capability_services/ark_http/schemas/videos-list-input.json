@@ -4,12 +4,14 @@
     "page_num": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 500
+      "maximum": 500,
+      "description": "Page number, starting at 1; not an item offset. Range 1–500."
     },
     "page_size": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 500
+      "maximum": 500,
+      "description": "Tasks per page (count), 1–500."
     },
     "filter": {
       "type": "object",

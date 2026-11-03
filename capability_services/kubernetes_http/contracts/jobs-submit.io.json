@@ -1,7 +1,7 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/jobs-submit-input/sha256/ff78a9b510c3effb9cc7fb1a26851b2ae9d61fc4b32bc56465dfa03b00d0e07b",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/kubernetes-http/schemas/jobs-submit-input/sha256/eadf2e84074b83d0a91eff1b0d533fbd00f6512258e3d9569add8d00ba4e19ab",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {

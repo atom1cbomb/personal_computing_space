@@ -5,12 +5,16 @@
 提供 `id_ed25519`。这些连接信息和凭据不会进入业务输入或公开 attributes。
 
 等待 activation ready 后调用 `exec`，输入为 `{command, timeout_seconds}`。命令通过 SSH
-stdin 运行 `sh -s`；超时时间为 1–3600 秒，默认 300 秒，命令最多 1 MiB，每个输出流
-最多 16 MiB。成功以 action 声明的 validator 为准：退出码必须为零且不能超时。
+stdin 运行 `sh -s`；超时时间为 1–3600 秒，默认 300 秒，命令最多 1048576 个 Unicode 字符，每个输出流
+最多保留 16 MiB 原始字节。成功以 action 声明的 validator 为准：退出码必须为零且不能超时。
 
 服务会为每个 activation 保存独立 `known_hosts`，首次连接接受新 host key，后续检测
 host key 变化。业务请求不能选择其他目标、SSH options 或私钥路径；认证失败时重新验证
 原 activation。
+
+`instance_config.port` 是 1–65535 的 SSH TCP 端口号，例如 `22`；它是必填标识符。
+`exit_code` 是进程状态码，0 表示成功、超时时为 null；输出截断上限按原始字节计，
+不按解码后的字符数计。
 
 ## 流式文件传输
 
@@ -67,6 +71,11 @@ stream-open 回执仅为 `{"protocol":"vm-file.v1","direction":"upload"或"downl
 表示通道接纳；之后的结果帧才说明文件操作是否成功。
 
 上传输入为 `{path, size, sha256, overwrite?, timeout_seconds?}`，sha256 为小写十六进制。
+
+所有输入和控制帧的 `size` 都是字节数 B，范围 0–9007199254740991；
+例如 1 MiB 文件传 `size=1048576`。`timeout_seconds` 是秒，范围 1–3600，默认 300，
+可带小数；CLI `--timeout 600` 表示 600 秒（10 分钟）。`1 MiB = 1048576 B`，
+与 `1 MB = 1000000 B` 区分。
 
 1. 服务端先检查目标并创建临时文件，返回 `{status:"ready", path, size, sha256}` 控制帧。
 2. 客户端发送恰好 `size` 字节，再发送 `{type:"commit", size, sha256}` 控制帧。

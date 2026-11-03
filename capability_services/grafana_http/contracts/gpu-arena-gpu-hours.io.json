@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-arena-gpu-hours-input/sha256/838c47cc20a1fec0ebb2d3a124f791f303ff027579349b073322583ef09ac2ad",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-arena-gpu-hours-input/sha256/f22b51486b30f3ec778d04b1aa2c513ee8f815078461ab9a42c6f75f41769afa",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-arena-gpu-hours-output/sha256/e89e6995fe6eccbd45c39e27964b59a02222485498283989b8b6840b7f1505df",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/grafana-http/schemas/gpu-arena-gpu-hours-output/sha256/aa9aa9a5b2f67f2eb0ad131ea9e9b00070bd26e19973c71008ea25ae804fbe7a",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

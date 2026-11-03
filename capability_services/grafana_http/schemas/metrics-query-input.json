@@ -4,7 +4,8 @@
     "query": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 32768
+      "maxLength": 32768,
+      "description": "PromQL query text; runtime limit is 32768 UTF-8 bytes, so non-ASCII queries may contain fewer characters."
     },
     "datasource_uid": {
       "type": "string",
@@ -15,7 +16,8 @@
       "type": [
         "string",
         "number"
-      ]
+      ],
+      "description": "Absolute time as Unix seconds since 1970-01-01T00:00:00Z (number or numeric string; fractional seconds allowed), or a timezone-qualified RFC3339 string, e.g. 2026-11-03T08:00:00+08:00. Numeric values are seconds, not milliseconds. Defaults to now."
     }
   },
   "required": [

@@ -1,5 +1,6 @@
 {
   "type": "object",
+  "description": "Connection settings for the Volcano Dashboard JSON API. api_origin is an HTTPS origin with any required TCP port; port numbers identify endpoints rather than resource quantities.",
   "required": [
     "api_origin"
   ],

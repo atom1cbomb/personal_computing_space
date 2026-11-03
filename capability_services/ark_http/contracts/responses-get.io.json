@@ -5,7 +5,7 @@
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/responses-get-output/sha256/bfdfc46d9da6cab7eea5dc37c9b77c5bf7737a5309ca00d8e6d296bb2438f691",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/schemas/responses-get-output/sha256/a883bb880219309a599f0f51bfb6cd37b24c566b6a60ea9fb2e3626f34b94539",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

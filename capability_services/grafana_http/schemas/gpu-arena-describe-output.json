@@ -10,10 +10,12 @@
       "const": "gpu-arena"
     },
     "dashboard_version": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Upstream dashboard revision number (identifier, no physical unit)."
     },
     "dashboard_url": {
-      "type": "string"
+      "type": "string",
+      "description": "Grafana browser URL; its from/to query parameters are Unix milliseconds, while action start/end inputs are Unix seconds."
     },
     "title": {
       "type": "string"
@@ -22,11 +24,13 @@
       "type": "string"
     },
     "max_range_days": {
-      "const": 90
+      "const": 90,
+      "description": "Maximum selectable query window in days; one day is 86400 seconds."
     },
     "default_range": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "description": "Grafana relative time expressions, for example from=now-7d and to=now; d means days."
     },
     "variables": {
       "type": "array",
@@ -41,7 +45,8 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Dashboard panel ID (identifier, not a count)."
           },
           "title": {
             "type": "string"
@@ -51,7 +56,8 @@
           },
           "field_config": {
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "description": "Native Grafana display configuration, including defaults.unit and overrides. Inspect it together with the target expression to interpret sample values."
           },
           "targets": {
             "type": "array",

@@ -1,11 +1,11 @@
 {
   "schema_version": "io.v1",
   "input_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/instances-list-input/sha256/7318f3e759a08325e4e76cee1c49cca56b4df3b718276fee3eeeb262fb384c52",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/instances-list-input/sha256/c65f4d9a5613b7e89bad2fbbd6bebd966c4f854d6b11a60b81b4acbda394b75d",
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/instances-list-output/sha256/41112577bd58d7ae453fb50201bae618866767eaf25f54c9251e097d34f24b39",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/instances-list-output/sha256/27c6c61d7c563546bb73c1b007b4499489d58110f41a838fdb76ff5a273b6baa",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

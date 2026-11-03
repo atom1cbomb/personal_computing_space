@@ -1,10 +1,23 @@
 {
   "description": "SSH activation connection settings selected by the operator and shared by exec and file transfers.",
   "type": "object",
-  "required": ["host", "port", "user"],
+  "required": [
+    "host",
+    "port",
+    "user"
+  ],
   "properties": {
-    "host": {"type": "string"},
-    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-    "user": {"type": "string"}
+    "host": {
+      "type": "string"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "SSH TCP port number (identifier), 1–65535; for example 22. Required; no default."
+    },
+    "user": {
+      "type": "string"
+    }
   }
 }

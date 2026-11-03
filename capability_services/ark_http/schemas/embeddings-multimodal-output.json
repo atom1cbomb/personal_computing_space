@@ -10,14 +10,16 @@
       "properties": {
         "data": {
           "type": "object",
-          "properties": {}
+          "properties": {},
+          "description": "Native embedding result; vector components are dimensionless, not percentages or probabilities. Dimension is a component count."
         },
         "model": {
           "type": "string"
         },
         "usage": {
           "type": "object",
-          "properties": {}
+          "properties": {},
+          "description": "Provider usage counters; fields ending in tokens are token counts, not characters or bytes. Other fields retain their provider-defined units."
         }
       },
       "required": [

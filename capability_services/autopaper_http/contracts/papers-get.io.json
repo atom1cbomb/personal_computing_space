@@ -5,7 +5,7 @@
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/papers-get-output/sha256/4fb77d9c3f7596ce2635b1f1f98498a011d84bd2b57cc5d59b57f41390d7a8f7",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/autopaper-http/schemas/papers-get-output/sha256/240c40ef3e131aa11abf7d7f7a3c74106b9940f4bfdbeab6bfe008098aeb1be3",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

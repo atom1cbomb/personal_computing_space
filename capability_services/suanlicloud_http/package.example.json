@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "suanlicloud-http",
-  "package_version": "v8",
+  "package_version": "v9",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -61,11 +61,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/nodes-list",
-        "version_or_digest": "800017a8e58b6311bbde2716967e00b759d8fb605808223a07fec2e324baba49",
+        "version_or_digest": "752b70c00d7de15bc4d420201e470fc0b5ef66b59e32bc19d5f0c677a9ec41dc",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/nodes-list/sha256/7c41e8c22574906b88ddedf08c8d83e78281f967fbf67095f7ed74212d465cff",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/nodes-list/sha256/d3b70e7ba99b45e90e402ebbf9f2ae9e61f56c57944465394e60ca2257576fdc",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -80,11 +80,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-list",
-        "version_or_digest": "ca5d331fffd076f5c4c6936fd8cac98801f53583f9abaed94b9f8c3c5193fe65",
+        "version_or_digest": "e97e9ca5ac6264b4c1645efcafda45fbe2d26851ab7064dbc0a00c9c99c2ae97",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/instances-list/sha256/018a820151264a8b1ada1e935715dd8739b8d77ae265e2bc227f322559a9ae7d",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/instances-list/sha256/2655e1f4f7df26b00481a5e68dc81c40d447f33d39c256cf42a8135ffb16304c",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -118,11 +118,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/images-list",
-        "version_or_digest": "33f1abc7242ce3647455940630d81f88b0e356cceade037ba6292328bc0b3da9",
+        "version_or_digest": "7f2047e1fc7cf62e8e9aafd1be02484141c230c39ef384ab7c686ec9781156ff",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/images-list/sha256/437fea80b1a83ad1a14808fde263b93821f2194fe2884c1e5b6022aed72e47a0",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/images-list/sha256/ca153de9f3bf242f4855f783befebd947624793382175dfe5c7b76c6a7c39308",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",
@@ -137,11 +137,11 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-run",
-        "version_or_digest": "3c9858e72a04ee8b75e56a6520b8200bb1f85cc3cac6087d87eaa71fba3e5c10",
+        "version_or_digest": "baee1811e2888c6c7a4fb8af2a2f3b8d7b948ef64c60e51770e7378adc74f53e",
         "identity_criterion": "descriptor_digest"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/instances-run/sha256/cce664232055783afdb8e53652ba9fc552e9ec2ab6978f92cc9e50a2f39be3e1",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/contracts/instances-run/sha256/8e219d531e475aecb66787c67dc4b76bd1b8ab5882e942e420b53edf92db2ac7",
         "identity_criterion": "content_digest"
       },
       "effect_class": "ExternalService",

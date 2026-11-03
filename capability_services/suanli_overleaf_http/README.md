@@ -1,6 +1,6 @@
 # Suanli Overleaf
 
-`suanli-overleaf-http/v1` 为 https://overleaf.cs.ac.cn 提供账号级项目管理。
+`suanli-overleaf-http/v2` 为 https://overleaf.cs.ac.cn 提供账号级项目管理。
 五个动作是 `projects.list`、`projects.download`、`projects.status`、
 `projects.upload` 和独立的 `projects.import`。使用方式见 [HOW_TO_USE.md](HOW_TO_USE.md)。
 

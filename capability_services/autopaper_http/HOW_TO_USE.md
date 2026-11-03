@@ -13,6 +13,15 @@ DESCRIBE 结果选择 action。首次使用需要通过统一认证入口登录�
 | `years_list` | 列出会议已有年份及数量 | request-reply |
 | `venues_catalog` | 读取会议缩写、全名和 CCF 分类 | request-reply |
 
+## 数值参数和结果
+
+| 字段 | 单位和含义 |
+|---|---|
+| `start_year`、`end_year`、`year` | 公历年份，例如 `2026`；不是 Unix 时间戳；搜索中的 null 表示无对应年份边界 |
+| `min_similarity`、返回的 `similarity` | 无量纲相似度分数，不是百分比；输入阈值为 0–1，例如 `0.5`，结果缺失时可为 null |
+| `top_k` | 最多返回的论文篇数，范围 1–200，默认 50 |
+| 返回的 `total` / `count` | 当前结果的条数 / 对应会议或年份的论文篇数；`venues_catalog.total` 是会议条数 |
+
 搜索至少提供非空 `keywords` 或 `description`；默认 `top_k=50`、
 `min_similarity=0.5`，`top_k` 为 1–200。省略 `auto_ingest` 时保留 AutoPaper 原生默认行为
 （目前为 `true`），库内结果不足时可以从网上抓取并入库；显式传 `false` 才只查询已有论文。

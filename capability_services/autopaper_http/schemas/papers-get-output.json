@@ -48,7 +48,8 @@
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "description": "Publication calendar year, for example 2026; null if unknown."
         },
         "url": {
           "type": [

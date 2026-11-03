@@ -5,7 +5,7 @@
 依赖；可选 `request_timeout_seconds` 默认 120 秒。激活绑定目标模型资源后，等待
 activation ready，再调用它的 action。
 
-v2 在配置 schema 中声明 `service_ref` 为公开依赖。激活前向 `check-package`
+配置 schema 中声明 `service_ref` 为公开依赖。激活前向 `check-package`
 传入拟使用的 `instance_config`；运行时关系可从 activation 的 DESCRIBE 或
 workspace `list-resources` 返回的 `metadata.dependencies` 读取。
 
@@ -13,6 +13,11 @@ workspace `list-resources` 返回的 `metadata.dependencies` 读取。
 |---|---|---|
 | `info` | `{}` | 模型名称、维度和设备信息 |
 | `embed` | `texts`、可选 `normalize`、`instruction` | `embeddings` 和 `dimension` |
+
+`dimension` 是每个向量的分量个数，例如 `1024`；`embeddings` 的分量是无量纲数值，
+不表示概率或百分比。`normalize` 默认 `true`，请求 L2 单位长度归一化。
+配置 `request_timeout_seconds` 的单位为秒，可带小数，范围为大于 0 且不超过 3600，
+默认 120 秒；与文本条数或向量维度无关。
 
 一次请求最多处理 256 条文本，响应必须通过文本条数、向量维度和有限数值校验。请求
 不会自动重试；断流后应重新发起一次新的 `embed` 调用。实际服务地址由 activation

@@ -18,19 +18,24 @@
       "description": "Native Seedance text/image_url/video_url/audio_url parts, including reference roles and draft_task when supported."
     },
     "resolution": {
-      "type": "string"
+      "type": "string",
+      "description": "Model-supported output resolution preset, e.g. 720p (pixel resolution class); not a byte size."
     },
     "ratio": {
-      "type": "string"
+      "type": "string",
+      "description": "Dimensionless output width:height aspect ratio, e.g. 16:9; supported values depend on the model."
     },
     "duration": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Generated video duration in seconds (s), e.g. 5 for five seconds; -1 requests automatic duration only for models that support it. Model-specific limits apply."
     },
     "frames": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Total generated video frames (frame count), not frames per second. Provider rules determine supported counts and precedence over duration."
     },
     "seed": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Dimensionless random seed (integer), not a count or duration; allowed values and sentinel values depend on the model."
     },
     "camera_fixed": {
       "type": "boolean"
@@ -54,7 +59,8 @@
       "type": "string"
     },
     "execution_expires_after": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Task expiry interval in seconds (s) from provider created_at, covering queued and running time; not an absolute timestamp or video duration. Provider range/default apply."
     },
     "tools": {
       "type": "array",

@@ -5,7 +5,7 @@
     "identity_criterion": "content_digest"
   },
   "output_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/images-list-output/sha256/7b5d5d4633ca048d21313aabb9f2a981ea571652f266576061990c9adddc3a08",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/suanlicloud-http/schemas/images-list-output/sha256/cde6b1f8ebabeef53f2b6aad1b690504c4683b76634f5f0497e7dd8007acd7a6",
     "identity_criterion": "content_digest"
   },
   "success_semantics": null,

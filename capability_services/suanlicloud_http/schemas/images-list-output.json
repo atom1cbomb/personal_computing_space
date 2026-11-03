@@ -12,7 +12,8 @@
           "type": "array",
           "items": {
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "description": "Provider image object. Bytes is the image length in bytes (B); Status is a dimensionless provider status code."
           }
         }
       },

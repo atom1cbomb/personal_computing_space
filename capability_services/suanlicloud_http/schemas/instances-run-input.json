@@ -11,16 +11,20 @@
       "type": "string"
     },
     "Count": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Number of VM instances to create (count), for example 1."
     },
     "Cpu": {
-      "type": "integer"
+      "type": "integer",
+      "description": "vCPU count per VM, for example 2 for two vCPUs; not millicores or a utilization ratio."
     },
     "Mem": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Memory per VM in bytes (B). Example: 4 GiB = 4294967296 B; pass 4294967296. Forwarded unchanged to the provider."
     },
     "DiskSize": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Root disk capacity per VM in bytes (B). Example: 20 GiB = 21474836480 B; pass 21474836480. Forwarded unchanged to the provider."
     },
     "ImageId": {
       "type": "string"

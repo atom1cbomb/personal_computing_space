@@ -47,6 +47,7 @@
         },
         "unit": {
           "type": "string",
+          "description": "Source metric scale: percent means 0–100; ratio means 0–1 and is multiplied by 100 for utilization_percent output.",
           "enum": [
             "percent",
             "ratio"

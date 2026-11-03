@@ -6,7 +6,8 @@
     },
     "dimension": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Number of numeric components per embedding vector (count), for example 1024."
     },
     "device": {
       "type": "string"

@@ -2,5 +2,5 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/images-list",
   "name": "images_list",
-  "description": "Images list through the suanlicloud-http activation."
+  "description": "Images list through the suanlicloud-http activation. Image Bytes is a byte count (B); Status is a dimensionless provider status code."
 }

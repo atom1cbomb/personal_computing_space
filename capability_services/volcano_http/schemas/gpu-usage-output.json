@@ -13,7 +13,8 @@
       "const": "scheduled_pod_requests"
     },
     "collected_at": {
-      "type": "string"
+      "type": "string",
+      "description": "Collection time as a timezone-qualified RFC3339 timestamp."
     },
     "namespace": {
       "type": "string"
@@ -23,23 +24,28 @@
     },
     "pod_count": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "All collected Pods (count), including terminal Pods."
     },
     "terminal_pods": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Succeeded/Failed Pods excluded from request totals (count)."
     },
     "allocated": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Effective requests of scheduled, non-terminal Pods. Counts units of resource_name (default nvidia.com/gpu), not utilization percent or necessarily physical GPU cards; query MIG resource types separately."
     },
     "running_allocated": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Effective requests of scheduled Pods in Running phase. Counts units of resource_name (default nvidia.com/gpu), not utilization percent or necessarily physical GPU cards; query MIG resource types separately."
     },
     "unscheduled_requested": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 0,
+      "description": "Effective requests of non-terminal Pods without a node. Counts units of resource_name (default nvidia.com/gpu), not utilization percent or necessarily physical GPU cards; query MIG resource types separately."
     },
     "by_namespace": {
       "type": "array",
@@ -51,19 +57,23 @@
           },
           "gpu_pods": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Non-terminal Pods requesting resource_name in this namespace (Pod count)."
           },
           "allocated": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Effective requests of scheduled, non-terminal Pods. Counts units of resource_name (default nvidia.com/gpu), not utilization percent or necessarily physical GPU cards; query MIG resource types separately."
           },
           "running_allocated": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Effective requests of scheduled Pods in Running phase. Counts units of resource_name (default nvidia.com/gpu), not utilization percent or necessarily physical GPU cards; query MIG resource types separately."
           },
           "unscheduled_requested": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Effective requests of non-terminal Pods without a node. Counts units of resource_name (default nvidia.com/gpu), not utilization percent or necessarily physical GPU cards; query MIG resource types separately."
           }
         },
         "required": [
@@ -97,7 +107,8 @@
           },
           "gpu_requests": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Effective Pod request as a count of resource_name units; not utilization percent or memory bytes."
           },
           "scheduled": {
             "type": "boolean"

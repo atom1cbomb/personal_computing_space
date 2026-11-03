@@ -1,7 +1,7 @@
 {
   "package_type": "service",
   "package_id": "ark-http",
-  "package_version": "v2",
+  "package_version": "v3",
   "execution": {
     "kind": "container:http",
     "version": "1"
@@ -23,7 +23,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/chat-completions",
-        "version_or_digest": "76a0715384d4e2b0be278a16d1f140ca86b342b626c0a2b2a1214428da0679cf",
+        "version_or_digest": "4439bc812db1b78d95f1f0d5475e9419653e02564b649bb3251b3176f4e6db26",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -36,14 +36,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/chat-completions/sha256/419e2a8020f914aa976b07c780fdfc17bcadf812e36d986ba746aa08bfdf7934",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/chat-completions/sha256/6edb4f8b99f8a9eeef4a7d4e05c702f8aa65478a299b3de613a02ec2b7dbe221",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/responses-create",
-        "version_or_digest": "37db5ea0913788e56d1e81546721aa0137cfc1c016660656ef2d7c637eea7ea2",
+        "version_or_digest": "1d19110e3d721376e9ce1e57408d132affd9bb453f0a6a73d7556e91eb3c6cfe",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -56,14 +56,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/responses-create/sha256/09aeb2528c67ab3959c7ca17ec847115a3b642cf8c0044b6f8ef1a2596ea277e",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/responses-create/sha256/d3467e1521d5737aa37a003349b4132f6b75323b95d2497dac3a2926dfab173e",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/responses-get",
-        "version_or_digest": "72c68412dccb47748026a00034a02a8bbd1c8fa8ce12ffd5c56d89d54283a0df",
+        "version_or_digest": "af160287a6fc25314d1f60598f395dc5c15c0d2fad4720a3c0261604f32230d3",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -76,14 +76,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/responses-get/sha256/09ccd6d8d7770dc39d7a0429410bd92e3dcdf5e30a354a9c1128fa1df654e1d7",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/responses-get/sha256/5b6f528a3898186606e96cd998833ccae7a809465027b1da438ade4da31fe11e",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/responses-delete",
-        "version_or_digest": "57a8065581bf4717e943b5c39b11a0bbe3fcbefc511fee5ac4d8dcaab2c56ace",
+        "version_or_digest": "59d017b3f14a038fa0f76fd118d78d79ee0d4577bf9298344b5ae17a5d034500",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -103,7 +103,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/images-generate",
-        "version_or_digest": "491190f16fad94539dff90e258ce74b66cafe63822f55b1068530581cdf323d5",
+        "version_or_digest": "945cb8085f1471d66fcd1f1b7b1a01959380aec729f066f8bb6fa61672998997",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -116,14 +116,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/images-generate/sha256/5eedc8d55ff8fb2b775b98368481ccf6c88657e0585aa8f28ccff3d7e582032c",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/images-generate/sha256/19d34cefa4fee58d9408a186210e6630ee722438f4caeb1ae786a23e160bfc62",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/embeddings-multimodal",
-        "version_or_digest": "01493008db3b5cfbae431e1a6123f00da77f18502f9fdbad316fd93719c8edbc",
+        "version_or_digest": "5f9a137364e4b83f19c873c5429d66c957a01965f527d5a391e66e4724a37207",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -136,14 +136,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/embeddings-multimodal/sha256/fceb144d3e04ffca3a799f385b1f18a27b2037167bcd8b13761e630a597172f9",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/embeddings-multimodal/sha256/860de55492c6869c068368c8e529f802e0b35fac50dd41947843cd456834cce9",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/videos-create",
-        "version_or_digest": "fffa5a371b959aebacce15e21ded1093ed79cb2fd0e7d04d279210fcc871fff0",
+        "version_or_digest": "814fe13b7b222c5da5930fe926cd0c7a01062d2c17b3e235c9caf1b4cb8d7d1d",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -156,14 +156,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-create/sha256/d64f1ba43703ca696080fb9ae093d597000cd85e873123d1699b038d7f7dfe1b",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-create/sha256/a6170179a7f39b28b9835f389b5be7a3f49773eeecd5c1151ea85fbc30afeece",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/videos-get",
-        "version_or_digest": "53539fb544ea17f96e92ba1a22fb870e18bd5e75423b67cb0a2f5f9725ee6452",
+        "version_or_digest": "a2d69b6650116124df7fd1a417f5c5820d4f350934b9ad9ca8b3a83c22dc89e9",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -176,14 +176,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-get/sha256/bc0d314dbeb71cb8a10e79917a00bb18865da2965d40a2f026771a2b3a5714a1",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-get/sha256/fe154584696a35d3e239b5924816e58fc8ab688a77e86c57963b23c0575591f0",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/videos-list",
-        "version_or_digest": "673346e367d91a987ce7d52663fb425b66486579c98234c9bda815759ead5d1c",
+        "version_or_digest": "78b02b166d4e55bbc70e845f0503d591d3d93edf6b2b297b017ed52f52c91ce1",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -196,14 +196,14 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-list/sha256/071fa3235e89275d2ac0ef806d20571e7d72a127e3cfd49b60169b21032128f4",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/videos-list/sha256/36320c245c99193e3a38d2d467963ba2682a8807b4ea2d39f918ef60f117115a",
         "identity_criterion": "content_digest"
       }
     },
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/videos-delete",
-        "version_or_digest": "d38e202441aa47588fb2a7e5cb6b1362fa988b23ac06aef51631cd050697ea36",
+        "version_or_digest": "1c5e167096482fa733535ab8143179175c66ba3209e98f4c0b64ed919eace970",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -223,7 +223,7 @@
     {
       "action_descriptor_ref": {
         "resource_id": "grip://loom.local/workspaces/workspace-default/actions/ark/audio-speech",
-        "version_or_digest": "b3935769deefc022dbe300c06c01484df176e787081be4c97b5f11855702d86f",
+        "version_or_digest": "5c2b77502beb5d2fd1e035265451ca98961900b2ee114e8695369571f2aa068b",
         "identity_criterion": "descriptor_digest"
       },
       "effect_class": "ExternalService",
@@ -236,7 +236,7 @@
         "interaction": "request-reply"
       },
       "io_contract_ref": {
-        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/audio-speech/sha256/873efb9fc7792a628da75e94218d25eab8bb6f8037530351e3b955814d0dde29",
+        "resource_id": "grip://loom.local/workspaces/workspace-default/content/ark-http/contracts/audio-speech/sha256/d071a68b4b0ff076fe5bd5bfc174c4fcfa4188a12fd9f6d072ec8a2a529705f7",
         "identity_criterion": "content_digest"
       }
     }

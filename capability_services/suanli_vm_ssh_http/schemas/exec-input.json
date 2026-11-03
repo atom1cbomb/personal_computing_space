@@ -7,12 +7,14 @@
     "command": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 1048576
+      "maxLength": 1048576,
+      "description": "POSIX shell script; length limit is 1048576 Unicode characters, not bytes. Sent over SSH stdin to sh -s; the JSON request also has an 8 MiB byte limit."
     },
     "timeout_seconds": {
       "type": "number",
       "minimum": 1,
-      "maximum": 3600
+      "maximum": 3600,
+      "description": "Operation timeout in seconds (s), 1–3600; defaults to 300. Fractional seconds are allowed; for example 600 means ten minutes."
     }
   }
 }

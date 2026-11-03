@@ -30,7 +30,7 @@ registered with the OIDC client. The package does not invent a device-code
 protocol.
 
 Use the [unified SDK login portal](../../docs/authentication.md) with
-`suanli-vm-ssh-http/v7`. The package declares `interaction.mode=redirect`.
+`suanli-vm-ssh-http/v8`. The package declares `interaction.mode=redirect`.
 The client manages the shared browser session and follows the actual provider
 redirects without a package-level IdP declaration. The client opens a browser,
 captures the registered localhost callback,
@@ -63,11 +63,11 @@ deadline; client refresh cannot change that policy. This package does not modify
 the VM's SSH authorization policy. The IdP must issue a usable refresh token.
 The ordinary SSH-key package uses the same file transport with its credential profile.
 
-The package is now v7. Its new digest has a separate credential volume, so the
+The current template is v8, with explicit parameter and result units. Its new digest has a separate credential volume, so the
 first activation needs its own login; subsequent same-version restarts resume
 automatically. File actions use that same authentication and renewal state as exec.
-The current `suanlicloud-http/v8` creation descriptor remains pinned to SSH v6.
-Publishing SSH v7 does not automatically change that dependency.
+The current `suanlicloud-http/v9` creation descriptor remains pinned to SSH v6.
+Publishing SSH v8 does not automatically change that dependency.
 
 Run the worker tests with `cd capability_services/suanli_vm_ssh_http/renewal &&
 go test -race ./...`; Python gateway lifecycle tests are in

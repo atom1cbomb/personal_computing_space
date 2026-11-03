@@ -12,7 +12,8 @@
           "type": "array",
           "items": {
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "description": "Provider node object. MaxCpu counts CPU cores; Cpu is used CPU as a 0–1 ratio of MaxCpu. Mem, MaxMem, Disk and MaxDisk are bytes (B); Uptime is seconds."
           }
         }
       },

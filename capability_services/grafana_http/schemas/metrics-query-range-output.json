@@ -14,16 +14,19 @@
       "maxLength": 128
     },
     "queried_at": {
-      "type": "string"
+      "type": "string",
+      "description": "Gateway query time as a timezone-qualified RFC3339 timestamp."
     },
     "query": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 32768
+      "maxLength": 32768,
+      "description": "PromQL query text; runtime limit is 32768 UTF-8 bytes, so non-ASCII queries may contain fewer characters."
     },
     "parameters": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "description": "Effective query parameters: time/start/end are Unix seconds and step is seconds."
     },
     "result_type": {
       "type": "string",
@@ -36,7 +39,8 @@
     },
     "result": {
       "type": "array",
-      "items": {}
+      "items": {},
+      "description": "Native Prometheus result. Sample timestamps are Unix seconds; numeric sample values retain the queried expression's unit, including numeric strings. Determine value units from the metric/expression and dashboard field configuration; no implicit conversion."
     },
     "warnings": {
       "type": "array",

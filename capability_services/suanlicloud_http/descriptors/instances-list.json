@@ -2,5 +2,5 @@
   "schema_version": "action.v1",
   "resource_id": "grip://loom.local/workspaces/workspace-default/actions/suanlicloud/instances-list",
   "name": "instances_list",
-  "description": "Describe instances by identity, including lowercase lifecycle state and guest IP addresses for readiness and access binding."
+  "description": "Describe instances by identity, including lowercase lifecycle state and guest IP addresses for readiness and access binding. Pagination uses a page number starting at 1 and instance counts. VM Cpu is a vCPU count; Mem, DiskSize and Disks[].SizeBytes are bytes (B)."
 }

@@ -14,7 +14,8 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 1024
+        "maxLength": 1024,
+        "description": "Project-relative source path, limited to 1024 UTF-8 bytes; non-ASCII paths may contain fewer characters."
       },
       "maxItems": 2000
     },
@@ -26,7 +27,8 @@
     "archive_size": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 52428800
+      "maximum": 52428800,
+      "description": "Exact ZIP archive length in bytes (B), 1–52428800 B (50 MiB). Example: a 1 MiB ZIP uses 1048576. Send this many archive bytes after stream-open."
     },
     "archive_sha256": {
       "type": "string",

@@ -7,7 +7,7 @@
     "compute.volcano.read"
   ],
   "instance_config_schema_ref": {
-    "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/schemas/instance-config/sha256/7cc51fea09611068b0b4aa4521153d1464cb0b96e1ac773bc33dd2098290cdea",
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/volcano-http/schemas/instance-config/sha256/ecd0fdf4d90d5abc94d916fb81e33e91bf16b95f90a2883529b9cfdb588f452f",
     "identity_criterion": "content_digest"
   }
 }

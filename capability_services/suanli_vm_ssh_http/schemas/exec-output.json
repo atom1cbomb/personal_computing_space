@@ -9,16 +9,19 @@
   ],
   "properties": {
     "stdout": {
-      "type": "string"
+      "type": "string",
+      "description": "Decoded text retaining at most 16777216 raw output bytes (16 MiB) before UTF-8 decoding; the limit is bytes, not characters."
     },
     "stderr": {
-      "type": "string"
+      "type": "string",
+      "description": "Decoded text retaining at most 16777216 raw output bytes (16 MiB) before UTF-8 decoding; the limit is bytes, not characters."
     },
     "exit_code": {
       "type": [
         "integer",
         "null"
-      ]
+      ],
+      "description": "Process exit status (dimensionless integer code), zero on success; null when execution times out."
     },
     "timed_out": {
       "type": "boolean"

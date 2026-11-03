@@ -34,7 +34,8 @@
             },
             "required": [
               "InstanceId"
-            ]
+            ],
+            "description": "Provider VM object. Cpu is a vCPU count; Mem and DiskSize are bytes (B), as is Disks[].SizeBytes when present. Vmid is an opaque numeric VM identifier; Disks[].BusIndex is a zero-based disk index within its bus."
           }
         }
       },

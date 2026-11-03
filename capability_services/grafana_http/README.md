@@ -1,6 +1,6 @@
 # Grafana monitoring capability package
 
-`grafana-http/v6` reads Grafana dashboards and queries their Prometheus data
+`grafana-http/v7` reads Grafana dashboards and queries their Prometheus data
 sources. GPU queries identify the node and the host GPU's numeric index, retain
 an available UUID, and report actual sampled utilization. Publish and invoke
 through Observer GRIP using the [shared service workflow](../README.md).
@@ -45,8 +45,9 @@ dashboard currently includes:
 | 12 / A | Historical occupancy by full UUID, including Unknown and Shared namespaces |
 | 13 | Namespace accounting; use `gpu_arena_gpu_hours` for the joined ranking |
 
-Time boundaries accept Unix seconds or timezone-qualified RFC3339 and are rounded
-to milliseconds, matching Grafana links. The default window is seven days ending
+Time boundaries accept Unix seconds or timezone-qualified RFC3339. Effective
+start/end values remain Unix seconds, rounded to millisecond precision; only the
+Grafana browser URL's from/to parameters are converted to Unix milliseconds. The default window is seven days ending
 now; the maximum selected window is 90 days. Available data depends on upstream
 retention, telemetry and query limits. `step` is the range-query sampling interval
 in seconds (default at least 30 seconds, about 1000 intervals); at most 11000 points
@@ -185,8 +186,8 @@ Missing or expired login keeps the activation pending_auth. Start a new browser
 login for a browser-managed activation. For a private profile, replace the file
 and let the normal health probe verify it; this mode does not start an
 interactive browser login. The original cookie-file-only v1 package is retained
-as immutable publication history; use v6 for GPU Arena, unified login, automatic rotation,
-and explicit GPU mapping guidance. Publish reviewed diagnostic sources alongside
+as immutable publication history; use v7 for GPU Arena, unified login, automatic rotation,
+explicit GPU mapping guidance and parameter/result units. Publish reviewed diagnostic sources alongside
 the immutable image with `ServicePackage.publish(..., source_files=["server.py", "Dockerfile"])`.
 
 ## Query results
