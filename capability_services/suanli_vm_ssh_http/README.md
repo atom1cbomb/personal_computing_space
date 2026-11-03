@@ -66,8 +66,8 @@ The ordinary SSH-key package uses the same file transport with its credential pr
 The package is now v7. Its new digest has a separate credential volume, so the
 first activation needs its own login; subsequent same-version restarts resume
 automatically. File actions use that same authentication and renewal state as exec.
-The `suanlicloud-http/v7` creation descriptor remains pinned to SSH v6; this change
-does not republish the cloud creation package.
+The current `suanlicloud-http/v8` creation descriptor remains pinned to SSH v6.
+Publishing SSH v7 does not automatically change that dependency.
 
 Run the worker tests with `cd capability_services/suanli_vm_ssh_http/renewal &&
 go test -race ./...`; Python gateway lifecycle tests are in

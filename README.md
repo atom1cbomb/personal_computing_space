@@ -12,6 +12,8 @@
 
 2026-11-02 已完成独立 Driver Pool、两个 Driver 和三个 Slave 的生产部署，验证了并行执行、跨机编排与崩溃接管。部署方式见 [Driver Pool](docs/driver-pool.md)，实测范围与数据保全情况见[生产验收记录](docs/superpowers/reports/2026-11-02-driver-pool-production.md)。
 
+2026-11-03 已部署完整计划直接入队、Run 按变化字段持久化和按引用检查资源就绪等优化；Driver 的取消检查只读取当前状态，Run 私有能力使用独立索引。验证范围和剩余性能问题见[最新复测记录](docs/superpowers/reports/2026-11-03-pool-plan-admission.md)，后续 task 性能优化由 [Issue #8](https://github.com/yzs15/personal_computing_space/issues/8) 持续跟踪。
+
 ## 能做什么
 
 - **通过 agent 发起计算任务**：向外部 agent 描述目标、输入、约束和验收标准；它使用 GRIP 或提交完整计划，Web 界面用于查看执行状态和结果。
@@ -26,18 +28,20 @@
 
 | 能力包（使用说明） | 当前源码版本 | 提供的能力 |
 | --- | --- | --- |
-| [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v8` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
+| [火山方舟](capability_services/ark_http/HOW_TO_USE.md) | `ark-http/v2` | 使用 API Key 调用多模态模型、图片生成、视频任务、向量化和语音合成 |
+| [Kubernetes](capability_services/kubernetes_http/HOW_TO_USE.md) | `kubernetes-http/v9` | 查询和操作声明的集群资源，管理 ClusterIP Service，通过字节流访问服务，持久化认证并恢复连接 |
 | [Embedding](capability_services/embedding_http/HOW_TO_USE.md) | `embedding-http/v2` | 通过 Kubernetes 服务依赖调用嵌入模型，提供 GRIP 动作和 AutoPaper HTTP 接口 |
 | [Volcano](capability_services/volcano_http/HOW_TO_USE.md) | `volcano-http/v2` | 查询队列、PodGroup 和 GPU 分配，关联对应 Kubernetes 资源 |
 | [Grafana](capability_services/grafana_http/HOW_TO_USE.md) | `grafana-http/v6` | 查询仪表盘、Prometheus 指标及 GPU Arena；GPU 利用率动作需要显式或实例默认的指标映射 |
-| [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v2` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份 |
+| [AutoPaper](capability_services/autopaper_http/HOW_TO_USE.md) | `autopaper-http/v4` | 统一浏览器登录后搜索论文、读取详情及查询会议和年份；搜索可通过 `auto_ingest` 选择自动抓取入库 |
 | [Overleaf](capability_services/suanli_overleaf_http/HOW_TO_USE.md) | `suanli-overleaf-http/v1` | 查询项目、下载源码、检查版本、同步修改和导入新项目；在外部 agent 本地编辑与编译 |
-| [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v6` | 查询区域、节点、镜像和实例，创建及管理 VM |
-| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/HOW_TO_USE.md) | `suanli-vm-ssh-http/v5` | 为单台 VM 提供浏览器认证和 SSH 命令执行动作 |
-| [普通 VM SSH](capability_services/vm_ssh_http/HOW_TO_USE.md) | `vm-ssh-http/v5` | 使用挂载的 SSH 密钥访问普通 SSH VM 并执行命令 |
+| [Suanli Cloud](capability_services/suanlicloud_http/HOW_TO_USE.md) | `suanlicloud-http/v8` | 查询区域、节点、镜像和实例，创建及管理 VM |
+| [Suanli VM SSH](capability_services/suanli_vm_ssh_http/HOW_TO_USE.md) | `suanli-vm-ssh-http/v7` | 为单台 VM 提供浏览器认证、持久自动续期、SSH 命令执行和文件传输 |
+| [普通 VM SSH](capability_services/vm_ssh_http/HOW_TO_USE.md) | `vm-ssh-http/v6` | 使用挂载的 SSH 密钥访问普通 SSH VM，执行命令并上传下载文件 |
 | [Outline](capability_services/outline_http/HOW_TO_USE.md) | `outline-http/v4` | 查询、检索、读取正文、创建和更新文档等受限操作 |
 
 表中版本对应仓库内的包模板；已部署实例的版本和可用动作以 GRIP DESCRIBE 为准。
+AutoPaper 搜索省略 `auto_ingest` 时沿用上游默认行为，显式传 `false` 可限定查询已有论文；搜索会保存历史，也可能新增论文，结果不确定时需先核对再决定是否重试。
 Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数据与完整性信息；它衡量资源分配，不能直接代表实际计算量或个人使用量。
 
 ## 带来什么好处
@@ -83,7 +87,7 @@ Observer 和 Pool 共用 PostgreSQL，分别写资源与任务状态；每个 Sl
 ### 从需求到结果
 
 1. **形成任务闭包。** 外部 agent 明确目标和验收标准，准备输入、程序与契约，选择能力包及计算资源。
-2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 的 GRIP `submit-plan` 提交完整闭包；Pool 检查引用、能力绑定、契约和资源就绪条件并冻结版本，返回 Run URI。
+2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 的 GRIP `submit-plan` 提交完整闭包；Pool 检查引用、能力绑定、契约和资源就绪条件，直接创建 `committed` Run，并在同一事务冻结版本和写入执行队列，返回 Run URI。
 3. **排队执行。** Driver 领取不可变执行请求，沙箱产生的动态节点由 Pool 记录。
 4. **执行和编排。** Driver 将普通任务和动态节点直接派发到 Slave；编排沙箱只执行外部 agent 提交的源码，并通过受控原语产生动态节点、资源登记和 activation。
 5. **记录结果并验收。** Slave 返回输出、状态和验证证据，结果写入内容存储。Pool 更新 Run；无法自动确认的成功语义会要求人工验收，失败则保留结构化原因。
@@ -126,7 +130,7 @@ SDK 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_prefere
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
 `metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。当前配套 SDK 为 0.13.0，计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。当前配套 SDK 为 0.14.0，计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
 
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
 同包不同实例可以使用不同账号或集群。旧部署引入实例凭据时需执行 Alembic 007，见
@@ -172,15 +176,19 @@ VM 访问包还提供 `files.upload`、`files.download` 流式动作，复用 ac
 
 同一个包可以在同一 Slave 上创建多个命名实例，每个实例绑定自己的目标资源和配置。因此可以为每台 VM 启动一个独立的 SSH 能力容器，分别保存认证状态和 `known_hosts`，不必为每台机器复制一份包版本。
 
+Workspace 的 `delete-resource` 用于移除领域资源登记记录。默认要求记录已报告 `state="deleted"`；`force=true` 可移除其他状态的记录。实体销毁、关联 activation 的停用和子资源处理由调用方另行完成，详见[资源记录删除](docs/grip-resource-usage.md#删除资源记录)。
+
 ### 发布、检查、激活与认证
 
 包可以在 Run 内作为候选生成，也可以通过 `POST /api/v1/capability-packages` 直接发布到 Workspace。部署流程为：**构建并推送镜像 → 发布包 → 描述 Slave → `check-package` → 激活命名实例 → 认证 → 验证业务动作**。
 
-对目标 Slave 调用 `check-package`，传入包 URI、实例名和拟使用的 `instance_config`，可只读检查节点在线状态、runtime 支持、服务签名、所需路由和依赖填写情况，返回 `ready`、`required_interactions` 和逐项 `issues`。缺服务入口、签名或必填依赖时，服务端会在写入激活前拒绝请求；配置修复后可以重试原幂等键。
+Run 内创建的私有包及 activation 仅在所属 Run 上下文中可见。跨 Run 复用时，由外部 agent 显式发布到 Workspace，使用新实例名重新激活并验证，再停止原 Run 内实例；运行中连接和服务状态需要按包说明另行迁移。操作步骤见[能力作用域与共享](skills/personal-computing-space/references/capability-scope.md)。
+
+对目标 Slave 调用 `check-package`，传入包 URI、实例名和拟使用的 `instance_config`，可只读检查节点在线状态、runtime 支持、服务签名、所需路由和依赖填写情况，返回 `ready`、`required_interactions` 和逐项 `issues`。普通 JSON action 缺少直调入口或签名时仍可激活并通过任务执行，这些问题会影响 direct 可用性；字节流缺少必需入口、签名，或配置缺少必填依赖时，激活会被拒绝。配置修复后可以重试原幂等键。
 
 资源类型的 MCUE schema 和能力包的配置 schema 可通过 `x-loom-dependency` 标记依赖字段，并用字段说明定义业务含义。DESCRIBE 与 workspace 的 `list-resources` 动作返回实际 `metadata.dependencies`；`how-to-use` 只解释字段与填写要求。创建动作的 `attributes_mapping` 声明如何填入登记属性，发布和激活时做静态检查，登记时验证实际值。详见 [依赖设计](docs/superpowers/specs/2026-10-29-resource-dependency-metadata-design.md) 和 [MCUE 使用说明](skills/personal-computing-space/references/mcue.md)。
 
-检查通过只代表部署配置满足条件，镜像拉取、外部认证和实际网络仍需验证。实例描述中的 `runtime_state` 是节点报告状态；容器已 ready 但必需入口缺失时，公开 `state` 为 `degraded`、`available=false`。调用方应检查实例和所需动作的可用性。
+检查通过只代表部署配置满足条件，镜像拉取、外部认证和实际网络仍需验证。实例描述中的 `runtime_state` 是节点报告状态；容器已 ready 但存在入口问题时，公开 `state` 可为 `degraded`，任务执行仍可能可用。调用方应读取所需动作的 `execution.direct` 或 `execution.task`，确认选定执行方式的可用性。
 
 日常能力包部署通过镜像仓库和 Observer 公开接口完成，无需节点 SSH 账号。数据监听、TLS、签名密钥、路由及 egress network 由 operator 在节点接入时统一准备。操作步骤见 [服务包指南](capability_services/README.md)。
 
@@ -274,16 +282,16 @@ export LOOM_GRIP_TOKEN="$(cat secrets/grip_token)"
 docker compose -f deploy/docker-compose.yml up -d --scale driver=2 driver
 ```
 
-外部 agent 使用 SDK 0.13，并显式配置可信的 Pool binding，见 [SDK 连接配置](skills/personal-computing-space/references/sdk.md#driver-pool-binding)；完整流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。从其他机器访问时，设置 `LOOM_PUBLIC_BASE_URL` 和 `LOOM_POOL_PUBLIC_BASE_URL` 为客户端可达的地址。
+外部 agent 使用 SDK 0.14，并显式配置可信的 Pool binding，见 [SDK 连接配置](skills/personal-computing-space/references/sdk.md#driver-pool-binding)；完整流程见 [分布式编排 skill](skills/personal-computing-space/SKILL.md)。从其他机器访问时，设置 `LOOM_PUBLIC_BASE_URL` 和 `LOOM_POOL_PUBLIC_BASE_URL` 为客户端可达的地址。
 
 未配置 GRIP token 时，GRIP 接口拒绝访问。本地 SDK 连接 HTTP 入口需显式传入 `allow_insecure_grip=True`；使用当前 shell 中的 token，或让认证客户端读取 token 文件，避免把密钥复制进示例源码。`secrets/`、`.env` 和 `production/` 已被 Git 忽略，实际凭据应保留在这些本地位置或外部密钥存储中。
 
-默认 Compose 没有配置直接服务调用或字节流所需的数据入口与签名。部署包含这些交互类型的包前，按 [节点接入说明](docs/service-bindings-deployment.md) 配置，并通过 `check-package` 核验；仅启动容器不代表服务动作可用。
+默认 Compose 没有配置直接服务调用或字节流所需的数据入口与签名。使用这些入口前，按 [节点接入说明](docs/service-bindings-deployment.md) 配置，并通过 `check-package` 核验。普通 JSON action 可先通过任务执行；字节流需先满足入口条件。
 
 ### 外部 agent 的 SDK 与 skill 分发
 
 `loom-orchestration` 是独立 Python 包，源码保留在 `loom_orchestration/`，不复制到 skill。
-Observer 和 Pool 提供无需 GRIP token 的发布文件下载（以下路径以对应服务 URL 为前缀；当前发布 SDK 为 0.13.0）：
+Observer 和 Pool 提供无需 GRIP token 的发布文件下载（以下路径以对应服务 URL 为前缀；当前源码 SDK 为 0.14.0，部署版本以下载清单为准）：
 
 - `/downloads/personal-computing-space.zip`：完整 skill，含配套 SDK wheel。
 - `/downloads/manifest.json`：技能包和 SDK 的文件名、大小、SHA-256，以及 SDK 版本。
@@ -314,7 +322,7 @@ python scripts/build_agent_skill.py --output dist
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
 
-业务经验插件当前仍依赖 SDK 0.10.x，构建脚本仅接受该版本的 wheel；与 Driver Pool 配套 SDK 0.13 的集成尚未适配和验收。以下为插件现有构建命令，将路径替换为独立保存的 0.10.x wheel：
+业务经验插件当前仍依赖 SDK 0.10.x，构建脚本仅接受该版本的 wheel；与 Driver Pool 配套 SDK 0.14 的集成尚未适配和验收。以下为插件现有构建命令，将路径替换为独立保存的 0.10.x wheel：
 
 ```bash
 python plugins/loom-business-skills/scripts/build_plugin.py \
@@ -344,7 +352,7 @@ Observer 提供统一资源发现，Driver／Plan／Run 的公开任务动作绑
 | `GET /api/v1/capability-packages` | Observer | 包制作与完整编排所需的不可变契约、descriptor 和发布记录 |
 | `GET /api/v1/content/{digest}` | Observer／Pool | 取回实际内容，核验 `X-Content-Digest` |
 
-SDK 0.13 的 `client.run(uri)` 默认读取当前状态与结果。需要历史时传入 `include_history=True, history_limit=100`，再将返回的 `history_cursor` 作为下一页的 `history_after`；每页上限为 1,000 条。
+`client.run(uri)` 默认读取当前状态与结果。需要历史时传入 `include_history=True, history_limit=100`，再将返回的 `history_cursor` 作为下一页的 `history_after`；每页上限为 1,000 条。
 
 Slave 在线只说明租约有效，不保证空闲容量或指定能力可用。包已发布也不保证某个实例已完成认证，任务仍须通过就绪检查。
 
@@ -409,7 +417,7 @@ Driver Pool 的[生产验收](docs/superpowers/reports/2026-11-02-driver-pool-pr
 - `loom_v2/slave/`：执行请求、执行账本和 runtime plugin 宿主。
 - `loom_v2/contracts/`：各角色共享的任务、资源、能力包及协议契约。
 - `runtime_plugins/`、`package_contracts/`：可安装运行时及其 contract schema。
-- `capability_services/`：业务能力服务、IO contract 和随包提供的客户端。
+- `capability_services/`：业务能力服务、IO contract 和随包提供的客户端；两个 SSH 包复用的四个模块见[公共实现说明](capability_services/README.md#ssh-公共实现)。
 - `loom_orchestration/`、`packages/loom-orchestration/`：独立 SDK、GRIP 客户端、认证助手与分发配置。
 - `skills/personal-computing-space/`：外部 agent 使用指南及 SDK、认证、服务 binding 参考。
 - [`plugins/loom-business-skills/`](plugins/loom-business-skills/README.md)：独立的业务经验插件、单一入口 skill、私有缓存 CLI 和专项测试。

@@ -56,7 +56,7 @@ published as package `suanlicloud-http/v2` and activated on production
 verified against production for all six read-only actions. This historical
 evidence does not verify the new GRIP publication or invocation paths.
 
-The current publication template is `suanlicloud-http/v7`. Its `instances-run`
+The current publication template is `suanlicloud-http/v8`. Its `instances-run`
 resource effect declares `mcue_ref` for `computing/vm/v1`; `ServicePackage.publish`
 resolves that definition in the target workspace. Register returned VM identities
 with this definition, then use the declared SSH access package and cleanup action.

@@ -1,7 +1,7 @@
 # 通过 GRIP 使用能力服务包
 
 服务包使用同一套流程：发布包 → 描述 Slave → check-package → 激活命名实例 → 描述实例 → 按 offer 调用业务 action。
-任务 action 返回 Run；请求回复 action 直接返回业务结果；字节流 action 用 SDK `open_stream` 建立通道。
+普通 JSON action 支持直接调用和显式任务执行：直接调用返回业务结果，放入完整计划并通过 `submit-plan` 提交则返回 Run；字节流 action 用 SDK `open_stream` 建立通道。执行方式的选择建议见[通用 skill](../skills/personal-computing-space/SKILL.md#decide-how-an-action-executes)。
 调用地址由 binding 决定，支持服务直连和 Observer 中转，见 [服务 binding](../docs/grip-service-bindings.md)。
 能力包是不可变资源，Slave 是执行资源，激活实例也是资源；外部调用方只使用返回的 GRIP URI。
 包内的 `/v1/...` 是 `container:http/1` runtime 到容器的内部绑定。
@@ -16,17 +16,19 @@
 
 | 目录 | 使用说明 | 构建/部署文档 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---|---:|---:|---|
-| ark_http | [HOW_TO_USE](ark_http/HOW_TO_USE.md) | [README](ark_http/README.md) | ark-http/v1 | 11 | 用户 API Key profile；Agent Plan／普通 API 模式，多模态理解、图片生成、视频任务、向量化及 Agent Plan HTTP TTS |
+| ark_http | [HOW_TO_USE](ark_http/HOW_TO_USE.md) | [README](ark_http/README.md) | ark-http/v2 | 11 | 用户 API Key profile；Agent Plan／普通 API 模式，多模态理解、图片生成、视频任务、向量化及 Agent Plan HTTP TTS |
 | suanli_overleaf_http | [HOW_TO_USE](suanli_overleaf_http/HOW_TO_USE.md) | [README](suanli_overleaf_http/README.md) | suanli-overleaf-http/v1 | 5 | 连接 overleaf.cs.ac.cn；Git token profile + 统一网页登录，项目列表、下载、状态、上传和新项目导入 |
-| autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v2 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索、论文详情及会议/年份查询 |
-| kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v8 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
-| embedding_http | [HOW_TO_USE](embedding_http/HOW_TO_USE.md) | [README](embedding_http/README.md) | embedding-http/v1 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
+| autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v4 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索可选自动抓取入库，提供论文详情及会议/年份查询 |
+| kubernetes_http | [HOW_TO_USE](kubernetes_http/HOW_TO_USE.md) | [README](kubernetes_http/README.md) | kubernetes-http/v9 | 9 | 实例选择 kubeconfig/policy profile；认证缓存持久化、失败探测自动恢复，管理 ClusterIP Service 与恢复转发连接 |
+| embedding_http | [HOW_TO_USE](embedding_http/HOW_TO_USE.md) | [README](embedding_http/README.md) | embedding-http/v2 | 2 | 通过声明的 Kubernetes 依赖访问模型；提供 GRIP 业务动作及 AutoPaper HTTP 接口 |
 | volcano_http | [HOW_TO_USE](volcano_http/HOW_TO_USE.md) | [README](volcano_http/README.md) | volcano-http/v2 | 6 | 实例配置 API 入口；MCUE 描述公开面板地址并关联 Kubernetes 资源，默认跨 namespace 只读查询 |
-| grafana_http | [HOW_TO_USE](grafana_http/HOW_TO_USE.md) | [README](grafana_http/README.md) | grafana-http/v5 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
-| outline_http | [HOW_TO_USE](outline_http/HOW_TO_USE.md) | [README](outline_http/README.md) | outline-http/v3 | 12 | 实例选择 profile，其中含 `outline_key` |
-| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v7 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
+| grafana_http | [HOW_TO_USE](grafana_http/HOW_TO_USE.md) | [README](grafana_http/README.md) | grafana-http/v6 | 9 | 本地浏览器扫码、会话持久化与自动轮换；仪表盘、Prometheus 指标、GPU 利用率、GPU Arena 查询及 namespace GPU 小时统计 |
+| outline_http | [HOW_TO_USE](outline_http/HOW_TO_USE.md) | [README](outline_http/README.md) | outline-http/v4 | 12 | 实例选择 profile，其中含 `outline_key` |
+| suanlicloud_http | [HOW_TO_USE](suanlicloud_http/HOW_TO_USE.md) | [README](suanlicloud_http/README.md) | suanlicloud-http/v8 | 12 | 实例选择 profile，其中含 `AccessKeyId`、`SecretKey` |
 | vm_ssh_http | [HOW_TO_USE](vm_ssh_http/HOW_TO_USE.md) | [README](vm_ssh_http/README.md) | vm-ssh-http/v6 | 3 | `{host,port,user}`；实例选择 SSH profile，其中含 `id_ed25519` |
 | suanli_vm_ssh_http | [HOW_TO_USE](suanli_vm_ssh_http/HOW_TO_USE.md) | [README](suanli_vm_ssh_http/README.md) | suanli-vm-ssh-http/v7 | 3 | `{host,port,user}`；OpenPubkey 浏览器认证、持久自动续期 |
+
+表中版本与导出数量对应各包的 `package.example.json`；已部署实例以 GRIP DESCRIBE 为准。
 
 ## 发布
 
@@ -37,10 +39,10 @@
 ```sh
 docker build -f capability_services/vm_ssh_http/Dockerfile -t loom/vm-ssh-gateway .
 docker build -f capability_services/suanli_vm_ssh_http/Dockerfile -t loom/suanli-vm-ssh-gateway .
-docker build -f capability_services/kubernetes_http/Dockerfile -t loom/kubernetes-gateway:v8 .
-docker build -f capability_services/embedding_http/Dockerfile -t loom/embedding-gateway:v1 .
+docker build -f capability_services/kubernetes_http/Dockerfile -t loom/kubernetes-gateway:v9 .
+docker build -f capability_services/embedding_http/Dockerfile -t loom/embedding-gateway:v2 .
 docker build -f capability_services/suanli_overleaf_http/Dockerfile -t loom/suanli-overleaf-gateway:v1 .
-docker build -f capability_services/ark_http/Dockerfile -t loom/ark-gateway:v1 .
+docker build -f capability_services/ark_http/Dockerfile -t loom/ark-gateway:v2 .
 ```
 
 配置 `LOOM_OBSERVER_URL`、`LOOM_GRIP_AUTHORITY`、`LOOM_WORKSPACE_ID` 和 `LOOM_GRIP_TOKEN`。
@@ -98,16 +100,17 @@ description = await client.describe(activation["resource"])
 依赖缺失或类型错误返回 `activation_config_invalid`，非法引用返回
 `dependency_reference_invalid:<字段路径>`。修正配置后重新检查。
 缺服务签名为 `service_signing_unavailable`，缺数据入口为 `binding_unavailable`，
-入口不合法为 `binding_invalid`。检查失败时选择符合条件的节点或交给节点管理员处理，
-不要在能力包部署过程中 SSH 补配置。服务端激活前会重新检查，拒绝请求不创建实例或增加 revision。
+入口不合法为 `binding_invalid`。普通 JSON action 的入口问题记录在 issues 中，仍可激活并通过任务执行；
+字节流入口问题会阻断激活。通过 `ready` 判断是否满足激活条件，并检查所选执行方式的可用性。
+需要修复节点配置时交给节点管理员处理。服务端激活前会重新检查，拒绝请求不创建实例或增加 revision。
 配置修复后可以重试原幂等 key；stop 不受这些条件限制。
 
 检查通过不代表镜像拉取、提供方认证或远端网络已通过验收。登录后检查实例
-`metadata.available` 和所需动作；`runtime_state` 是节点报告状态，公开 `state`
-会在容器 ready 但缺必需入口时显示 degraded。已有可用动作仍可调用。
+`metadata.available` 和所需动作的 `execution.direct`／`execution.task`；`runtime_state` 是节点报告状态，公开 `state`
+会在容器 ready 但存在入口问题时显示 degraded，任务执行仍可能可用。
 
 `activate-package` 自动创建或复用激活实例资源，`activation["resource"]` 就是其 GRIP URI。
-例如算力云默认实例是 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v6/slave-a/default`。
+例如，按当前模板在默认命名空间激活的算力云实例可为 `grip://loom.local/workspaces/workspace-default/activations/suanlicloud-http/v8/slave-a/default`；实际调用使用返回的 URI。
 仅手工启动 Docker 容器不会向 Observer 注册实例；应通过 Slave 的激活动作使用服务包。
 
 `credential_profile` 是激活实例的字段，与 `instance_config` 并列；填 Slave operator 已配置的
@@ -164,9 +167,24 @@ Loom 管理显式提交的 Run／Node／Attempt；能力包实现负责 action �
 
 包的 `HOW_TO_USE.md` 应说明业务幂等键与重试规则、超时后如何查询结果，以及内部步骤自行容错还是交给显式编排 Run。简单查询可继续使用直接 `request-reply`，按业务需要选择任务记录和恢复粒度。平台职责见[项目说明](../README.md#编排恢复与-action-的责任边界)。
 
+## SSH 公共实现
+
+`vm_ssh_http` 和 `suanli_vm_ssh_http` 共用以下模块，构建时一并复制进能力包镜像：
+
+| 模块 | 职责 | 运行位置 |
+| --- | --- | --- |
+| [ssh_app.py](ssh_app.py) | 提供 HTTP 认证与命令入口，以及 WebSocket 文件流入口 | 能力包容器 |
+| [ssh_execution.py](ssh_execution.py) | 校验命令，执行 SSH，处理超时和输出上限 | 能力包容器 |
+| [ssh_files.py](ssh_files.py) | 校验传输参数，连接文件流与 SSH 子进程管道 | 能力包容器 |
+| [ssh_files_remote.py](ssh_files_remote.py) | 分块读写文件，校验大小和摘要，原子提交上传 | 目标 VM |
+
+各包的 `server.py` 管理目标地址和认证，向公共模块提供 SSH 连接参数。文件传输时，
+`ssh_files.py` 将远端脚本源码通过 SSH 交给 `python3 -c` 执行；目标 VM 需有 Python 3，
+无需预装该脚本。协议和调用示例见 [VM 文件传输](../docs/vm-file-transfers.md)。
+
 ## SSH 执行限制
 
-普通 SSH v4 与算力云 SSH v3 使用同一执行契约：请求体最多 8 MiB；`command` 最多 1,048,576 个字符；
+普通 VM SSH 与算力云 VM SSH 使用同一执行契约：请求体最多 8 MiB；`command` 最多 1,048,576 个字符；
 `stdout`、`stderr` 分别保留前 16 MiB 原始字节，超过则返回 `truncated=true`。
 输出边读边截断，超过上限后继续排空管道。长脚本通过 SSH 标准输入交给远端 `sh -s`；
 需要 Bash 等其他 shell 时，在脚本中显式调用。
@@ -200,10 +218,10 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest -q tests/capability_services tests/
 AutoPaper 独立集成测试覆盖发布、激活、浏览器认证、六个业务动作和同实例重新认证。
 Overleaf 独立测试覆盖发布、激活、匿名 Cookie 的 pending、五个动作、真实 Git 冲突和
 HTTP/WS 文件往返；另有真实容器的只读根目录、持久状态与重启验收。
-任务导出经 Driver 执行，服务导出直接回复或建立流。Docker、kubectl/SSH 可执行文件及外部 provider
+同一普通 JSON action 分别验证直接回复和经 Driver 的任务执行；字节流单独验证。上述 GRIP 集成测试中的 Docker、kubectl/SSH 可执行文件及外部 provider
 使用测试替身；这些结果不代表生产云、真实 Docker 或浏览器登录验收。
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用
 可使用 `examples/grip/invoke.py`，由调用者明确提供目标、action 和输入。
 
-SDK 0.8 包含统一登录、重新认证和服务 binding 支持，参见 [认证说明](../docs/authentication.md)
+当前源码配套 SDK 为 0.14.0，包含统一登录、重新认证和服务 binding 支持，参见 [认证说明](../docs/authentication.md)
 及 [服务部署步骤](../docs/service-bindings-deployment.md)。

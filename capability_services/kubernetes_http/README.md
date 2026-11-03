@@ -74,7 +74,7 @@ attestation.
 
 ## 统一登录与重新认证
 
-`kubernetes-http/v8` 声明认证 `interaction.mode=device-code`，使用
+`kubernetes-http/v9` 声明认证 `interaction.mode=device-code`，使用
 [统一 SDK 登录入口](../../docs/authentication.md)。客户端自动发起认证并展示设备码，
 后台仍由 kubeconfig 的 kubelogin 插件授权和刷新凭据。成功结果每 30 秒重新探测。
 

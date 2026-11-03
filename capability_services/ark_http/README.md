@@ -1,6 +1,6 @@
 # 火山方舟 HTTP capability package
 
-`ark-http/v1` 为 Loom 的 `service + container:http/1` 提供火山方舟多模态接入。
+`ark-http/v2` 为 Loom 的 `service + container:http/1` 提供火山方舟多模态接入。
 用户提供 API Key，operator 将其放入所选 credential profile 的 `api_key` 文件；
 网关按实例读取该文件。包包含 11 个业务 action、认证 hooks、输入输出 schema 和 IoContract。
 外部 Agent 的使用方式见 [HOW_TO_USE](HOW_TO_USE.md)，部署流程遵循
@@ -44,8 +44,8 @@ Key 后，后续请求和健康探测会重新读取文件。
 从仓库根目录构建镜像：
 
 ```sh
-docker build -f capability_services/ark_http/Dockerfile -t YOUR_REGISTRY/loom/ark-gateway:v1 .
-docker push YOUR_REGISTRY/loom/ark-gateway:v1
+docker build -f capability_services/ark_http/Dockerfile -t YOUR_REGISTRY/loom/ark-gateway:v2 .
+docker push YOUR_REGISTRY/loom/ark-gateway:v2
 ```
 
 使用镜像仓库返回的真实不可变镜像引用发布包（`ARK_IMAGE_REF` 由部署者设置）：
@@ -74,7 +74,7 @@ activation = await client.invoke(slave_uri, client.names.action("activate-packag
     "instance_name": "ark-personal",
     "instance_config": config,
     "credential_profile": "ark-personal",
-    "idempotency_key": "activate-ark-personal-v1",
+    "idempotency_key": "activate-ark-personal-v2",
 })
 description = await client.describe(activation["resource"])
 ```
