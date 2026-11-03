@@ -64,6 +64,14 @@ class UpdateAttributesInput(Model):
     mcue_ref: URI | None = None
 
 
+class DeleteResourceInput(Model):
+    resource_id: URI
+    force: bool = Field(
+        default=False,
+        description="Delete the record regardless of its entity state. By default state must be 'deleted'.",
+    )
+
+
 class ResourceOutput(Model):
     resource: URI
 
@@ -183,8 +191,10 @@ class ConfigureOutput(ResourceOutput):
 
 INPUTS = {"read": Empty, "cancel": Empty, "how-to-use": Empty, "list-resources": ListInput,
           "publish-mcue-type": McueDefinition, "update-attributes": UpdateAttributesInput,
+          "delete-resource": DeleteResourceInput,
           "register-resource": RegisterInput, "run-package": RunInput, "check-package": CheckPackageInput, "activate-package": ActivateInput, "stop": StopInput, "auth-start": RevisionInput, "configure": ConfigureInput}
 OUTPUTS = {"how-to-use": HowToUseOutput, "check-package": CheckPackageOutput, "configure": ConfigureOutput,"publish-mcue-type": ResourceOutput, "register-resource": AttributesOutput,
+           "delete-resource": ResourceOutput,
            "update-attributes": AttributesOutput}
 from loom_v2.contracts.api import SlaveDispatchRequest
 from loom_v2.execution_binding import execution_offer
@@ -225,6 +235,11 @@ class GripService:
                                         self.names.schema(name + "-output")) for name in INPUTS}
         self._builtin["how-to-use"]["action"]["description"] = (
             "Explain how to use this resource, its public attributes, relationships, and actions."
+        )
+        self._builtin["delete-resource"]["action"]["description"] = (
+            "Delete a registered resource record. Soft deletion requires state 'deleted'; "
+            "otherwise ask the resource manager to delete the entity first. "
+            "force=true removes the record directly. Child resources are unaffected."
         )
         for name, description in native_tasks.DESCRIPTIONS.items():
             self._builtin[name]["action"]["description"] = description
@@ -282,7 +297,7 @@ class GripService:
         n = self.names
         builtin = self._builtin
         entries = {n.root: self._entry(n.root, "loom/workspace", {},
-                    [builtin["list-resources"], builtin["register-resource"], builtin["publish-mcue-type"]])}
+                    [builtin["list-resources"], builtin["register-resource"], builtin["delete-resource"], builtin["publish-mcue-type"]])}
         for name, model in INPUTS.items():
             entries[n.action(name)] = self._entry(n.action(name), "grip/action", {"contract": builtin[name]["action"]},
                                                   [builtin["read"]], builtin[name]["action"])
@@ -797,6 +812,13 @@ class GripService:
                 **({"attributes": payload.attributes} if "attributes" in payload.model_fields_set else {}),
             })
             return {"resource": resource.resource_ref.resource_id, "attributes_revision": resource.attributes_revision}
+        if request.action == n.action("delete-resource"):
+            try:
+                payload = DeleteResourceInput.model_validate(data)
+            except ValidationError as exc:
+                raise GripError("invalid_input") from exc
+            await self.repo.delete_resource(self.settings.workspace_id, payload.resource_id, force=payload.force)
+            return {"resource": payload.resource_id}
         if request.action == n.action("read"):
             if isinstance(entry.value, CapabilityPackageVersion):
                 return {**entry.value.model_dump(mode="json"), "resource": entry.value.version_ref}
@@ -921,6 +943,7 @@ class GripService:
 
     async def handle(self, http: HttpRequest):
         request_id = None
+        error_message = None
         try:
             raw = decode(await http.body())
             if not isinstance(raw, dict) or not isinstance(raw.get("request_id"), str) or not REQUEST_ID.fullmatch(raw["request_id"]):
@@ -978,12 +1001,22 @@ class GripService:
         except (KeyError, FileNotFoundError):
             code = "not_found"
         except DomainError as exc:
-            code = (exc.envelope.code if exc.envelope.code in native_tasks.PUBLIC_ERRORS else
-                    "unsupported_binding" if exc.envelope.code == "activation_preflight_failed" else "invalid_input")
+            if exc.envelope.code == "resource_not_deleted":
+                code = exc.envelope.code
+                manager = exc.envelope.details.get("managed_by")
+                error_message = (
+                    "Resource has not been deleted. Ask the resource manager"
+                    + (f" ({manager})" if manager else "")
+                    + " to delete the entity, then report state 'deleted' before retrying."
+                )
+            else:
+                code = (exc.envelope.code if exc.envelope.code in native_tasks.PUBLIC_ERRORS else
+                        "unsupported_binding" if exc.envelope.code == "activation_preflight_failed" else "invalid_input")
         except Exception:
             # Never include credentials, runtime details or exception payloads.
             log.error("GRIP action failed (request_id=%s)", request_id)
             code = "internal_error"
         if request_id is None:
             return JSONResponse(status_code=400, content={"error": code})
-        return JSONResponse({"version": "grip.v1", "request_id": request_id, "kind": "error", "error_code": code})
+        return JSONResponse({"version": "grip.v1", "request_id": request_id, "kind": "error", "error_code": code,
+                             **({"error_message": error_message} if error_message else {})})

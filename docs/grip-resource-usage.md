@@ -263,6 +263,38 @@ vm_resource_uri = registered["resource"]
 同一资源可以绑定不同包的实例，升级访问包不需要改写资源登记记录。
 完整编排内的 `ctx.register_resource` 等原语属于持久执行内部协议。
 
+### 删除资源记录
+
+对 workspace 调用 `delete-resource`，输入 `resource_id`，成功返回
+`{"resource": resource_id}`。默认 `force=false`，只允许删除 `state="deleted"`
+的记录；这个状态表示调用方已找资源管理者删除实体，并通过 `register-resource`
+更新了登记状态。Observer 根据登记状态判断，不探测业务服务，也不代调用方删除实体。
+`unknown`、`running`、`stopped` 等其他状态均返回 GRIP 错误
+`resource_not_deleted`，保留原记录；`error_message` 提示调用方找资源管理者删除，
+有 `managed_by` 时包含其 URI。SDK 的 `GripError.message` 保留这段说明。
+
+```python
+# 先联系 managed_by 管理者删除实体，确认完成后报告状态。
+await client.invoke(client.names.root, client.names.action("register-resource"), {
+    "resource_id": vm_resource_uri,
+    "mcue_ref": vm_type["uri"],
+    "state": "deleted",
+})
+await client.invoke(client.names.root, client.names.action("delete-resource"), {
+    "resource_id": vm_resource_uri,
+})
+
+# 强制删除记录：不要求实体已删除。
+await client.invoke(client.names.root, client.names.action("delete-resource"), {
+    "resource_id": another_resource_uri,
+    "force": True,
+})
+```
+
+两种方式都只删除指定 workspace 的一条领域资源记录，不级联删除子资源、
+不检查依赖关系、不停止或删除关联 activation。子资源保留原 `managed_by`；
+后续处理由业务决定。记录不存在时返回 `not_found`；系统目录项不能用此动作删除。
+
 ## MCUE 与动态描述属性
 
 MCUE（Multipurpose Computing Utility Extension）使用 `category/subtype` 描述资源类型，取代资源级 `kind`。

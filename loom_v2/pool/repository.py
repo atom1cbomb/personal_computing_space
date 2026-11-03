@@ -85,6 +85,11 @@ class PoolRepository(TaskRepository, ResourceRepository):
             return await self.resource_client.update_resource_attributes(*args, **kwargs)
         return await super().update_resource_attributes(*args, **kwargs)
 
+    async def delete_resource(self, *args, **kwargs):
+        if getattr(self, "resource_client", None) is not None:
+            return await self.resource_client.delete_resource(*args, **kwargs)
+        return await super().delete_resource(*args, **kwargs)
+
     async def register_workspace_package(self, *args, **kwargs):
         if getattr(self, "resource_client", None) is not None:
             return await self.resource_client.register_workspace_package(*args, **kwargs)
