@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from loom_orchestration import LoomClient, GripError
 from loom_orchestration.grip import Request
 from loom_orchestration.streams import TCPStream, STREAM_PROTOCOL, StreamAborted
-from loom_v2.contracts.types import CapabilityHealthReport
+from loom_v2.contracts.types import CapabilityHealthReport, ResourceRef
 from loom_v2.pool.repository import PoolRepository as ObserverRepository
 from loom_v2.settings import Settings
 from loom_v2.slave.grip_data import create_data_app
@@ -77,6 +77,36 @@ async def test_service_returns_business_result_without_run_and_scopes_token(serv
         response = await c._client.post('/.well-known/grip',json=request.model_dump(exclude_none=True))
         assert response.json()['error_code'] == 'forbidden'
         assert len(calls) == 1 and not repo.runs
+
+
+async def test_resource_deletion_invalidates_cached_description_and_preserves_activation(service_setup):
+    app, repo, slave, package, activation_uri, actions, calls = service_setup
+    async with LoomClient('http://observer', token='owner', transport=httpx.ASGITransport(app=app),
+                          allow_insecure_grip=True) as client:
+        target = client.names.name('resources', 'vm')
+        registration = {'resource_id': target, 'mcue_ref': client.names.mcue('computing/vm')}
+        await client.invoke(client.names.root, client.names.action('register-resource'),
+                            {**registration, 'state': 'running'})
+        activation, = await repo.list_package_activations(package)
+        bound = activation.model_copy(update={'target_resource_ref': ResourceRef(resource_id=target)})
+        await repo._persist_workspace_package(package, activations=[bound])
+        description = await client.describe(target)
+        assert description['expires_at']
+        assert target in client._descriptions
+
+        await client.invoke(client.names.root, client.names.action('register-resource'),
+                            {**registration, 'state': 'deleted'})
+        assert target not in client._descriptions
+        assert (await client.describe(target))['resource']['metadata']['state'] == 'deleted'
+        assert target in client._descriptions
+
+        await client.invoke(client.names.root, client.names.action('delete-resource'), {'resource_id': target})
+        assert target not in client._descriptions
+        with pytest.raises(GripError, match='not_found'):
+            await client.describe(target)
+        assert await repo.list_package_activations(package) == [bound]
+        assert (await client.describe(activation_uri))['resource']['metadata']['target'] == target
+        assert calls == [] and not repo.runs
 
 
 async def test_configure_is_fenced_idempotent_and_revokes_old_grants(service_setup):

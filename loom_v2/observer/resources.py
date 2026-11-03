@@ -31,6 +31,7 @@ from loom_orchestration.contracts import CredentialProfile
 from pydantic import TypeAdapter
 from loom_v2.contracts.package_contracts import DRIVER_ORCHESTRATOR_KEY
 from loom_v2.contracts.resource_effects import ResourceEffect, schema_path_exists, validate_action_descriptor
+from loom_v2.contracts.errors import error
 from loom_v2.contracts.refs import input_binding_for, action_name, require_content_ref, select_slave_agents, slave_supports_package
 from loom_v2.settings import Settings
 from loom_v2.repository_state import (RunSummary, PlanSummary, ExecutionRequest, PatchReceipt, RunCapabilities, RunRecord, execution_transaction, resource_transaction)
@@ -843,6 +844,31 @@ class ResourceRepository:
             else:
                 row.resource = resource.model_dump(mode="json", exclude={"attributes_revision"})
         return resource.model_copy(deep=True)
+
+    async def delete_resource(
+        self, workspace_id: str, target: str, *, force: bool = False,
+    ) -> None:
+        """Remove one directory record once its entity is reported deleted."""
+        key = (workspace_id, target)
+        async with self._resource_transaction(*key) as session:
+            if session is None:
+                row, resource = None, self.workspace_resources.get(key)
+            else:
+                row = await session.get(WorkspaceResourceRow, key, with_for_update=True)
+                resource = self._resource_from_row(row) if row else None
+            if resource is None:
+                raise KeyError(target)
+            if not force and resource.state != "deleted":
+                raise error(
+                    "resource_not_deleted", resource=target, state=resource.state,
+                    managed_by=(resource.managed_by_ref.resource_id if resource.managed_by_ref else None),
+                )
+            if session is None:
+                self.workspace_resources.pop(key)
+            else:
+                await session.delete(row)
+        # Invalidate only after the database transaction has committed.
+        self.workspace_resources.pop(key, None)
 
     async def update_resource_attributes(
         self, workspace_id: str, target: str, *, expected_attributes_revision: int,

@@ -183,7 +183,7 @@ class LoomClient:
             if reply.request_id != payload["request_id"]:
                 raise GripError("reply_correlation_mismatch")
             if reply.kind == "error":
-                raise GripError(reply.error_code, remote=True)
+                raise GripError(reply.error_code, remote=True, message=reply.error_message)
             if reply.kind != "reply":
                 raise GripError("invalid_message")
             return reply.body
@@ -334,7 +334,7 @@ class LoomClient:
         result = await self._grip_exchange(selected.endpoint, payload)
         if not Draft202012Validator(output_schema).is_valid(result):
             raise GripError("invalid_output")
-        if action in {self.names.action(n) for n in ("stop", "configure", "auth-start", "activate-package", "update-attributes")}:
+        if action in {self.names.action(n) for n in ("stop", "configure", "auth-start", "activate-package", "register-resource", "update-attributes", "delete-resource")}:
             self._descriptions.clear()
         return result
 

@@ -190,7 +190,8 @@ class Names:
 
 
 class GripError(RuntimeError):
-    def __init__(self, code: str, *, remote: bool = False):
-        super().__init__(code)
+    def __init__(self, code: str, *, remote: bool = False, message: str | None = None):
+        super().__init__(f"{code}: {message}" if message else code)
         self.code = code
         self.remote = remote
+        self.message = message

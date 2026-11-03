@@ -12,7 +12,7 @@ TASK_METHODS = frozenset({
     "abandon_capability_package", "set_capability_desired", "record_capability_health",
 })
 RESOURCE_METHODS = frozenset({
-    "register_resource", "update_resource_attributes", "register_workspace_package", "promote_capability_package",
+    "register_resource", "delete_resource", "update_resource_attributes", "register_workspace_package", "promote_capability_package",
     "set_capability_desired", "record_capability_health", "register_agent", "heartbeat_agent", "release_agent",
 })
 
