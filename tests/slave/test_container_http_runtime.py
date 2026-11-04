@@ -259,15 +259,20 @@ class RecordingRunner:
 @pytest.mark.parametrize("method,reply,valid", [
     ("browser-cookie", {"status": "pending"}, True),
     ("browser-cookie", {"status": "accepted"}, True),
+    ("browser-storage", {"status": "pending"}, True),
+    ("browser-storage", {"status": "accepted"}, True),
+    ("browser-storage", {"status": "pending", "token": "private"}, False),
     ("redirect", {"status": "accepted"}, True),
     ("redirect", {"status": "pending"}, False),
     ("browser-cookie", {"status": "pending", "cookie": "private"}, False),
 ])
-async def test_browser_runtime_forwards_pending_only_for_cookie_login(method, reply, valid):
+async def test_browser_runtime_forwards_pending_only_for_browser_credentials(method, reply, valid):
     package = _package(["/v1/echo"])
     interaction = {"mode": method}
     if method == "browser-cookie":
         interaction["cookie_name"] = "overleaf.sid"
+    if method == "browser-storage":
+        interaction["storage_key"] = "token"
     package.body["authentication"] = {
         "start_path": "/auth/start", "status_path": "/auth/status",
         "browser_path": "/auth/browser", "interaction": interaction,

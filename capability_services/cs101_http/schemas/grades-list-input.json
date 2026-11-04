@@ -1,0 +1,44 @@
+{
+  "type": "object",
+  "properties": {
+    "paper_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Opaque positive upstream identifier; not a count or student name."
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    },
+    "group": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based item offset, default 0; not a page number."
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "description": "Records per request (count), default 20, maximum 200."
+    },
+    "all_user": {
+      "type": "boolean",
+      "description": "Upstream all_user flag, default true; effective access is enforced by the supplied token."
+    },
+    "latest": {
+      "type": "boolean",
+      "description": "Upstream latest flag, default true. This paged read does not deduplicate different paper instances."
+    },
+    "include_context": {
+      "type": "boolean",
+      "description": "Return opaque per-record grading context, default false."
+    }
+  },
+  "additionalProperties": false
+}

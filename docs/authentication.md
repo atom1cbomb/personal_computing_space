@@ -4,6 +4,7 @@
 `kubernetes-http/v6`、`grafana-http/v4` 和 `autopaper-http/v2`。AutoPaper 还使用
 SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_services/autopaper_http/README.md)。
 使用匹配的 Observer 和 HTTP runtime。
+`cs101-http/v2` 使用 SDK 0.15.0 新增的浏览器存储认证，需要同步更新 Observer 和 HTTP runtime。
 `suanli-overleaf-http/v1` 复用同一入口，使用 SDK 0.9.2 及匹配支持点号 Cookie 名和
 `pending` 回调的 Observer 与 HTTP runtime；Git token 由激活的 credential profile 提供，
 见 [Overleaf 接入说明](../capability_services/suanli_overleaf_http/README.md)。
@@ -18,7 +19,7 @@ SDK 0.8 的直接服务调用，见 [AutoPaper 接入说明](../capability_servi
 在用户浏览器所在机器安装 SDK 的 `auth` 可选依赖，再安装 Chromium：
 
 ```sh
-python -m pip install './loom_orchestration-0.11.0-py3-none-any.whl[auth]'
+python -m pip install './loom_orchestration-0.15.0-py3-none-any.whl[auth]'
 python -m playwright install chromium
 python -m loom_orchestration.auth \
   --observer https://observer.example \
@@ -42,7 +43,7 @@ SDK 0.9.3 默认在 `~/.loom/auth-profiles/browser` 保存当前用户的私有�
 升级前按 IdP 分散保存的旧档案不自动合并，首次登录建立新档案，旧文件保留。
 
 SDK 0.9.4 的页面提供默认关闭的“自动复用会话登录”开关。开启后依次检查所有
-选定资源：已经 ready/authenticated 的直接显示就绪，其余在后台尝试复用会话，
+选定资源：已经 ready/authenticated 的直接显示就绪，其余在浏览器窗口中尝试复用会话，
 无需逐项点击。无法在自动尝试时限内完成的资源列入“需要处理的资源”，保留
 “手动登录”按钮；网络、配置或验证故障显示各自原因，不混同为需要扫码。
 手动完成一次登录后，开启中的助手会再尝试其余未完成资源。
@@ -51,6 +52,8 @@ SDK 0.9.4 的页面提供默认关闭的“自动复用会话登录”开关。�
 密码或点击上游授权确认。关闭开关停止后续自动尝试，并结束当前自动等待；手动
 发起的登录继续。刷新页面保留当前开关状态，重启默认关闭。启动时可显式添加
 `--auto-login`；它不能与 `--no-auth-state` 同时使用。
+SDK 0.15.0 起，手动登录和自动复用始终使用有界面的 Chromium，不再启动无头浏览器。
+缺少图形显示环境时直接报错，不使用无头模式作为回退；服务器或 CI 需准备显示服务。
 
 多个登录请求按顺序执行，前一个完成后才为后一个获取最新 revision 并创建挑战，
 排队不会消耗挑战有效期。不能同时用两个助手进程打开同一档案；档案被占用或无法
@@ -108,7 +111,11 @@ ready/authenticated。网络故障、权限拒绝或无效响应仍是错误，�
 pending 返回值，已有网关不会自动获得该行为。
 
 包声明 `authentication.interaction.mode`：`redirect` 捕获固定本地 OAuth 回调；
-`browser-cookie` 从客户端浏览器档案读取目标站点的指定 cookie，并由服务端验证；`device-code`
+`browser-cookie` 从客户端浏览器档案读取目标站点的指定 cookie，并由服务端验证；
+`browser-storage` 只读取登录入口 HTTPS origin 的指定 `storage_key` 对应的原始 localStorage 值，
+经私有桥由网关解析和验证，不读取其他 origin、其他键或 sessionStorage。
+该模式与 Cookie 模式一样支持 `pending`，不会把未验证的浏览器存储当成登录成功。
+`device-code`
 由原凭据插件完成设备授权。`credential-profile` 用于 Outline、算力云 API 和普通
 SSH 的操作员凭据配置，只验证凭据，不发起浏览器授权。登录态复用由客户端管理，
 包无需声明 `idp`；历史包中的该字段不再影响复用。

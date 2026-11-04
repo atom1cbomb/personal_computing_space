@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/cs101-http/schemas/paper-statistics-input/sha256/3af1b731053e54f55adaf350e97cdd35d68849c2d8715be0b3d2f1900e80b806",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/cs101-http/schemas/paper-statistics-output/sha256/36449f1a1f680dc953334f45a3321388d2cfd92790a687605862b4089b44935d",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

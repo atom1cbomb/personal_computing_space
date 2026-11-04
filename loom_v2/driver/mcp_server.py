@@ -45,7 +45,7 @@ class DriverMCPServer:
                 result = {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": "loom-driver-mcp", "version": "0.1.0"},
+                    "serverInfo": {"name": "loom-driver-mcp", "version": "0.2.0"},
                 }
             elif method == "notifications/initialized":
                 result = {}

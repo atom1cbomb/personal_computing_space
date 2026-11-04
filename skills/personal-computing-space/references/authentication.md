@@ -32,7 +32,7 @@ after upgrading establishes the new shared profile. Do not prepare package-speci
 Python helpers or session files.
 
 SDK 0.9.4 adds an opt-in “自动复用会话登录” switch. It checks all selected
-resources, skips those already ready/authenticated, and silently tries the saved
+resources, skips those already ready/authenticated, and tries the saved
 browser session for the rest. Resources that do not complete within the automatic
 interaction window are listed for manual login; connection/configuration failures
 retain their separate error reasons. Successful manual login triggers one retry
@@ -41,6 +41,16 @@ stops automatic work without cancelling manual login. The switch survives page
 refresh but defaults off after helper restart. Use `--auto-login` for explicit
 startup opt-in; it cannot be combined with `--no-auth-state`. Automatic work does
 not enter credentials or click consent, and each resource still verifies ready.
+SDK 0.15.0 always opens visible Chromium windows for both manual login and
+automatic session reuse. A missing graphical display fails the attempt; there
+is no headless fallback. Install a display service when running on a server or CI.
+
+The `browser-storage` method requires SDK 0.15.0 and matching Observer/runtime.
+It reads only the declared `storage_key` in localStorage at the opened login
+entry's HTTPS origin. The gateway verifies the raw value before acceptance;
+other origins, unrelated keys and sessionStorage are not read or forwarded.
+The shared browser profile persists localStorage as well as cookies. A rejected
+candidate may return pending; only that candidate is removed while login continues.
 
 For expiry, closed windows or failed authentication, use the same portal's
 reauthentication button. Do not recreate the activation or resubmit a waiting

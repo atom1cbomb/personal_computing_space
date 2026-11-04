@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/cs101-http/schemas/papers-list-input/sha256/ef8a8dc5a86e81c916a7bde5d6ade92f8bf9157a589dba60bbd06f01187d5344",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/cs101-http/schemas/papers-list-output/sha256/d0d374482685d5dfba17e8a9b85d73cfafa320381d49c7dbfe0281d893a7e0f2",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

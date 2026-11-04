@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "paper_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Opaque positive upstream identifier; not a count or student name."
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    },
+    "group": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    },
+    "pass_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000,
+      "description": "Explicit threshold in original score points, for example 60. Omission leaves pass statistics null; no default of 60 is assumed."
+    },
+    "max_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000,
+      "description": "Caller-confirmed full score in original points, for example 100. Used only for mean_percent; never inferred from instance.point. Must be positive and at least pass_score when both are supplied.",
+      "exclusiveMinimum": 0
+    },
+    "include_students": {
+      "type": "boolean",
+      "description": "Include individually ranked students, default false. Summary statistics always cover the full selected cohort."
+    }
+  },
+  "required": [
+    "paper_id"
+  ],
+  "additionalProperties": false
+}

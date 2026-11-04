@@ -68,8 +68,8 @@ def test_observer_bridge_requires_bearer_and_consumes_binding() -> None:
         assert called == [(session_id, "binding-bridge", {"code": ["x"]})]
 
 
-@pytest.mark.parametrize("method", ["browser-cookie", "redirect"])
-def test_pending_callback_keeps_only_cookie_session_until_verified(method):
+@pytest.mark.parametrize("method", ["browser-cookie", "browser-storage", "redirect"])
+def test_pending_callback_keeps_browser_credential_session_until_verified(method):
     app = FastAPI()
     auth = BrowserAuth(app, SimpleNamespace())
     session_id = "s" * 32
@@ -106,6 +106,16 @@ def test_pending_callback_keeps_only_cookie_session_until_verified(method):
         assert accepted.status_code == 200 and accepted.json() == {"status": "accepted"}
         assert client.post(auth.bridge_path, headers=headers, json=payload).status_code == 404
         assert len(calls) == 2
+
+
+def test_browser_storage_projection_exposes_only_the_declared_key():
+    package = SimpleNamespace(body={"authentication": {
+        "interaction": {"mode": "browser-storage", "storage_key": "token"},
+    }})
+    assert authentication_view(package, {"status": "auth_required", "token": "private-token",
+                                       "client": {"session_token": "private-bridge"}}) == {
+        "method": "browser-storage", "storage_key": "token", "status": "auth_required",
+    }
 
 
 @pytest.mark.parametrize("failure", ["expired", "provider_error", "invalid_result"])

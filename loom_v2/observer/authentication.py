@@ -10,4 +10,6 @@ def authentication_view(package, value):
             result[key] = value[key]
     if interaction.get("mode") == "browser-cookie":
         result["cookie_name"] = interaction["cookie_name"]
+    if interaction.get("mode") == "browser-storage":
+        result["storage_key"] = interaction["storage_key"]
     return result

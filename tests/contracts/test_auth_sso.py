@@ -13,7 +13,7 @@ from tests.contracts.test_auth_client import Observer
 pw = pytest.importorskip("playwright.async_api")
 
 
-@pytest.mark.parametrize("method", ["browser-cookie", "redirect", "device-code"])
+@pytest.mark.parametrize("method", ["browser-cookie", "browser-storage", "redirect", "device-code"])
 @pytest.mark.parametrize("persistent_cookie", [False, True])
 async def test_resources_share_actual_provider_and_follow_provider_changes(
     method, persistent_cookie, tmp_path, monkeypatch,
@@ -59,6 +59,7 @@ async def exercise_sso(tmp_path, monkeypatch, method, persistent_cookie, reuse=T
                 })
             elif "idp_session=authenticated" not in cookies:
                 await route.fulfill(content_type="text/html", body=(
+                    '<script>localStorage.setItem("token", "private-idp-token")</script>'
                     '<button onclick="location.href=\'/sign-in?service=' + service + '\'">Sign in</button>'))
             else:
                 await navigate(f"https://{service}.example/complete")
@@ -72,18 +73,22 @@ async def exercise_sso(tmp_path, monkeypatch, method, persistent_cookie, reuse=T
             else:
                 if observer.method == "device-code":
                     observer.ready = True
-                await route.fulfill(content_type="text/html", body="Signed in", headers={
+                body = ("<script>localStorage.setItem('token', JSON.stringify(" + json.dumps(service) + "))</script>"
+                        if observer.method == "browser-storage" else "Signed in")
+                await route.fulfill(content_type="text/html", body=body, headers={
                     "Set-Cookie": f"service_session={service}; Path=/; HttpOnly; Secure"})
 
     async def setup(context):
         await context.route("https://*.example/**", provider)
         return context
 
-    async def headless(self, **kwargs):
-        return await launch(self, **{**kwargs, "headless": True})
+    async def visible(self, **kwargs):
+        assert kwargs["headless"] is False
+        return await launch(self, **kwargs)
 
     async def shared_context(self, *args, **kwargs):
-        return await setup(await persistent(self, *args, **{**kwargs, "headless": True}))
+        assert kwargs["headless"] is False
+        return await setup(await persistent(self, *args, **kwargs))
 
     async def ephemeral(self, **kwargs):
         return await setup(await new_context(self, **kwargs))
@@ -93,7 +98,7 @@ async def exercise_sso(tmp_path, monkeypatch, method, persistent_cookie, reuse=T
         pages.append(page)
         return page
 
-    monkeypatch.setattr(pw.BrowserType, "launch", headless)
+    monkeypatch.setattr(pw.BrowserType, "launch", visible)
     monkeypatch.setattr(pw.BrowserType, "launch_persistent_context", shared_context)
     monkeypatch.setattr(pw.Browser, "new_context", ephemeral)
     monkeypatch.setattr(pw.BrowserContext, "new_page", record_page)
@@ -102,6 +107,8 @@ async def exercise_sso(tmp_path, monkeypatch, method, persistent_cookie, reuse=T
         observer = Observer("browser-cookie" if service == "first" else method)
         observers[service], providers[service] = observer, actual_provider
         observer.auth.update(cookie_name="service_session", verification_uri=f"https://{service}.example/login")
+        if observer.method == "browser-storage":
+            observer.auth["storage_key"] = "token"
         describe = observer.describe
 
         async def describe_with_challenge(target, *, refresh=False):
@@ -124,6 +131,7 @@ async def exercise_sso(tmp_path, monkeypatch, method, persistent_cookie, reuse=T
                                                 "browser_binding": service})
             assert body["browser_binding"] == service
             expected = ({"code": [service], "state": ["expected"]} if observer.method == "redirect"
+                        else {"token": [json.dumps(service)]} if observer.method == "browser-storage"
                         else {"service_session": [service]})
             assert body["query"] == expected
             if reject and not rejected:

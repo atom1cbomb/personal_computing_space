@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "paper_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Opaque positive upstream identifier; not a count or student name."
+    }
+  },
+  "required": [
+    "paper_id"
+  ],
+  "additionalProperties": false
+}

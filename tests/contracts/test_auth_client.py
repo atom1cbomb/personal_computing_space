@@ -88,7 +88,7 @@ async def test_auth_poll_observes_server_changes_before_description_cache_expire
         assert len(requests) == 2
 
 
-@pytest.mark.parametrize("method", ["redirect", "device-code", "browser-cookie"])
+@pytest.mark.parametrize("method", ["redirect", "device-code", "browser-cookie", "browser-storage"])
 async def test_each_declared_method_uses_the_same_action_and_waits_for_ready(method, monkeypatch):
     observer = Observer(method)
     target = observer.names.name("activations", "service", "v1", "slave", "test")

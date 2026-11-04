@@ -165,9 +165,9 @@ def test_automatic_attempt_timeout_reports_failure_not_human_login(monkeypatch):
     assert login.status()["error"] == "automatic_login_timeout"
 
 
-@pytest.mark.parametrize("method", ["browser-cookie", "redirect", "device-code"])
+@pytest.mark.parametrize("method", ["browser-cookie", "browser-storage", "redirect", "device-code"])
 @pytest.mark.parametrize("can_reuse", [True, False])
-async def test_real_headless_browser_reuses_session_or_returns_for_manual_login(
+async def test_real_visible_browser_reuses_session_or_returns_for_manual_login(
     tmp_path, monkeypatch, method, can_reuse,
 ):
     from pathlib import Path
@@ -182,6 +182,8 @@ async def test_real_headless_browser_reuses_session_or_returns_for_manual_login(
         store.save_session_cookies([{"name": "identity", "value": "saved", "domain": "idp.example",
                                     "path": "/", "expires": -1, "secure": True, "httpOnly": True}])
     observer = Observer(method)
+    if method == "browser-storage":
+        observer.auth["storage_key"] = "token"
     observer.auth["verification_uri"] = "https://service.example/login"
     describe = observer.describe
 
@@ -212,7 +214,9 @@ async def test_real_headless_browser_reuses_session_or_returns_for_manual_login(
             destination = CALLBACK + "?code=verified&state=expected"
         else:
             observer.ready = method == "device-code"
-            await route.fulfill(content_type="text/html", body="Signed in", headers={
+            body = ("<script>localStorage.setItem('token', JSON.stringify('verified'))</script>"
+                    if method == "browser-storage" else "Signed in")
+            await route.fulfill(content_type="text/html", body=body, headers={
                 "Set-Cookie": "grafana_session=verified; Secure; HttpOnly; Path=/"})
             return
         await route.fulfill(content_type="text/html", headers=headers,
@@ -243,7 +247,7 @@ async def test_real_headless_browser_reuses_session_or_returns_for_manual_login(
         with pytest.raises(RuntimeError, match="^automatic_login_incomplete$"):
             await login.authenticate()
         assert not observer.ready
-    assert launches == [True]
+    assert launches == [False]
 
 
 async def test_real_portal_switch_lists_manual_and_failed_resources(tmp_path, monkeypatch):
@@ -272,7 +276,7 @@ async def test_real_portal_switch_lists_manual_and_failed_resources(tmp_path, mo
         async with pw.async_playwright() as p:
             if not Path(p.chromium.executable_path).exists():
                 pytest.skip("Chromium is installed with the SDK auth extra")
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=False)
             try:
                 page = await browser.new_page()
                 errors = []

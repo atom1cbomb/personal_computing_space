@@ -1,8 +1,10 @@
 # Loom v2
 
-**把分散的计算资源和外部服务，组织成 AI 可以发现、调用和协作使用的个人计算工作空间。**
+**把分散的计算资源、外部服务和 AI 自主创建的新资源，组织成可发现、可调用、可协作使用，并能持续扩展的个人计算工作空间。**
 
-你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，并将完整执行计划提交给发现的 Driver 资源。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由独立 Driver Pool 校验、冻结计划并排队，多个 Driver 领取后直连 Slave 执行，由 Pool 保存结果、历史和验收证据。
+AI 可以为任务编写程序、封装能力包，也可以通过已有能力创建 VM、部署服务，并将这些新资源与能力纳入空间。经过验证并显式发布的能力可以被后续任务发现、组合和复用，让 AI 在完成任务的过程中持续扩展自己的工作空间。
+
+你可以把自然语言目标交给自己的 coding agent，由它通过 GRIP 发现和调用资源，也可以把完整执行计划提交给发现的 Driver 资源。服务查询可以直接返回结果，字节流可以连接模型等服务；需要持久化执行的任务由独立 Driver Pool 校验、冻结计划并排队，多个 Driver 领取后直连 Slave 执行，由 Pool 保存结果、历史和验收证据。
 
 它不仅让 AI 给出“应该怎么做”，还提供从需求、计划、执行到结果核验的运行基础。当前面向**单用户、单 Workspace**，可以在一台机器上部署，也可以连接多台执行节点。
 
@@ -19,8 +21,8 @@
 - **通过 agent 发起计算任务**：向外部 agent 描述目标、输入、约束和验收标准；它使用 GRIP 或提交完整计划，Web 界面用于查看执行状态和结果。
 - **跨机器执行和组合任务**：将工作拆成多个节点，分发到不同 Slave，再汇总输出。仓库提供了多节点统计分析示例。
 - **接入外部服务**：把 Kubernetes、云平台、文档服务等封装成能力包，让 agent 通过明确的接口使用它们，而不是把每个服务的逻辑写进系统核心。
-- **使用任务创建的新资源**：例如通过云能力包创建 VM，再为 VM 部署 SSH 访问能力包，完成认证后在 VM 上执行命令。
-- **沉淀可复用能力**：任务中生成的能力包可以显式发布，供后续任务复用；也可以直接向 Workspace 上传已有能力包，不必先创建 Run。
+- **自主创建并接入资源**：AI 可以通过云能力包创建 VM，将其登记到空间，再部署 SSH 访问能力包，完成认证后执行命令；新资源可以继续参与后续任务。
+- **自主扩展可复用能力**：AI 可以编写程序、封装并部署新的能力包。任务中生成的能力经验证后可显式发布到 Workspace，供后续任务复用；也可以直接发布独立制作的能力包。
 - **复用已验证的业务方法**：外部 agent 可用独立插件记录参数化步骤、契约和验收证据；下次按目标检索，检查当前资源后再执行。只注册一个入口 skill，经验增加不会扩充自动加载的 skill 目录。
 - **查询与核验执行事实**：查看可用 Slave、能力包、资源、激活状态、任务尝试和失败原因；按内容引用取回实际结果。
 
@@ -52,39 +54,96 @@ Grafana 的 GPU 小时按分配时长和显存容量归一化，保留缺失数�
 
 **AI 的决策与实际执行可以分别检查。** 系统保留执行时使用的计划版本、能力包引用、输入、尝试记录和输出。模型说“完成”不等于任务成功，最终以 Run 状态、结果及验收证据为准。
 
-**一次任务的成果可以复用。** 程序、契约和能力包不必每次重新生成；发布后的包可以被其他 Run 使用，同一个包也可以部署多个有名字的实例。业务经验插件进一步保存如何组合这些能力的方法，后续任务仍读取新结果并重新验收。
+**任务成果可以扩展空间的能力。** AI 创建的资源可以继续被访问和管理，程序、契约和能力包可以发布后被其他 Run 复用，同一个包也可以部署多个有名字的实例。业务经验插件进一步保存如何组合这些能力的方法，后续任务仍读取新结果并重新验收。
 
 **错误更容易定位。** 能力未就绪、外部认证失败、执行失败和需要人工验收是不同状态；系统用持久化记录、幂等键和版本检查帮助对账，不把超时直接当作“没有执行”。这不等于对任意外部服务提供 exactly-once 保证。
 
 ## 系统如何运行
 
-### 四个角色：Observer、Driver Pool、Driver、Slave
+### 系统组成与职责
+
+Observer、Driver Pool、Driver、Slave 是平台的四类核心服务。完整运行链路还包括外部 agent 与客户端、执行运行时、能力包实例、业务资源及存储基础设施：
+
+| 组成 | 职责 |
+| --- | --- |
+| 外部 agent、SDK 与通用 skill | agent 理解目标、创建资源与能力、准备计划并核验结果；SDK 提供协议客户端，skill 指导发现、调用和恢复流程 |
+| Web UI、`loom-auth` 与用户浏览器 | 查看任务及验收结果，完成能力包所需的交互式认证 |
+| Observer | 管理资源目录、Workspace 包、激活投影与 Slave 注册；签发服务授权，桥接认证并提供可选的业务中转 |
+| Driver Pool | 接收和校验计划，持久化 Run／Node／Attempt、队列与历史，管理执行租约、结果和验收 |
+| Driver | 领取任务，向 Slave 派发执行；启动编排沙箱，处理动态节点和结果汇总 |
+| Slave、执行器与 runtime plugin | Slave 管理节点与激活生命周期；进程执行器运行函数，runtime plugin 管理能力服务容器并调用业务 action |
+| 能力包与激活实例 | 包声明接口、契约与实现；activation 绑定具体节点、配置、凭据和运行状态，实际程序或服务实现业务逻辑 |
+| 业务资源与外部服务 | 被能力包访问或管理的对象，例如 VM、Kubernetes 集群、AutoPaper、方舟和文档服务 |
+| PostgreSQL、MinIO／S3、Docker 与镜像仓库 | 分别提供状态与执行账本、内容存储、容器运行和镜像分发 |
+
+GRIP 定义统一的资源发现与调用协议，SDK 实现客户端交互，skill 提供使用规则。下图按职责分组展示主要通信关系，服务可同机部署或分布在多台主机；箭头表示请求发起方向，结果沿调用链返回。
 
 ```mermaid
-flowchart LR
-    Agent[外部 agent / Web UI] -->|资源发现与管理| Observer
-    Agent -->|提交、查询与验收| Pool[Driver Pool]
-    Driver -->|领取任务、记录结果| Pool
-    Driver -->|直连执行| Slave
-    Slave -->|注册与健康| Observer
+flowchart TB
+    Agent["外部 agent + SDK / skill"]
+    UI["Web UI"]
+    Auth["用户浏览器 + loom-auth"]
+
+    subgraph Platform["平台服务"]
+        Observer["Observer"]
+        Pool["Driver Pool"]
+        Driver["Driver，可有多个实例"]
+        Sandbox["Driver 的 Docker 编排沙箱"]
+    end
+
+    subgraph Node["Slave 节点，可有多个"]
+        Slave["Slave 控制入口与 GRIP 数据入口"]
+        Executor["进程执行器 / 函数程序"]
+        Plugin["runtime plugin"]
+        Service["能力包服务容器"]
+        Ledger[("本地 PostgreSQL：执行账本与激活状态")]
+    end
+
+    DB[("共享 PostgreSQL：资源与任务状态")]
+    Store[("MinIO / S3：源码、契约、输入与结果")]
+    External["业务资源 / 外部服务"]
+
+    Agent -->|发现、管理资源与获取授权| Observer
+    Agent -->|提交、查询、取消与验收| Pool
+    UI -->|查看任务与验收| Pool
+    Auth -->|认证桥接| Observer
+    Observer -->|任务入口转发| Pool
+    Pool -->|Workspace 资源管理| Observer
+    Driver -->|注册、心跳、领取与结果上报| Pool
+    Driver -->|任务执行请求| Slave
+    Driver -->|启动与受控消息交互| Sandbox
+    Slave -->|注册与健康上报| Observer
     Slave -->|校验执行所有权| Pool
+    Observer -->|激活、停止、配置与认证| Slave
+    Agent -->|按 binding 直接调用或建立字节流| Slave
+    Observer -.->|按 binding 中转业务调用或字节流| Slave
+    Slave -->|函数执行| Executor
+    Slave -->|调用运行时| Plugin
+    Plugin -->|Docker 生命周期管理 / HTTP 或 WS 调用| Service
+    Service -->|业务协议访问| External
+    Observer -->|资源读写、任务摘要读取| DB
+    Pool -->|任务状态与历史读写| DB
+    Slave -->|保存与重放执行结果| Ledger
+    Observer & Pool & Driver & Slave -->|内容读写| Store
 ```
 
-Observer 和 Pool 共用 PostgreSQL，分别写资源与任务状态；每个 Slave 保留本地 PostgreSQL 执行账本。所有服务共享 MinIO / S3 内容存储。
+Observer 和 Pool 共用 PostgreSQL，分别写资源与任务状态；每个 Slave 保留本地 PostgreSQL 执行账本。Observer、Pool、Driver、Slave 通过 ContentStore 访问共享 MinIO／S3。Driver 的编排沙箱和 Slave 的能力服务容器由各自节点的 Docker Engine 承载，所需镜像从镜像仓库拉取。包的实例凭据与认证状态由 Slave 按 activation 配置挂载到能力服务容器。
 
-**Observer 管理资源，Pool 管理任务。** Observer 保存资源、Workspace 包和激活投影，接收 Slave 注册与健康报告。Pool 负责提交幂等、契约校验、计划冻结、Run／Node／Attempt 状态、执行队列、历史和结果验收；Run 内的包也随任务由 Pool 管理。公开资源通过 GRIP offers 声明各自入口，客户端显式信任运营者提供的 Pool binding。
+### 发现、直接调用与任务执行
 
-**外部 agent 负责编排，Driver 负责执行。** GRIP 目录中的 `computing/driver` 是单一逻辑执行资源，URI 不随 Driver 进程重启变化。外部 agent 对它调用 `submit-plan`，Driver Pool 校验完整 `ClosureContract`、冻结版本并排队；Driver 领取队列项，向 Slave 派发普通任务，并在沙箱中运行 `container:python_orchestrator/1` 编排程序。它不接收 prompt、不维护会话，也不持有模型 secret。`accepting_submissions` 表示入口可接受提交，`available` 表示 Driver 租约在线；所有 Driver 离线时，Pool 仍可持久化排队。
+资源发现后，客户端按动作的执行方式选择后续路径：
 
-每个 Workspace 可以有多个活跃 Driver，由 Pool 分配任务。公开提交入口仍是稳定的逻辑资源 `drivers/default`，`active_drivers` 返回在线实例数量。
+- **发现与管理**：agent 经 SDK 调用 Observer，读取资源、包、activation、契约和 binding；激活、停止及认证请求再由 Observer 发往目标 Slave。
+- **直接调用或字节流**：客户端先取得所需授权，再按发布的 binding 访问 Slave 数据入口、服务入口或 Observer 中转。普通 JSON action 返回业务结果；字节流用于持续传输。这条路径不创建 Run。
+- **任务执行**：agent 将 action 或编排程序放入完整计划，经 Pool 提交并获得 Run。Driver 领取后向 Slave 派发业务节点，Pool 持久保存进度和结果；编排程序在 Driver 的受限沙箱中运行。
+
+公开资源通过 GRIP offers 声明各自入口。`computing/driver` 类型的 `drivers/default` 是稳定的逻辑执行资源，其 `submit-plan` offer 指向 Pool；客户端显式信任运营者提供的 Pool binding。每个 Workspace 可有多个实际 Driver 进程，由 Pool 分配任务，`active_drivers` 返回在线实例数量。`accepting_submissions` 表示入口可接受提交，`available` 表示 Driver 租约在线；所有 Driver 离线时，Pool 仍可持久化排队。
 
 每个 Run 同时只有一个有效执行所有者。所有者租约失效后，Pool 允许其他 Driver 接管，保持原 execution／Attempt 身份，并记录新的领取事件。Slave 使用本地账本重放已完成的结果；副作用结果未知时交由失败与修复流程处理。
 
-**Slave 负责实际执行。** 它验证执行请求，在本机通过执行器或 runtime plugin 启动程序、管理能力容器，保存本地执行账本并上报结果。容器由 Slave 侧插件调用 Docker Engine 启动，不是由用户浏览器或 Driver 直接管理。
+业务节点的任务执行路径是 **Driver → Slave → 执行器或 runtime plugin → 能力实现**。Driver 从注册信息取得 Slave 的执行 binding，Slave 在运行前向 Pool 验证租约、任务所有权和冻结契约，执行时保存本地 Attempt 账本并上报结果。业务能力容器由 Slave 侧插件管理；Driver 的编排沙箱通过受控消息要求 Driver 派发节点，业务 action 由相应 Slave 执行。
 
-持久化任务的执行路径是 **Driver → Slave**。Driver 从注册信息取得 Slave 的执行 binding，Slave 在运行前向 Pool 验证租约、任务所有权和冻结契约。直接服务调用与字节流继续按 offer 选择服务入口、Slave 数据入口或 Observer 中转。
-
-### 从需求到结果
+### 任务从需求到结果
 
 1. **形成任务闭包。** 外部 agent 明确目标和验收标准，准备输入、程序与契约，选择能力包及计算资源。
 2. **一次提交计划。** 外部 agent 通过 `loom-orchestration` 的 GRIP `submit-plan` 提交完整闭包；Pool 检查引用、能力绑定、契约和资源就绪条件，直接创建 `committed` Run，并在同一事务冻结版本和写入执行队列，返回 Run URI。
@@ -130,7 +189,7 @@ SDK 支持通过 `trusted_bindings` 限定可信入口、通过 `binding_prefere
 资源类型使用 `resource.mcue`，例如 `computing/vm`。`metadata.mcue_ref` 指向有版本的 MCUE 定义，
 `metadata.attributes` 保存该类型 Schema 校验过的公开属性。登记资源上的 `update-attributes` 支持动态更新名称、说明、标签和硬件描述，并通过 `attributes_revision` 检查并发冲突。SDK 使用 `resources(mcue=...)` 过滤目录。
 
-配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。当前配套 SDK 为 0.14.0，计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
+配置、SDK 示例与实例调用见 [GRIP 资源使用指南](docs/grip-resource-usage.md)。内置服务包的发布、配置与验证见 [服务包指南](capability_services/README.md)，可运行的客户端见 [GRIP 示例](examples/grip/README.md)。当前配套 SDK 为 0.15.0，计划提交、查询、修复、取消、验收和关闭均使用 GRIP；内容上传、包制作和管理界面保留相应管理接口。
 
 凭据配置由激活实例选择：`activate-package` 的 `credential_profile` 与 `instance_config` 并列，
 同包不同实例可以使用不同账号或集群。旧部署引入实例凭据时需执行 Alembic 007，见
@@ -291,7 +350,7 @@ docker compose -f deploy/docker-compose.yml up -d --scale driver=2 driver
 ### 外部 agent 的 SDK 与 skill 分发
 
 `loom-orchestration` 是独立 Python 包，源码保留在 `loom_orchestration/`，不复制到 skill。
-Observer 和 Pool 提供无需 GRIP token 的发布文件下载（以下路径以对应服务 URL 为前缀；当前源码 SDK 为 0.14.0，部署版本以下载清单为准）：
+Observer 和 Pool 提供无需 GRIP token 的发布文件下载（以下路径以对应服务 URL 为前缀；当前源码 SDK 为 0.15.0，部署版本以下载清单为准）：
 
 - `/downloads/personal-computing-space.zip`：完整 skill，含配套 SDK wheel。
 - `/downloads/manifest.json`：技能包和 SDK 的文件名、大小、SHA-256，以及 SDK 版本。
@@ -322,7 +381,7 @@ python scripts/build_agent_skill.py --output dist
 agent 只需 Python 3.12+、该 wheel 及其声明的依赖，无需 Loom 服务端源码。
 此命令只构建本地交付物，不上传到包仓库；离线部署需另备依赖 wheels。
 
-业务经验插件当前仍依赖 SDK 0.10.x，构建脚本仅接受该版本的 wheel；与 Driver Pool 配套 SDK 0.14 的集成尚未适配和验收。以下为插件现有构建命令，将路径替换为独立保存的 0.10.x wheel：
+业务经验插件当前仍依赖 SDK 0.10.x，构建脚本仅接受该版本的 wheel；与当前配套 SDK 0.15 的集成尚未适配和验收。以下为插件现有构建命令，将路径替换为独立保存的 0.10.x wheel：
 
 ```bash
 python plugins/loom-business-skills/scripts/build_plugin.py \
@@ -356,7 +415,7 @@ Observer 提供统一资源发现，Driver／Plan／Run 的公开任务动作绑
 
 Slave 在线只说明租约有效，不保证空闲容量或指定能力可用。包已发布也不保证某个实例已完成认证，任务仍须通过就绪检查。
 
-SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，本次版本使用 SDK 0.14 与配套 Observer／Pool／Slave。
+SDK 的 `submit(request_id=...)` 参数映射到业务 `idempotency_key`，与 GRIP 消息的 `request_id` 分开。响应丢失后复用同一键和计划，或用 `submission(key)` 查询；返回 Run 只证明已接收，最终以 Run 的状态和证据为准。旧任务 REST 提交、单 Run 查询和生命周期路径已删除，本次版本使用 SDK 0.15 与配套 Observer／Pool／Slave。
 
 ### 多机部署与安全边界
 

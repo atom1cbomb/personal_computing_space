@@ -28,6 +28,7 @@ gateway's private HTTP paths.
 |---|---|---|
 | `redirect` | Open provider authorization; accept the fixed local callback and finish the provider exchange, including provider state/PKCE checks where applicable | Required |
 | `browser-cookie` | Open provider login at its original site; accept and verify the named session cookie | Required; `interaction.cookie_name` also required |
+| `browser-storage` | Open provider login in visible Chromium; parse and verify the raw localStorage value at the login entry's origin | Required; `interaction.storage_key` also required |
 | `device-code` | Start and poll device authorization through the provider/plugin; expose its verification URL/code | Omit |
 | `credential-profile` | Load operator-supplied credentials and verify access; no browser grant | Omit |
 
@@ -61,6 +62,14 @@ distinct origin-relative paths without query/fragment, and must not overlap the
 health or business paths. Complete the normal image, port, health and business
 export declarations. Use an operator-supported egress network when needed.
 Cookie names may contain dots, for example `overleaf.sid`.
+SDK 0.15.0 and matching Observer/runtime add `browser-storage`, declared as
+`{"mode":"browser-storage","storage_key":"token"}`. The client always uses
+visible Chromium, including automatic session reuse. It reads only that exact
+localStorage key, with an origin check in the same JavaScript evaluation;
+never add provider scripts, storage enumeration or IdP credential extraction.
+The gateway parses the returned string according to its provider (for example a
+JSON-encoded token) and verifies it at the service's own API. Its login entry
+must therefore be at the service origin where the credential is stored.
 
 New publication rejects legacy `authentication.client` and package-level
 `body.credential_profile`. Historical read/digest compatibility is not a way
@@ -145,11 +154,16 @@ fit the current 4096-character callback limit. Validate the matching session,
 expiry and one-time `created → bound → consumed` sequence; reject stale/replayed
 messages. Complete the provider exchange/verification, store credentials
 privately and return exactly `{"status": "accepted"}` on success (HTTP 200).
-For `browser-cookie` only, an upstream check that confirms an anonymous or
-unauthenticated cookie may instead return exactly `{"status": "pending"}`
+For `browser-storage`, `query` instead contains exactly the declared storage key
+and one raw localStorage string, subject to the same 4096-character limit.
+It is not automatically JSON-decoded by the client. Keep credentials only after
+the gateway has verified them. Do not export a business action to ingest them.
+
+For `browser-cookie` or `browser-storage`, an upstream check that confirms an
+unauthenticated candidate may instead return exactly `{"status": "pending"}`
 (HTTP 200). Keep the challenge bound with its original expiry and do not persist
-that cookie as an authenticated credential. The Observer retains the same
-binding; the SDK keeps the browser open and probes the current cookie once per
+that candidate as an authenticated credential. The Observer retains the same
+binding; the SDK keeps the browser open and probes the current credential once per
 second until acceptance, window closure or expiry. Only successful verification
 consumes the challenge. Provider/network failures and malformed responses remain
 terminal errors; do not treat them as pending login. Redirect callbacks remain

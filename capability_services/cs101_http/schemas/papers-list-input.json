@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "keyword": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based item offset, default 0; not a page number."
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "description": "Records per request (count), default 20, maximum 200."
+    }
+  },
+  "additionalProperties": false
+}

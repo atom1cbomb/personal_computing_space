@@ -115,6 +115,12 @@ def test_http_contract_accepts_how_to_use_content_reference() -> None:
     ({"mode": "browser-cookie", "cookie_name": "bad cookie"}, True, False),
     ({"mode": "browser-cookie"}, True, False),
     ({"mode": "browser-cookie", "cookie_name": "bad;cookie"}, True, False),
+    ({"mode": "browser-storage", "storage_key": "token"}, True, True),
+    ({"mode": "browser-storage", "storage_key": "token"}, False, False),
+    ({"mode": "browser-storage"}, True, False),
+    ({"mode": "browser-storage", "storage_key": ""}, True, False),
+    ({"mode": "browser-storage", "storage_key": "x" * 129}, True, False),
+    ({"mode": "browser-storage", "storage_key": "token", "script": "code"}, True, False),
     ({"mode": "custom-script", "entrypoint": "code.py"}, True, False),
 ])
 def test_authentication_interaction_contract(interaction, browser, valid):

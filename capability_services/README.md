@@ -16,6 +16,7 @@
 
 | 目录 | 使用说明 | 构建/部署文档 | 包版本 | 业务导出 | 激活配置和认证 |
 |---|---|---|---:|---:|---|
+| cs101_http | [HOW_TO_USE](cs101_http/HOW_TO_USE.md) | [README](cs101_http/README.md) | cs101-http/v2 | 5 | 可配置 HTTPS 地址，token profile 或有界面浏览器登录及会话复用；只读成绩分析，网关阻断跳转与 IAAA 访问 |
 | ark_http | [HOW_TO_USE](ark_http/HOW_TO_USE.md) | [README](ark_http/README.md) | ark-http/v3 | 11 | 用户 API Key profile；Agent Plan／普通 API 模式，多模态理解、图片生成、视频任务、向量化及 Agent Plan HTTP TTS |
 | suanli_overleaf_http | [HOW_TO_USE](suanli_overleaf_http/HOW_TO_USE.md) | [README](suanli_overleaf_http/README.md) | suanli-overleaf-http/v2 | 5 | 连接 overleaf.cs.ac.cn；Git token profile + 统一网页登录，项目列表、下载、状态、上传和新项目导入 |
 | autopaper_http | [HOW_TO_USE](autopaper_http/HOW_TO_USE.md) | [README](autopaper_http/README.md) | autopaper-http/v5 | 6 | 连接 paper.cs.ac.cn；统一浏览器登录，搜索可选自动抓取入库，提供论文详情及会议/年份查询 |
@@ -249,5 +250,5 @@ HTTP/WS 文件往返；另有真实容器的只读根目录、持久状态与重
 内部 runtime 的 Docker 验收工具仍为 `scripts/accept-container-http.py`；真实部署的公开调用
 可使用 `examples/grip/invoke.py`，由调用者明确提供目标、action 和输入。
 
-当前源码配套 SDK 为 0.14.0，包含统一登录、重新认证和服务 binding 支持，参见 [认证说明](../docs/authentication.md)
+当前源码配套 SDK 为 0.15.0，包含有界面的统一登录及会话复用、浏览器存储认证和服务 binding 支持，参见 [认证说明](../docs/authentication.md)
 及 [服务部署步骤](../docs/service-bindings-deployment.md)。

@@ -23,7 +23,7 @@ from .client import LoomClient
 CALLBACK = "http://localhost:3000/login-callback"
 AUTO_INTERACTION_SECONDS = 20
 AUTO_ATTEMPT_SECONDS = 60
-METHODS = {"redirect", "browser-cookie", "device-code", "credential-profile"}
+METHODS = {"redirect", "browser-cookie", "browser-storage", "device-code", "credential-profile"}
 ERRORS = {"authentication_expired", "authentication_failed", "activation_changed",
           "activation_binding_unavailable",
           "login_window_closed", "login_method_unsupported", "browser_dependency_missing",
@@ -264,13 +264,13 @@ class Login:
             if profile_dir is not None:
                 try:
                     context = await playwright.chromium.launch_persistent_context(
-                        str(profile_dir), headless=self._automatic, executable_path=self.browser_executable,
+                        str(profile_dir), headless=False, executable_path=self.browser_executable,
                         viewport={"width": 1120, "height": 840}, args=["--disable-dev-shm-usage"])
                 except (BrowserError, OSError):
                     # Do not silently lose SSO by opening an empty profile.
                     raise RuntimeError("browser_profile_unavailable") from None
             else:
-                browser = await playwright.chromium.launch(headless=self._automatic, executable_path=self.browser_executable,
+                browser = await playwright.chromium.launch(headless=False, executable_path=self.browser_executable,
                                                            args=["--disable-dev-shm-usage"])
                 context = await browser.new_context(viewport={"width": 1120, "height": 840})
 
@@ -326,6 +326,19 @@ class Login:
                                       if c["name"] == auth["cookie_name"] and c["value"]]
                             if len(values) == 1 and len(values[0]) <= 4096:
                                 callback = {auth["cookie_name"]: values}
+                    elif method == "browser-storage":
+                        # Check the origin inside the same evaluation that reads
+                        # the key, so a concurrent SSO navigation cannot expose an
+                        # identity provider's storage. Never enumerate other keys.
+                        try:
+                            value = await page.evaluate("""({origin, key}) => {
+                                if (location.origin !== origin) return null;
+                                try { return localStorage.getItem(key); } catch { return null; }
+                            }""", {"origin": target_origin, "key": auth["storage_key"]})
+                        except BrowserError:
+                            value = None  # The main frame can be navigating back from SSO.
+                        if isinstance(value, str) and 0 < len(value) <= 4096:
+                            callback = {auth["storage_key"]: [value]}
                     if callback is not None:
                         self._update("verifying")
                         try:
@@ -337,7 +350,18 @@ class Login:
                                 await discard_service_cookie()
                                 raise RuntimeError("saved_auth_rejected") from None
                             raise
-                        if method == "browser-cookie" and accepted == {"status": "pending"}:
+                        if method in {"browser-cookie", "browser-storage"} and accepted == {"status": "pending"}:
+                            if method == "browser-storage":
+                                # Remove only the rejected candidate, retaining
+                                # every other service key and the SSO session.
+                                try:
+                                    await page.evaluate("""({origin, key, rejected}) => {
+                                        if (location.origin !== origin) return;
+                                        if (localStorage.getItem(key) === rejected) localStorage.removeItem(key);
+                                    }""", {"origin": target_origin, "key": auth["storage_key"],
+                                           "rejected": callback[auth["storage_key"]][0]})
+                                except BrowserError:
+                                    pass
                             saved_cookie_attempt = False
                             callback = None
                             self._update("trying_saved_session" if self._automatic else "awaiting_login")
@@ -579,7 +603,7 @@ article{border-bottom:1px solid #ddd;padding:20px 0}p,li{overflow-wrap:anywhere}
 #attention{border-left:3px solid #c87918;padding-left:16px}#summary{font-weight:600}</style>
 <h1>Loom 资源登录</h1><p>选择实例，在弹出的窗口完成登录。客户端会按实际登录站点复用本地会话；入口过期或登录失败后，可以直接重新认证。</p>
 <div class="controls"><label><input id="automatic" type="checkbox">自动复用会话登录</label>
-<p>开启后自动尝试所有选定资源，需要扫码或授权的会列在下方。手动完成一次登录后，会继续尝试其余未完成资源。</p>
+<p>手动登录和自动复用都会打开浏览器窗口。开启后依次尝试所有选定资源，需要扫码或授权的会列在下方。手动完成一次登录后，会继续尝试其余未完成资源。</p>
 <p id="automatic-note" role="status"></p></div><p id="summary" aria-live="polite"></p>
 <section id="attention" hidden><h2>需要处理的资源</h2><ul id="attention-list"></ul></section>
 <main id="logins"></main><script>

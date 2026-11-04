@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "description": "CS101 gateway connection settings. The gateway contacts only this exact HTTPS origin and blocks redirects, proxies and remote links, including IAAA. Browser SSO is handled separately and exclusively in visible Chromium windows.",
+  "required": ["api_origin"],
+  "properties": {
+    "api_origin": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 2048,
+      "pattern": "^https://[^/?#@\\s]+/?$",
+      "description": "Explicit HTTPS origin including an optional TCP port (endpoint identifier), with no path, user info, query or fragment. Example: https://test.cs101.gbu.edu.cn. It is set per activation and cannot be overridden by business actions. /api/v2 is appended by the gateway."
+    },
+    "target_resource_ref": {
+      "type": "string",
+      "pattern": "^grip://",
+      "description": "Optional system-provided bound resource URI; it is never used as a network address."
+    }
+  },
+  "additionalProperties": false
+}

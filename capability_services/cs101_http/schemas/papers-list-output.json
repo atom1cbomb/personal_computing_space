@@ -1,0 +1,71 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "const": "papers_list"
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "paper_id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Opaque positive upstream identifier; not a count or student name."
+              },
+              "title": {
+                "type": "string"
+              },
+              "category": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "paper_id",
+              "title",
+              "category"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of records or students (count)."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-based item offset, default 0; not a page number."
+        },
+        "next_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Zero-based item offset for the next request, or null at the end."
+        }
+      },
+      "required": [
+        "items",
+        "count",
+        "offset",
+        "next_offset"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "action",
+    "result"
+  ],
+  "additionalProperties": false
+}

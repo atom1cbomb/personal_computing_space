@@ -1,0 +1,13 @@
+{
+  "schema_version": "io.v1",
+  "input_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/cs101-http/schemas/student-analyze-input/sha256/1b17c28fa5e95d4dbaa85da38321307e1b5c20b07cbb3ea8201becbdc290d04c",
+    "identity_criterion": "content_digest"
+  },
+  "output_schema_ref": {
+    "resource_id": "grip://loom.local/workspaces/workspace-default/content/cs101-http/schemas/student-analyze-output/sha256/3be8265893d72b34397cbdbfb55218fdb2ff70b69e5760a2bb7a4bdd075d49d7",
+    "identity_criterion": "content_digest"
+  },
+  "success_semantics": null,
+  "success_validator_ref": null
+}

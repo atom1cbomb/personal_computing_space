@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Opaque positive upstream identifier; not a count or student name."
+    },
+    "paper_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Opaque positive upstream identifier; not a count or student name."
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    },
+    "group": {
+      "type": "string",
+      "maxLength": 256,
+      "minLength": 1
+    }
+  },
+  "required": [
+    "user_id"
+  ],
+  "additionalProperties": false
+}

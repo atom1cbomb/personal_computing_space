@@ -240,6 +240,13 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                                                         "description": "Historical metadata only; the login client manages browser sessions."},
                                                 "cookie_name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"}},
                                  "additionalProperties": False},
+                                {"type": "object", "required": ["mode", "storage_key"],
+                                 "properties": {
+                                     "mode": {"const": "browser-storage"},
+                                     "storage_key": {"type": "string", "minLength": 1, "maxLength": 128,
+                                                     "description": "Exact localStorage key at the browser login entry's HTTPS origin. Its raw value is verified by the gateway."},
+                                 },
+                                 "additionalProperties": False},
                             ]
                         },
                         "client": {
@@ -257,7 +264,7 @@ CONTAINER_HTTP_V1_SCHEMA = _contract_schema(
                     },
                 "allOf": [{
                     "if": {"required": ["interaction"], "properties": {"interaction": {
-                        "properties": {"mode": {"enum": ["redirect", "browser-cookie"]}}}}},
+                        "properties": {"mode": {"enum": ["redirect", "browser-cookie", "browser-storage"]}}}}},
                     "then": {"required": ["browser_path"]},
                 }, {
                     "if": {"required": ["interaction"], "properties": {"interaction": {

@@ -98,7 +98,7 @@ class BrowserAuth:
         if activation.activation_revision != expected_revision:
             raise ValueError("capability_activation_revision_stale")
         authentication = package.body.get("authentication") if isinstance(package.body, dict) else None
-        if not isinstance(authentication, dict) or (authentication.get("interaction") or {}).get("mode") not in {"redirect", "browser-cookie"}:
+        if not isinstance(authentication, dict) or (authentication.get("interaction") or {}).get("mode") not in {"redirect", "browser-cookie", "browser-storage"}:
             raise HTTPException(409, "browser_auth_interaction_not_declared")
         session = dict(package_ref=package.version_ref, package_digest=package.package_digest,
                        target_slave=targets[0], instance_name=instance_name,
@@ -171,8 +171,8 @@ class BrowserAuth:
             message.session_id = session_id
             try:
                 result = await self.send(session, "callback", message.model_dump(mode="json"))
-                if session.get("method") == "browser-cookie" and result == {"status": "pending"}:
-                    # Anonymous cookies are candidates, not a completed login.
+                if session.get("method") in {"browser-cookie", "browser-storage"} and result == {"status": "pending"}:
+                    # Browser credentials are candidates until the gateway verifies them.
                     # Retain the binding and original deadline for the next probe.
                     session["phase"] = "bound"
                     return result

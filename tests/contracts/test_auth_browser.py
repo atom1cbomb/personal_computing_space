@@ -38,8 +38,9 @@ async def test_real_chromium_keeps_anonymous_cookie_login_open(monkeypatch):
     launch = pw.BrowserType.launch
     new_context = pw.Browser.new_context
 
-    async def headless(self, **kwargs):
-        return await launch(self, **{**kwargs, "headless": True})
+    async def visible(self, **kwargs):
+        assert kwargs["headless"] is False
+        return await launch(self, **kwargs)
 
     async def context(self, **kwargs):
         value = await new_context(self, **kwargs)
@@ -56,7 +57,7 @@ async def test_real_chromium_keeps_anonymous_cookie_login_open(monkeypatch):
         await value.route("https://login.example/**", provider)
         return value
 
-    monkeypatch.setattr(pw.BrowserType, "launch", headless)
+    monkeypatch.setattr(pw.BrowserType, "launch", visible)
     monkeypatch.setattr(pw.Browser, "new_context", context)
     login = Login("resource", lambda: observer)
     # Click only after the anonymous cookie has actually reached the bridge.
@@ -110,8 +111,9 @@ async def test_real_chromium_adapters_return_only_the_declared_callback(method, 
     launch = pw.BrowserType.launch
     new_context = pw.Browser.new_context
 
-    async def headless(self, **kwargs):
-        return await launch(self, **{**kwargs, "headless": True})
+    async def visible(self, **kwargs):
+        assert kwargs["headless"] is False
+        return await launch(self, **kwargs)
 
     async def context(self, **kwargs):
         value = await new_context(self, **kwargs)
@@ -128,7 +130,7 @@ async def test_real_chromium_adapters_return_only_the_declared_callback(method, 
                                      "url": "https://login.example", "httpOnly": True, "secure": True}])
         return value
 
-    monkeypatch.setattr(pw.BrowserType, "launch", headless)
+    monkeypatch.setattr(pw.BrowserType, "launch", visible)
     monkeypatch.setattr(pw.Browser, "new_context", context)
     login = Login(observer.names.name("activations", "test", "v1", "slave", method), lambda: observer)
     await asyncio.wait_for(login.authenticate(), timeout=15)
@@ -154,7 +156,7 @@ async def test_real_browser_renders_portal_and_retries_without_script_errors():
         async with pw.async_playwright() as p:
             if not Path(p.chromium.executable_path).exists():
                 pytest.skip("Chromium is installed with the SDK auth extra")
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=False)
             try:
                 page = await browser.new_page()
                 errors = []

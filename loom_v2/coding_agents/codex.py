@@ -115,7 +115,7 @@ class CodexAppServerProvider:
                     "id": initialize_id,
                     "method": "initialize",
                     "params": {
-                        "clientInfo": {"name": "loom-v2", "version": "0.1.0"},
+                        "clientInfo": {"name": "loom-v2", "version": "0.2.0"},
                         "capabilities": {"experimentalApi": True},
                     },
                 }
